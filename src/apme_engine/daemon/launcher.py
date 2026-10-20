@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ctypes
 import errno
 import fcntl
 import ipaddress
@@ -326,21 +327,59 @@ _WILDCARD_IPV4 = frozenset({"", "0.0.0.0"})
 _WILDCARD_IPV6 = frozenset({"::", "[::]"})
 
 
-def _is_unspecified_ipv6(host: str) -> bool:
-    """Return True when *host* is an IPv6 unspecified (all-interfaces) address.
+def _unbracket_host(host: str) -> str:
+    """Strip IPv6 brackets from *host* when present.
 
     Args:
         host: Host string, optionally bracketed.
 
     Returns:
-        True for ``::``, ``0:0:0:0:0:0:0:0``, and equivalent expanded forms.
+        Host without surrounding ``[]``.
     """
-    candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
+def _resolved_bind_ips(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve *host* to IP addresses the kernel would use for bind/connect.
+
+    Empty string is treated as IPv4 unspecified (``INADDR_ANY``). Literal IPs
+    are parsed directly; other forms (``0``, ``0x0``, hostnames) go through
+    ``getaddrinfo`` so alternate unspecified spellings are not missed.
+
+    Args:
+        host: Bind host from a listen address or probe target.
+
+    Returns:
+        Parsed addresses (may be empty when resolution fails).
+    """
+    if host in {"", "0.0.0.0"}:
+        return [ipaddress.IPv4Address("0.0.0.0")]
+    if host in {"::", "[::]"}:
+        return [ipaddress.IPv6Address("::")]
+    candidate = _unbracket_host(host)
     try:
-        address = ipaddress.ip_address(candidate)
+        return [ipaddress.ip_address(candidate)]
     except ValueError:
-        return False
-    return isinstance(address, ipaddress.IPv6Address) and address.is_unspecified
+        pass
+    found: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    try:
+        for info in socket.getaddrinfo(candidate, None, type=socket.SOCK_STREAM):
+            sockaddr = info[4]
+            raw_ip = sockaddr[0]
+            if not isinstance(raw_ip, str):
+                continue
+            scope_id = sockaddr[3] if info[0] == socket.AF_INET6 and len(sockaddr) > 3 else 0
+            if isinstance(scope_id, int) and scope_id > 0 and "%" not in raw_ip:
+                raw_ip = f"{raw_ip}%{scope_id}"
+            try:
+                found.append(ipaddress.ip_address(raw_ip))
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return found
 
 
 def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
@@ -354,25 +393,149 @@ def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
     return targets
 
 
-def _local_addresses(family: int) -> frozenset[str]:
-    """Best-effort set of assigned local addresses for *family*.
+class _InterfaceAddress(ctypes.Structure):
+    """Subset of the POSIX ``ifaddrs`` structure used for address discovery."""
 
-    Always includes the loopback address. Never returns wildcard hosts.
+
+_InterfaceAddress._fields_ = [
+    ("ifa_next", ctypes.POINTER(_InterfaceAddress)),
+    ("ifa_name", ctypes.c_char_p),
+    ("ifa_flags", ctypes.c_uint),
+    ("ifa_addr", ctypes.c_void_p),
+    ("ifa_netmask", ctypes.c_void_p),
+    ("ifa_ifu", ctypes.c_void_p),
+    ("ifa_data", ctypes.c_void_p),
+]
+
+
+def _assigned_interface_addresses(family: int) -> set[str]:
+    """Return assigned, concrete interface addresses for an IP family.
+
+    ``getifaddrs`` enumerates every address, including secondary addresses
+    that hostname lookup and route selection do not expose. The other
+    discovery paths in ``_local_addresses`` remain as best-effort fallbacks
+    for systems without this API.
 
     Args:
         family: ``socket.AF_INET`` or ``socket.AF_INET6``.
 
     Returns:
-        Concrete local IP strings suitable for ``sock.bind()``.
+        Assigned address strings, excluding IPv6 link-local addresses.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        getifaddrs = libc.getifaddrs
+        freeifaddrs = libc.freeifaddrs
+    except (AttributeError, OSError):
+        return set()
+
+    getifaddrs.argtypes = [ctypes.POINTER(ctypes.POINTER(_InterfaceAddress))]
+    getifaddrs.restype = ctypes.c_int
+    freeifaddrs.argtypes = [ctypes.POINTER(_InterfaceAddress)]
+    freeifaddrs.restype = None
+
+    interface_list = ctypes.POINTER(_InterfaceAddress)()
+    if getifaddrs(ctypes.byref(interface_list)) != 0:
+        return set()
+
+    addresses: set[str] = set()
+    try:
+        current = interface_list
+        while current:
+            address = current.contents.ifa_addr
+            if address:
+                raw_family = ctypes.string_at(address, 2)
+                address_family = ctypes.c_ushort.from_address(address).value
+                # BSD sockaddr starts with sa_len, then sa_family; Linux
+                # stores sa_family in the first two bytes.
+                if address_family not in {socket.AF_INET, socket.AF_INET6}:
+                    address_family = raw_family[1]
+
+                if address_family == family:
+                    offset, size = (4, 4) if family == socket.AF_INET else (8, 16)
+                    raw_ip = ctypes.string_at(address + offset, size)
+                    ip = ipaddress.ip_address(raw_ip)
+                    if not ip.is_unspecified and not (isinstance(ip, ipaddress.IPv6Address) and ip.is_link_local):
+                        addresses.add(str(ip))
+            current = current.contents.ifa_next
+    finally:
+        freeifaddrs(interface_list)
+    return addresses
+
+
+def _is_wildcard_bind_addr(addr: str) -> bool:
+    """Return True when *addr* would bind all interfaces.
+
+    Covers canonical wildcards, expanded IPv6 unspecified forms, and
+    alternate IPv4 spellings the kernel maps to ``INADDR_ANY`` (``0``,
+    ``0x0``, ``00.00.00.00``, hostnames that resolve to ``0.0.0.0``, …).
+
+    Args:
+        addr: Candidate bind address or hostname.
+
+    Returns:
+        True when any resolved address is unspecified.
+    """
+    if addr in _WILDCARD_IPV4 or addr in _WILDCARD_IPV6:
+        return True
+    return any(ip.is_unspecified for ip in _resolved_bind_ips(addr))
+
+
+def _resolved_concrete_bind_ip(addr: str, family: int) -> str | None:
+    """Resolve *addr* to a concrete IP string safe for ``sock.bind()``.
+
+    Args:
+        addr: Candidate bind address or hostname.
+        family: Address family for the probe socket.
+
+    Returns:
+        A non-unspecified IP string matching *family*, or ``None`` when
+        *addr* has no matching address, is/resolves to an all-interfaces
+        address in that family, or cannot be resolved.
+    """
+    if addr in _WILDCARD_IPV4 or addr in _WILDCARD_IPV6:
+        return None
+    if family == socket.AF_INET:
+        address_type: type[ipaddress.IPv4Address] | type[ipaddress.IPv6Address] = ipaddress.IPv4Address
+    elif family == socket.AF_INET6:
+        address_type = ipaddress.IPv6Address
+    else:
+        return None
+    for ip in _resolved_bind_ips(addr):
+        if not isinstance(ip, address_type):
+            continue
+        if ip.is_unspecified:
+            return None
+        return str(ip)
+    return None
+
+
+def _local_addresses(family: int) -> frozenset[str]:
+    """Best-effort set of assigned local addresses for *family*.
+
+    Includes bindable candidates. Retains the loopback sentinel when its bind
+    fails with ``EADDRNOTAVAIL`` and candidates when the family is unsupported,
+    so callers can preserve an unverified-family signal. Never returns wildcards.
+
+    Args:
+        family: ``socket.AF_INET`` or ``socket.AF_INET6``.
+
+    Returns:
+        Address strings to probe, including retained unverified sentinels.
     """
     loopback = "127.0.0.1" if family == socket.AF_INET else "::1"
     found: set[str] = {loopback}
+    found.update(
+        addr for addr in _assigned_interface_addresses(family) if not ipaddress.ip_address(addr).is_unspecified
+    )
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, family, socket.SOCK_STREAM):
             raw_ip = info[4][0]
             if not isinstance(raw_ip, str) or not raw_ip or "%" in raw_ip:
                 continue
             if family == socket.AF_INET6 and raw_ip.lower().startswith("fe80:"):
+                continue
+            if _is_wildcard_bind_addr(raw_ip):
                 continue
             found.add(raw_ip)
     except OSError:
@@ -383,36 +546,58 @@ def _local_addresses(family: int) -> frozenset[str]:
         with socket.socket(family, socket.SOCK_DGRAM) as sock:
             sock.connect(remote)
             raw_ip = sock.getsockname()[0]
-            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip:
+            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip and not _is_wildcard_bind_addr(raw_ip):
                 found.add(raw_ip)
     except OSError:
         pass
-    return frozenset(found)
+
+    bindable: set[str] = set()
+    for addr in found:
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as sock:
+                if family == socket.AF_INET6:
+                    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                sock.bind((addr, 0))
+        except OSError as exc:
+            # Keep disabled-family candidates and the loopback sentinel as an
+            # unverified signal; discard stale non-loopback addresses.
+            if exc.errno == errno.EAFNOSUPPORT or (addr == loopback and exc.errno == errno.EADDRNOTAVAIL):
+                bindable.add(addr)
+        else:
+            bindable.add(addr)
+    return frozenset(bindable)
 
 
 def _probe_targets(host: str) -> list[tuple[int, str]]:
     """Resolve *host* into concrete ``(family, address)`` bind probe targets.
 
-    Wildcard hosts expand to every known local address so a listener on a
-    non-loopback interface still fails the check, without ever binding
-    ``''`` / ``0.0.0.0`` / ``::``. IPv6 wildcards also probe local IPv4
-    addresses because dual-stack ``::`` listeners accept IPv4 traffic.
+    Each resolved unspecified address expands to concrete local addresses so
+    wildcard listeners never reach ``sock.bind()``. IPv6 wildcards also probe
+    local IPv4 addresses because dual-stack ``::`` listeners accept IPv4
+    traffic. Hostnames probe every resolved address in its matching family.
 
     Args:
         host: Host from a gRPC listen address or caller-supplied bind target.
 
     Returns:
-        One or more ``(address_family, ip)`` pairs to probe.
+        ``(address_family, ip)`` pairs to probe. Returns an empty list when
+        name resolution fails so callers can treat the port as unverified.
     """
-    if host in _WILDCARD_IPV4:
-        return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
-    if host in _WILDCARD_IPV6 or _is_unspecified_ipv6(host):
-        return _ipv6_wildcard_probe_targets()
-    if host.startswith("[") and host.endswith("]"):
-        return [(socket.AF_INET6, host[1:-1])]
-    if ":" in host:
-        return [(socket.AF_INET6, host)]
-    return [(socket.AF_INET, host)]
+    resolved = _resolved_bind_ips(host)
+    if not resolved:
+        return []
+
+    targets: list[tuple[int, str]] = []
+    for ip in resolved:
+        if ip.is_unspecified:
+            if isinstance(ip, ipaddress.IPv4Address):
+                targets.extend((socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET)))
+            else:
+                targets.extend(_ipv6_wildcard_probe_targets())
+        else:
+            family = socket.AF_INET6 if isinstance(ip, ipaddress.IPv6Address) else socket.AF_INET
+            targets.append((family, str(ip)))
+    return list(dict.fromkeys(targets))
 
 
 def _bind_probe(family: int, addr: str, port: int) -> bool | None:
@@ -420,27 +605,36 @@ def _bind_probe(family: int, addr: str, port: int) -> bool | None:
 
     Args:
         family: Address family for the temporary socket.
-        addr: Concrete IP to bind (never a wildcard).
+        addr: Candidate bind address; wildcards return ``None`` without binding.
         port: TCP port number.
 
     Returns:
         ``True`` if the bind succeeded (port free), ``False`` if the port is
-        in use, or ``None`` if *addr* is not assignable on this host.
+        in use or *addr* cannot resolve to the requested family, or ``None``
+        if *addr* is a wildcard or the address/family is unavailable to probe.
     """
+    concrete = _resolved_concrete_bind_ip(addr, family)
+    if concrete is None:
+        if _is_wildcard_bind_addr(addr):
+            return None
+        # An unresolved or family-mismatched address is not proof the port is
+        # free. Keep recovery conservative rather than dropping daemon state.
+        return False
     try:
         with socket.socket(family, socket.SOCK_STREAM) as sock:
             if family == socket.AF_INET6:
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-            sock.bind((addr, port))
+            sock.bind((concrete, port))
     except OSError as exc:
-        # Address not present / family disabled — skip, do not treat as busy.
+        # An unavailable address or family is unprobeable, not proof that a
+        # recorded daemon port is free.
         if exc.errno in {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT}:
             return None
         return False
     return True
 
 
-def _check_port_available(host: str, port: int) -> bool:
+def _check_port_available(host: str, port: int, *, fail_on_unprobeable: bool = False) -> bool:
     """Return True if *port* on *host* is free (bind succeeds).
 
     Uses ``bind()`` instead of ``connect()`` so the check works for
@@ -452,50 +646,65 @@ def _check_port_available(host: str, port: int) -> bool:
     Args:
         host: Host to probe.
         port: TCP port number.
+        fail_on_unprobeable: Treat unavailable addresses and families as
+            unavailable. Stale-daemon checks use this to avoid deleting state
+            without verifying every target.
 
     Returns:
-        True when the port is available (bind succeeds on every probeable
-        local address for *host*).
+        True when no probeable target reports a conflict. Resolution failures
+        always yield False; when *fail_on_unprobeable* is set, any target that
+        cannot be probed also yields False.
     """
-    for family, addr in _probe_targets(host):
+    targets = _probe_targets(host)
+    if not targets:
+        return False
+    for family, addr in targets:
         result = _bind_probe(family, addr, port)
-        if result is False:
+        if result is False or (result is None and fail_on_unprobeable):
             return False
-    # Unprobeable addresses (``None``) are skipped. If every target was
-    # unprobeable (e.g. IPv6 disabled for ``::``), defer to the daemon's
-    # real bind rather than inventing a false conflict.
+    # The default startup check skips unsupported families and relies on the
+    # remaining probeable addresses. If none can be probed, defer to the
+    # daemon's real bind rather than inventing a false conflict.
     return True
 
 
 def _address_port_bound(address: str) -> bool:
-    """Return True when the host:port in *address* is already bound.
+    """Return True when the host:port in *address* is bound or unverified.
 
     Args:
         address: gRPC-style ``host:port`` string from daemon state.
 
     Returns:
-        True when the port is in use (or the address cannot be parsed).
+        True when the port is in use, cannot be probed, or the address cannot
+        be parsed. Hostnames are treated as unverified because state does not
+        store the original DNS answers used by the daemon.
     """
     host, _, port_s = address.rpartition(":")
     if not host or not port_s.isdigit():
         return True
-    return not _check_port_available(host, int(port_s))
+    try:
+        ipaddress.ip_address(_unbracket_host(host))
+    except ValueError:
+        # A hostname's current answers cannot prove where the daemon bound
+        # when its state was written; avoid deleting that state on a new DNS set.
+        return True
+    return not _check_port_available(host, int(port_s), fail_on_unprobeable=True)
 
 
 def _assert_ports_free(host: str, ports: dict[str, int]) -> None:
-    """Raise RuntimeError if any port in *ports* is already bound.
+    """Raise RuntimeError if any port in *ports* is bound or unverified.
 
     Args:
         host: Host to probe.
         ports: Map of service name to port number.
 
     Raises:
-        RuntimeError: When a port is already in use.
+        RuntimeError: When a port is in use or cannot be verified.
     """
     for name, port in ports.items():
         if not _check_port_available(host, port):
             msg = (
-                f"Port {port} ({name}) is already in use — is a Podman pod or "
+                f"Port {port} ({name}) is in use or could not be verified — is a Podman pod or "
                 f"another daemon running? Set APME_ENGINE_ADDRESS to connect "
                 f"to an existing service instead of starting a new daemon."
             )
@@ -905,14 +1114,16 @@ def _daemon_status_unlocked() -> DaemonState | None:
             _stop_daemon_unlocked()
             return None
         # Live PID, failed Engine health, no ownership proof. If the recorded
-        # Engine port is still bound, auto-start would collide — ask the
-        # operator to free it instead of deleting state and retrying.
+        # Engine port is bound or cannot be checked, auto-start may collide —
+        # ask the operator to investigate instead of deleting state and retrying.
         if _address_port_bound(state.engine):
             msg = (
-                f"A live process (pid {state.pid}) still holds daemon ports but "
-                f"does not answer Engine health and cannot be verified for "
-                f"ownership. Stop it manually (`kill {state.pid}`), remove "
-                f"`~/.apme-data/daemon.json` if it remains, then retry. "
+                f"A live process (pid {state.pid}) does not answer Engine health "
+                f"and cannot be verified for ownership. Its recorded Engine "
+                f"port is in use or could not be checked. Verify the process "
+                f"and port owner before stopping anything; after confirming "
+                f"the state is stale and the port is free, remove "
+                f"`{_STATE_FILE}` if it remains, then retry. "
                 f"Auto-start is blocked to avoid port conflicts."
             )
             raise RuntimeError(msg)

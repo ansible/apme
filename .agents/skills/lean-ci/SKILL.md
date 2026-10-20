@@ -25,17 +25,20 @@ locally-runnable tox environments; CI just calls them.
 
 2. **Workflows call tox environments, not inline shell.** Build and test logic
    belongs in `tox.ini` environments -- never in multi-line YAML `run:` blocks.
-   CI runs `uvx --with-requirements ci/tox-requirements.txt tox -e <env>`
-   (tox matches `uv.lock`; tox-uv is CI-only so it is pinned in
-   `ci/tox-requirements.txt`, not in the lock — bump both together, #591).
+   CI runs `uvx --with-requirements ci/tox-requirements.txt tox -e <env>`.
+   The local `uv.lock` also resolves tox through `ansible-dev-tools`; keep
+   that tox version and the documented local install pin aligned with the CI
+   pin. `tox-uv` is CI-only and is pinned in `ci/tox-requirements.txt` (#591).
 
 3. **No scattered version pinning.** Python version is in `pyproject.toml`
    (`requires-python`). Node is in `frontend/package.json` (`engines.node`).
    Tool versions are managed in `.pre-commit-config.yaml`
    (ruff, mypy) and `pyproject.toml` (deps). Not in workflow YAML.
-   Carve-out: `tox`/`tox-uv` are uvx-managed CI tools outside `uv.lock`,
-   so their pins live in `ci/tox-requirements.txt` (#591) — workflows
-   reference that file, not inline version literals.
+   Carve-out: CI installs `tox`/`tox-uv` with `uvx` from
+   `ci/tox-requirements.txt` rather than the project lock. For local dev,
+   tox is also resolved in `uv.lock` via `ansible-dev-tools`; keep that
+   version and the documented `uv tool install` pin aligned with the CI
+   tox pin. `tox-uv` is CI-only and remains outside the project lock.
    Jobs that need Node use `actions/setup-node` with
    `node-version-file: frontend/package.json`.
 
@@ -70,7 +73,7 @@ environment that developers run locally.
 | `tox -e e2e` | End-to-end pod scan (rebuild + start + scan + assert) | manual |
 | `tox -e pm` | Build + start + open browser | manual |
 
-Install: `uv tool install tox==4.53.0 --with tox-uv==1.36.0` (match CI pins, #591)
+Install: `uv tool install tox==4.61.4 --with tox-uv==1.36.0` (match CI pins, #591)
 
 ## Workflow structure
 

@@ -10,7 +10,7 @@ argument-hint: "[branch-name] [--title 'PR title']"
 user-invocable: true
 metadata:
   author: APME Team
-  version: 1.3.0
+  version: 1.6.0
 ---
 
 # PR New
@@ -153,7 +153,11 @@ artifact type, translate it:
 
 5. **Are dependencies and versions pinned to intent?** Check every
    version range, action tag, and base image. Does each one express
-   what you actually mean — not tighter, not looser? For workflow
+   what you actually mean — not tighter, not looser? When updating a tool
+   used by CI, compare all of its resolution sources: CI requirements,
+   project lockfiles, developer install commands, and agent setup guides.
+   Keep the resolved versions aligned or document the intentional split.
+   For workflow
    checkouts: if the job has write scopes (`packages: write`, etc.)
    or runs untrusted/repo scripts after checkout, is
    `persist-credentials: false` set so `GITHUB_TOKEN` is not left
@@ -201,6 +205,9 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   When tests exercise optional OS or native capabilities, trace both
+   available and unavailable cases: gate capability-specific assertions
+   and separately assert the documented fallback.
    When a check treats a character as a metacharacter (shell `|`,
    glob `*`, YAML `&`), construct an input where that character is
    a token in a *different* grammar in the same string — Jinja
@@ -400,6 +407,21 @@ break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
 ``host:abc``). If a caller claims graceful degrade and only catches
 ``ImportError``, also construct a parse ``ValueError`` through that
 caller. Do not treat “contains a colon” as proof of TCP.
+For hostname-based socket probes, construct IPv4-only, IPv6-only, and
+dual-stack DNS answers in both answer orders. Verify every resolved
+address is probed with its matching socket family, and simulate
+resolution failures and recovery so an unavailable lookup cannot be
+misreported as a free port or retried with a guessed family.
+For best-effort local-address discovery, verify candidates with an
+ephemeral bind before adding them to wildcard probe targets. Drop
+non-loopback candidates rejected as no longer local, but retain the
+loopback sentinel when it fails with ``EADDRNOTAVAIL`` and candidates
+when the family itself is unsupported. Stale-state checks must treat
+these as unverified instead of free.
+For durable state that records a hostname, simulate DNS changing between
+state creation and recovery. Current resolver answers cannot prove where the
+process originally bound; persist the original targets or fail closed when
+no address snapshot exists.
 When a function degrades to identity (return original / omit from
 diffs / skip and continue) on failure, construct the caller path that
 reports "already clean", "idempotent", or "success" from an empty
@@ -474,7 +496,9 @@ critical/high/medium/low.
   compare their scope enumeration and all-path requirements so a protected
   path cannot hide an unprotected path in another rule (for example, L047
   and L110 handling shared include contexts).
-- Test gaps for behaviors the code/docs claim
+- Test gaps for behaviors the code/docs claim; verify each regression test
+  reaches the changed logic and would fail without the fix (use a positive
+  control or the pre-fix behavior when practical)
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action
   tags, base images, pip/uv specs (not tighter, not looser);

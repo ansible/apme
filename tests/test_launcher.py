@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import json
 import signal
 import socket
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from pytest import MonkeyPatch
@@ -16,11 +17,27 @@ from apme_engine.daemon.launcher import (
     DaemonState,
     _address_port_bound,
     _assert_ports_free,
+    _assigned_interface_addresses,
+    _bind_probe,
     _check_port_available,
+    _local_addresses,
     _probe_targets,
     _proc_starttime,
     daemon_status,
 )
+
+
+def _getifaddrs_available() -> bool:
+    """Return whether the host exposes both interface enumeration calls.
+
+    Returns:
+        Whether both getifaddrs and freeifaddrs are available.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError:
+        return False
+    return hasattr(libc, "getifaddrs") and hasattr(libc, "freeifaddrs")
 
 
 def _ephemeral_port() -> int:
@@ -59,6 +76,359 @@ def test_probe_targets_expands_unspecified_ipv6_forms() -> None:
     assert all(addr not in {"", "::", "0:0:0:0:0:0:0:0"} for _, addr in canonical)
 
 
+def test_bind_probe_rejects_wildcard_addresses() -> None:
+    """Wildcard candidates (including alternate IPv4 spellings) never reach sock.bind."""
+    ipv4_wildcards = ("0.0.0.0", "", "0", "0x0", "00.00.00.00", "0.0.0")
+    ipv6_wildcards = ("::", "::0", "0:0:0:0:0:0:0:0")
+    with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+        for addr in ipv4_wildcards:
+            assert _bind_probe(socket.AF_INET, addr, 9) is None, addr
+        for addr in ipv6_wildcards:
+            assert _bind_probe(socket.AF_INET6, addr, 9) is None, addr
+        mock_socket.assert_not_called()
+
+
+def test_probe_targets_expands_alternate_ipv4_wildcards() -> None:
+    """Alternate IPv4 unspecified spellings expand like ``0.0.0.0``."""
+    canonical = _probe_targets("0.0.0.0")
+    for host in ("0", "0x0", "00.00.00.00"):
+        targets = _probe_targets(host)
+        assert targets == canonical
+        assert all(addr not in {"", "0", "0.0.0.0", "0x0"} for _, addr in targets)
+
+
+def test_probe_targets_include_each_resolved_hostname_family(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Hostname probes include IPv6-only and dual-stack DNS answers.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    resolutions = {
+        "v6-only.example": [
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::10", 0, 0, 0)),
+        ],
+        "v4-only.example": [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.11", 0)),
+        ],
+        "dual-stack.example": [
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::10", 0, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.10", 0)),
+        ],
+        "dual-stack-v4-first.example": [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.10", 0)),
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::10", 0, 0, 0)),
+        ],
+        "mixed-wildcard.example": [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("0.0.0.0", 0)),
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::20", 0, 0, 0)),
+        ],
+    }
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda host, *args, **kwargs: resolutions[host],
+    )
+
+    assert _probe_targets("v6-only.example") == [(socket.AF_INET6, "2001:db8::10")]
+    assert _probe_targets("v4-only.example") == [(socket.AF_INET, "192.0.2.11")]
+    assert _probe_targets("dual-stack.example") == [
+        (socket.AF_INET6, "2001:db8::10"),
+        (socket.AF_INET, "192.0.2.10"),
+    ]
+    assert _probe_targets("dual-stack-v4-first.example") == [
+        (socket.AF_INET, "192.0.2.10"),
+        (socket.AF_INET6, "2001:db8::10"),
+    ]
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher._local_addresses",
+        lambda family: frozenset({"192.0.2.20"}) if family == socket.AF_INET else frozenset({"2001:db8::30"}),
+    )
+    assert _probe_targets("mixed-wildcard.example") == [
+        (socket.AF_INET, "192.0.2.20"),
+        (socket.AF_INET6, "2001:db8::20"),
+    ]
+
+
+def test_check_port_available_probes_all_hostname_families_in_dns_order(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Every hostname answer is bound with its matching socket family.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    answers = {
+        "v6-first.example": [
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::10", 0, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.10", 0)),
+        ],
+        "v4-first.example": [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.10", 0)),
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::10", 0, 0, 0)),
+        ],
+    }
+    expected = {
+        "v6-first.example": [(socket.AF_INET6, "2001:db8::10"), (socket.AF_INET, "192.0.2.10")],
+        "v4-first.example": [(socket.AF_INET, "192.0.2.10"), (socket.AF_INET6, "2001:db8::10")],
+    }
+    probed: list[tuple[int, str, int]] = []
+
+    def make_socket(family: int, *args: object, **kwargs: object) -> MagicMock:
+        mock_socket = MagicMock()
+        mock_socket.__enter__.return_value.bind.side_effect = lambda address: probed.append(
+            (family, address[0], address[1])
+        )
+        return mock_socket
+
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda host, *args, **kwargs: answers[host],
+    )
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", make_socket)
+
+    for host, targets in expected.items():
+        probed.clear()
+        assert _check_port_available(host, 50051) is True
+        assert probed == [(family, address, 50051) for family, address in targets]
+
+
+def test_check_port_available_does_not_skip_resolution_failures(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A DNS failure must not make an unknown hostname's port look free.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    def fail_resolution(*args: object, **kwargs: object) -> list[tuple[object, ...]]:
+        raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
+
+    resolve_mock = Mock(side_effect=fail_resolution)
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        resolve_mock,
+    )
+    with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+        assert _check_port_available("temporary-dns.example", 50051) is False
+        mock_socket.assert_not_called()
+    assert _address_port_bound("temporary-dns.example:50051") is True
+    # Recovery must not trust a fresh hostname lookup for an older daemon.
+    assert resolve_mock.call_count == 1
+
+
+def test_check_port_available_recovers_from_transient_resolution_failure(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A later successful lookup probes all families after an initial failure.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    recovered_answers = [
+        (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::10", 0, 0, 0)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.10", 0)),
+    ]
+    resolve_mock = Mock(side_effect=[socket.gaierror(socket.EAI_AGAIN, "temporary failure"), recovered_answers])
+    probed: list[tuple[int, str]] = []
+
+    def make_socket(family: int, *args: object, **kwargs: object) -> MagicMock:
+        mock_socket = MagicMock()
+        mock_socket.__enter__.return_value.bind.side_effect = lambda address: probed.append((family, address[0]))
+        return mock_socket
+
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.getaddrinfo", resolve_mock)
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", make_socket)
+
+    assert _check_port_available("transient-dns.example", 50051) is False
+    assert resolve_mock.call_count == 1
+    assert probed == []
+
+    assert _check_port_available("transient-dns.example", 50051) is True
+    assert resolve_mock.call_count == 2
+    assert probed == [(socket.AF_INET6, "2001:db8::10"), (socket.AF_INET, "192.0.2.10")]
+
+
+def test_check_port_available_treats_unavailable_address_as_unverified(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A resolved address missing from this host must not look like a free port.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda host, *args, **kwargs: [
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:db8::10", 0, 0, 0))
+        ],
+    )
+    with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+        mock_socket.return_value.__enter__.return_value.bind.side_effect = OSError(
+            errno.EADDRNOTAVAIL,
+            "Cannot assign requested address",
+        )
+        assert _check_port_available("stale-dns.example", 50051) is True
+        assert _check_port_available("stale-dns.example", 50051, fail_on_unprobeable=True) is False
+        assert _address_port_bound("stale-dns.example:50051") is True
+
+
+def test_bind_probe_resolves_address_matching_socket_family(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Dual-stack DNS results are selected to match the probe socket family.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    resolved = [
+        (
+            socket.AF_INET6,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            ("2001:db8::10", 0, 0, 0),
+        ),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.10", 0)),
+    ]
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda *args, **kwargs: resolved,
+    )
+    for family, expected_address in (
+        (socket.AF_INET, "192.0.2.10"),
+        (socket.AF_INET6, "2001:db8::10"),
+    ):
+        with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+            assert _bind_probe(family, "dual-stack.example", 50051) is True
+
+        mock_socket.return_value.__enter__.return_value.bind.assert_called_once_with((expected_address, 50051))
+
+
+def test_probe_preserves_ipv6_scope_id(monkeypatch: MonkeyPatch) -> None:
+    """Link-local IPv6 DNS targets retain their interface scope when bound.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    addresses = {
+        "link-local-index.example": "fe80::10%3",
+        "link-local-name.example": "fe80::11%eth0",
+    }
+    resolutions = {
+        "link-local-index.example": [
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("fe80::10", 0, 0, 3)),
+        ],
+        "link-local-name.example": [
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("fe80::11%eth0", 0, 0, 3)),
+        ],
+    }
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda host, *args, **kwargs: resolutions[host],
+    )
+
+    for host, scoped_address in addresses.items():
+        assert _probe_targets(host) == [(socket.AF_INET6, scoped_address)]
+        with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+            assert _bind_probe(socket.AF_INET6, host, 50051) is True
+        mock_socket.return_value.__enter__.return_value.bind.assert_called_once_with((scoped_address, 50051))
+
+
+def test_local_addresses_exclude_wildcard_ips(monkeypatch: MonkeyPatch) -> None:
+    """Hostname and route resolution never add wildcard addresses as local.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr("apme_engine.daemon.launcher._assigned_interface_addresses", lambda _family: set())
+    for family, wildcard, loopback, sockaddr in (
+        (socket.AF_INET, "0.0.0.0", "127.0.0.1", ("0.0.0.0", 0)),
+        (socket.AF_INET6, "::", "::1", ("::", 0, 0, 0)),
+    ):
+        monkeypatch.setattr(
+            "apme_engine.daemon.launcher.socket.getaddrinfo",
+            lambda *args, current_family=family, current_sockaddr=sockaddr, **kwargs: [
+                (
+                    current_family,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    current_sockaddr,
+                )
+            ],
+        )
+        with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+            mock_socket.return_value.__enter__.return_value.getsockname.return_value = (
+                wildcard,
+                0,
+            )
+            assert _local_addresses(family) == frozenset({loopback})
+
+
+def test_local_addresses_filter_candidates_that_cannot_be_bound(monkeypatch: MonkeyPatch) -> None:
+    """Stale hostname results are removed from wildcard probe candidates.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    stale_address = "192.0.2.20"
+    route_address = "192.0.2.30"
+    monkeypatch.setattr("apme_engine.daemon.launcher._assigned_interface_addresses", lambda _family: set())
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (stale_address, 0))],
+    )
+
+    def make_socket(family: int, sock_type: int, *args: object, **kwargs: object) -> MagicMock:
+        mock_socket = MagicMock()
+        entered = mock_socket.__enter__.return_value
+        if sock_type == socket.SOCK_DGRAM:
+            entered.getsockname.return_value = (route_address, 0)
+        else:
+
+            def bind(address: tuple[str, int]) -> None:
+                if address[0] == stale_address:
+                    raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")
+
+            entered.bind.side_effect = bind
+        return mock_socket
+
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", make_socket)
+
+    assert _local_addresses(socket.AF_INET) == frozenset({"127.0.0.1", route_address})
+
+
+def test_ipv6_wildcard_keeps_unavailable_loopback_as_unverified(monkeypatch: MonkeyPatch) -> None:
+    """A missing IPv6 loopback bind must remain visible to stale-state checks.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda *args, **kwargs: [],
+    )
+
+    def make_socket(family: int, sock_type: int, *args: object, **kwargs: object) -> MagicMock:
+        mock_socket = MagicMock()
+        entered = mock_socket.__enter__.return_value
+        entered.getsockname.return_value = ("::", 0, 0, 0) if family == socket.AF_INET6 else ("0.0.0.0", 0)
+
+        def bind(address: tuple[str, int]) -> None:
+            if address[0] == "::1":
+                raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")
+
+        entered.bind.side_effect = bind
+        return mock_socket
+
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", make_socket)
+
+    assert _local_addresses(socket.AF_INET6) == frozenset({"::1"})
+    assert _check_port_available("::", 50051, fail_on_unprobeable=True) is False
+
+
 def test_check_port_available_skips_unsupported_ipv6_family(monkeypatch: MonkeyPatch) -> None:
     """IPv6-disabled hosts still probe IPv4 targets for ``::`` wildcards.
 
@@ -75,6 +445,7 @@ def test_check_port_available_skips_unsupported_ipv6_family(monkeypatch: MonkeyP
     monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", _socket)
     port = _ephemeral_port()
     assert _check_port_available("::", port) is True
+    assert _address_port_bound(f"[::]:{port}") is True
 
 
 def _first_non_loopback_ipv4() -> str | None:
@@ -162,6 +533,75 @@ def test_probe_targets_ipv6_wildcard_includes_ipv4() -> None:
     assert (socket.AF_INET, "127.0.0.1") in targets
 
 
+def test_assigned_interface_addresses_reads_ipv4_loopback() -> None:
+    """Interface enumeration reads the concrete IPv4 loopback address."""
+    if not _getifaddrs_available():
+        pytest.skip("getifaddrs and freeifaddrs are unavailable")
+    assert "127.0.0.1" in _assigned_interface_addresses(socket.AF_INET)
+
+
+def test_assigned_interface_addresses_reads_ipv6_loopback() -> None:
+    """Interface enumeration reads IPv6 loopback when the host supports it."""
+    if not _getifaddrs_available():
+        pytest.skip("getifaddrs and freeifaddrs are unavailable")
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as sock:
+            sock.bind(("::1", 0))
+    except OSError:
+        pytest.skip("IPv6 loopback is unavailable")
+    assert "::1" in _assigned_interface_addresses(socket.AF_INET6)
+
+
+def test_assigned_interface_addresses_returns_empty_without_getifaddrs(monkeypatch: MonkeyPatch) -> None:
+    """Unavailable native interface enumeration returns an empty set.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr("apme_engine.daemon.launcher.ctypes.CDLL", lambda *_args, **_kwargs: object())
+
+    assert _assigned_interface_addresses(socket.AF_INET) == set()
+    assert _assigned_interface_addresses(socket.AF_INET6) == set()
+
+
+def test_wildcard_probe_includes_secondary_interface_addresses(monkeypatch: MonkeyPatch) -> None:
+    """Wildcard probes include assigned addresses missed by DNS and routing.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    secondary = {"192.0.2.10", "192.0.2.11"}
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher._assigned_interface_addresses",
+        lambda family: secondary | {"0.0.0.0"} if family == socket.AF_INET else {"::"},
+    )
+    monkeypatch.setattr(
+        "apme_engine.daemon.launcher.socket.getaddrinfo",
+        lambda *args: [],
+    )
+    mock_socket = MagicMock()
+    mock_socket.__enter__.return_value.getsockname.return_value = ("0.0.0.0", 0)
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", lambda *args, **kwargs: mock_socket)
+
+    ipv4_addresses = _local_addresses(socket.AF_INET)
+    assert secondary <= ipv4_addresses
+    assert "0.0.0.0" not in ipv4_addresses
+    assert "::" not in _local_addresses(socket.AF_INET6)
+    assert all((socket.AF_INET, addr) in _probe_targets("0.0.0.0") for addr in secondary)
+
+    probed: list[str] = []
+
+    def _bind_probe(family: int, addr: str, port: int) -> bool:
+        del family, port
+        probed.append(addr)
+        return addr != "192.0.2.11"
+
+    monkeypatch.setattr("apme_engine.daemon.launcher._bind_probe", _bind_probe)
+    assert _check_port_available("0.0.0.0", 50051) is False
+    assert "192.0.2.10" in probed
+    assert "192.0.2.11" in probed
+
+
 def test_assert_ports_free_raises_on_conflict() -> None:
     """_assert_ports_free raises RuntimeError when a port is in use."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -170,7 +610,7 @@ def test_assert_ports_free_raises_on_conflict() -> None:
     sock.listen(1)
     port = sock.getsockname()[1]
     try:
-        with pytest.raises(RuntimeError, match="already in use"):
+        with pytest.raises(RuntimeError, match="in use or could not be verified"):
             _assert_ports_free("127.0.0.1", {"engine": port})
     finally:
         sock.close()
@@ -259,8 +699,8 @@ def test_daemon_status_removes_stale_state_when_port_free(tmp_path: Path, monkey
     assert not state_file.exists()
 
 
-def test_daemon_status_blocks_when_unverified_pid_holds_ports(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    """Unverified live PID with a bound Engine port raises instead of auto-start.
+def test_daemon_status_blocks_when_hostname_target_cannot_be_verified(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """A hostname cannot prove where an unverified daemon originally bound.
 
     Args:
         tmp_path: Pytest temporary directory.
@@ -273,7 +713,7 @@ def test_daemon_status_blocks_when_unverified_pid_holds_ports(tmp_path: Path, mo
         json.dumps(
             {
                 "pid": 4242,
-                "engine": "127.0.0.1:50051",
+                "engine": "daemon.example:50051",
                 "version": "0.1.0",
                 "started_at": "2026-08-03T00:00:00Z",
             }
@@ -287,12 +727,14 @@ def test_daemon_status_blocks_when_unverified_pid_holds_ports(tmp_path: Path, mo
     with (
         patch("apme_engine.daemon.launcher._pid_alive", return_value=True),
         patch("apme_engine.daemon.launcher._health_check", return_value=False),
-        patch("apme_engine.daemon.launcher._address_port_bound", return_value=True),
         patch("apme_engine.daemon.launcher._stop_daemon_unlocked") as stop_mock,
-        pytest.raises(RuntimeError, match="still holds daemon ports"),
+        pytest.raises(RuntimeError, match="in use or could not be checked") as exc_info,
     ):
         daemon_status()
 
+    assert "Verify the process and port owner before stopping anything" in str(exc_info.value)
+    assert f"kill {4242}" not in str(exc_info.value)
+    assert str(state_file) in str(exc_info.value)
     stop_mock.assert_not_called()
     assert state_file.exists()
 

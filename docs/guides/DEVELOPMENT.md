@@ -16,7 +16,7 @@
 
 ```bash
 # tox — sole developer orchestration tool (ADR-047)
-uv tool install tox==4.53.0 --with tox-uv==1.36.0
+uv tool install tox==4.61.4 --with tox-uv==1.36.0
 
 # prek — git hooks (runs automatically on commit)
 uv tool install prek

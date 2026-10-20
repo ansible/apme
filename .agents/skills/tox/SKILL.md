@@ -156,7 +156,7 @@ tox l
 ## Installation
 
 ```bash
-uv tool install tox==4.53.0 --with tox-uv==1.36.0
+uv tool install tox==4.61.4 --with tox-uv==1.36.0
 ```
 
 ## Configuration

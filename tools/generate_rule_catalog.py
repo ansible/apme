@@ -442,6 +442,8 @@ def _collect_native_rules() -> list[Rule]:
         pytest_files = test_cache.get(rid, [])
 
         fm_validator = _normalize_validator(fm.get("validator", ""))
+        testable_status = fm.get("status", "") not in {"planned", "stub"}
+        has_test = bool(pytest_files) and testable_status
 
         rules.append(
             Rule(
@@ -451,8 +453,8 @@ def _collect_native_rules() -> list[Rule]:
                 has_impl=False,
                 impl_file="",
                 has_doc=True,
-                has_test=bool(pytest_files),
-                test_files=pytest_files,
+                has_test=has_test,
+                test_files=pytest_files if has_test else [],
                 status=fm.get("status", ""),
                 status_reason=fm.get("status_reason", ""),
             )

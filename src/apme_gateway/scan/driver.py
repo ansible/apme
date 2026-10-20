@@ -262,7 +262,14 @@ def _auth_cache_marker(scm_token: str | None, url_userpass: tuple[str, str] | No
         material = f"{url_userpass[0]}:{url_userpass[1]}"
     else:
         return ""
-    token_hash = hashlib.sha256(material.encode()).hexdigest()[:16]
+    # Process-local cache partition fingerprint — not password storage.
+    # BLAKE2 personalization separates this from other BLAKE2 digest uses.
+    # codeql[py/weak-sensitive-data-hashing]
+    token_hash = hashlib.blake2b(
+        material.encode(),
+        digest_size=8,
+        person=b"apme-auth-cache",
+    ).hexdigest()
     return f":auth:{token_hash}"
 
 
