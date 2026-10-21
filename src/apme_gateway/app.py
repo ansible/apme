@@ -6,12 +6,15 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from apme_gateway._galaxy_proxy_sync import reconcile_galaxy_config, stop_pending_push
 from apme_gateway.api.abbenay_proxy import router as abbenay_proxy_router
+from apme_gateway.api.atomic_operate import operate_router
 from apme_gateway.api.feedback import router as feedback_router
 from apme_gateway.api.operation_router import operation_router
+from apme_gateway.api.request_limits import IMPORT_SCAN_MAX_BODY_BYTES, ImportScanBodyLimitMiddleware
 from apme_gateway.api.router import router
 from apme_gateway.operation_registry import get_operation_registry
 
@@ -21,8 +24,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     """Gateway startup/shutdown lifecycle.
 
     On startup, reconcile Galaxy server configs from the DB to the Galaxy
-    Proxy periodically and start the operation registry reaper.
-    On shutdown, clean up in-flight operations.
+    Proxy, start the operation registry reaper, and reconcile the
+    notification outbox. On shutdown, clean up in-flight operations.
 
     Args:
         app: The FastAPI application instance (unused, required by lifespan protocol).
@@ -32,9 +35,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     """
     galaxy_sync = asyncio.create_task(reconcile_galaxy_config())
     get_operation_registry().start_reaper()
+
+    async def _drain_outbox() -> None:
+        try:
+            from apme_gateway.notifications import drain_notification_outbox  # noqa: PLC0415
+
+            # Process each stable page once; the helper advances past failures
+            # and caps startup work to a bounded number of rows.
+            await drain_notification_outbox()
+        except Exception:  # noqa: BLE001 -- startup reconcile is best-effort
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning("Notification outbox reconciliation failed at startup", exc_info=True)
+
+    outbox_drain = asyncio.create_task(_drain_outbox())
     try:
         yield
     finally:
+        outbox_drain.cancel()
+        await asyncio.gather(outbox_drain, return_exceptions=True)
         galaxy_sync.cancel()
         await asyncio.gather(galaxy_sync, return_exceptions=True)
         await stop_pending_push()
@@ -62,8 +81,33 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(feedback_router)
     app.include_router(operation_router)
+    app.include_router(operate_router)
     app.include_router(abbenay_proxy_router)
+    app.add_middleware(ImportScanBodyLimitMiddleware, max_body_bytes=IMPORT_SCAN_MAX_BODY_BYTES)
     from apme_engine.observability.http_middleware import HttpMetricsMiddleware
 
     app.add_middleware(HttpMetricsMiddleware, service="gateway")
+
+    @app.exception_handler(Exception)  # type: ignore[untyped-decorator]
+    async def _unhandled_gateway_error(_request: Request, exc: Exception) -> JSONResponse:
+        """Surface unexpected failures as JSON 500 with string detail.
+
+        Keeps the public error envelope consistent (FastAPI's default
+        ServerErrorMiddleware returns plain text, which breaks clients
+        expecting the ``{"detail": str}`` shape). Internal error text is
+        logged server-side but never echoed — the response carries a
+        stable string so callers can branch on status code.
+
+        Args:
+            _request: Incoming request (unused, required by handler protocol).
+            exc: Unhandled exception (logged, never echoed).
+
+        Returns:
+            JSON 500 response with string detail.
+        """
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning("Unhandled gateway error", exc_info=exc)
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
     return app

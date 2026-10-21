@@ -511,6 +511,44 @@ class TestLoadAiPrompts:
         assert "Validate carefully." in prompt
         _load_ai_prompts.cache_clear()
 
+    def test_unavailable_live_policy_uses_prompt_specific_fail_closed_text(self) -> None:
+        """Validation keeps its JSON schema while remediation uses skipped items."""
+        ctx = AINodeContext(
+            node_id="task-policy",
+            node_type="task",
+            file_path="test.yml",
+            yaml_lines="- name: test\n  ansible.builtin.debug:\n    msg: hi",
+            violations=[{"rule_id": "R999", "message": "test violation"}],
+        )
+
+        validation_prompt = _build_validation_prompt(ctx)
+        node_prompt = _build_node_prompt(ctx)
+
+        assert 'Prefer an "uncertain" verdict' in validation_prompt
+        assert '"skipped"' not in validation_prompt
+        assert 'put everything uncertain in "skipped"' in node_prompt
+
+    def test_live_policy_prompt_only_renders_rules_for_current_violations(self) -> None:
+        """Large policy catalogs do not crowd unrelated rules into each prompt."""
+        ctx = AINodeContext(
+            node_id="task-policy-filter",
+            node_type="task",
+            file_path="test.yml",
+            yaml_lines="- name: test\n  ansible.builtin.debug:\n    msg: hi",
+            violations=[{"rule_id": "native:L123", "message": "test violation"}],
+            resolved_severities={"L123": "high", "L234": "critical"},
+            rule_enabled={"L123": False, "L234": True},
+            live_policy_available=True,
+        )
+
+        node_prompt = _build_node_prompt(ctx)
+        validation_prompt = _build_validation_prompt(ctx)
+
+        assert "L123: severity=high enabled=false" in node_prompt
+        assert "L234:" not in node_prompt
+        assert "L123: severity=high enabled=false" in validation_prompt
+        assert "L234:" not in validation_prompt
+
     def test_no_guidance_when_no_hints(self, tmp_path: Path) -> None:
         """No guidance section when no rules have ai_prompt.
 

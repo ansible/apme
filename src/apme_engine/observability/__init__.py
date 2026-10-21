@@ -8,6 +8,7 @@ from apme_engine.observability.metrics import (
     record_galaxy_fetch,
     record_galaxy_wheel_serve,
     record_grpc_request,
+    record_reporting_drop,
     record_scan_diagnostics,
     record_venv_acquire,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "record_galaxy_fetch",
     "record_galaxy_wheel_serve",
     "record_grpc_request",
+    "record_reporting_drop",
     "record_scan_diagnostics",
     "record_venv_acquire",
     "setup_otel",

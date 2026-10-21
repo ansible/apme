@@ -190,3 +190,171 @@ class TestRunSbom:
         run_sbom(_make_args(gateway_url="http://custom:9999"))
 
         mock_cls.assert_called_once_with(base_url="http://custom:9999")
+
+
+class TestBuildLocalSbom:
+    """Tests for the local ``--path`` manifest SBOM builder (#4)."""
+
+    def test_missing_dir_exits_2(self, tmp_path: Path) -> None:
+        """Nonexistent --path exits 2.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        with pytest.raises(SystemExit) as exc_info:
+            _build_local_sbom(tmp_path / "nope")
+        assert exc_info.value.code == 2
+
+    def test_file_path_exits_2(self, tmp_path: Path) -> None:
+        """File --path exits 2 instead of scanning its parent.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        target = tmp_path / "site.yml"
+        target.write_text("- hosts: all\n", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc_info:
+            _build_local_sbom(target)
+        assert exc_info.value.code == 2
+
+    def test_requirements_yml_str_and_dict_entries(self, tmp_path: Path) -> None:
+        """String pins split name/version; missing dict versions stay unknown.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from typing import cast
+
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.yml").write_text(
+            "collections:\n  - ns.plain\n  - community.general:9.0.0\n"
+            "  - name: ns.pinned\n    version: 1.2.3\n"
+            "  - name: ns.null\n    version: null\n"
+            "  - name: ns.empty\n    version: ''\n",
+            encoding="utf-8",
+        )
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        by_name = {c["name"]: c for c in components}
+        assert by_name["ns.plain"]["version"] == "unknown"
+        assert by_name["ns.pinned"]["version"] == "1.2.3"
+        assert by_name["community.general"]["version"] == "9.0.0"
+        assert by_name["ns.null"]["version"] == "unknown"
+        assert by_name["ns.empty"]["version"] == "unknown"
+
+    def test_private_source_preserved_in_purl(self, tmp_path: Path) -> None:
+        """Dict entries with source keep their repository identity (#N0).
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from typing import cast
+
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.yml").write_text(
+            "collections:\n  - name: acme.widget\n    version: 2.0.0\n"
+            "    source: https://automation.example.com/api/galaxy/\n",
+            encoding="utf-8",
+        )
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        assert len(components) == 1
+        assert components[0]["purl"] == (
+            "pkg:generic/acme.widget@2.0.0?repository_url=https:%2F%2Fautomation.example.com%2Fapi%2Fgalaxy%2F"
+        )
+
+    def test_collection_source_query_is_encoded_inside_purl_qualifier(self, tmp_path: Path) -> None:
+        """Source URL query delimiters remain part of the PURL qualifier value.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from typing import cast
+
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.yml").write_text(
+            "collections:\n  - name: acme.widget\n    version: 2.0.0\n"
+            "    source: https://automation.example.com/api/galaxy/?channel=stable&tenant=team\n",
+            encoding="utf-8",
+        )
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        assert components[0]["purl"] == (
+            "pkg:generic/acme.widget@2.0.0?repository_url="
+            "https:%2F%2Fautomation.example.com%2Fapi%2Fgalaxy%2F%3Fchannel%3Dstable%26tenant%3Dteam"
+        )
+
+    def test_malformed_yaml_continues(self, tmp_path: Path) -> None:
+        """Unparseable requirements.yml is skipped, not fatal.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.yml").write_text("collections: [unclosed\n", encoding="utf-8")
+        bom = _build_local_sbom(tmp_path)
+        assert bom["bomFormat"] == "CycloneDX"
+        assert bom["components"] == []
+
+    def test_requirements_txt_core_pin_and_dedup(self, tmp_path: Path) -> None:
+        """ansible-core pin surfaces once as the framework component.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.txt").write_text(
+            "ansible-core==2.17.0\nansible-core==2.17.0\nrequests==2.31.0\n",
+            encoding="utf-8",
+        )
+        from typing import cast
+
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        names = [c["name"] for c in components]
+        assert names.count("ansible-core") == 1
+        assert components[0]["type"] == "framework"
+        props = cast(list[dict[str, object]], bom["properties"])
+        assert any(p["name"] == "apme:sbom-source" for p in props)
+
+    def test_requirements_txt_follows_local_includes_and_keeps_unpinned_packages(self, tmp_path: Path) -> None:
+        """Local include chains are bounded and unpinned requirements remain inventoried.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from typing import cast
+
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        requirements_dir = tmp_path / "requirements"
+        requirements_dir.mkdir()
+        (tmp_path / "requirements.txt").write_text(
+            "-r requirements/prod.txt\nrequests>=2\n",
+            encoding="utf-8",
+        )
+        (requirements_dir / "prod.txt").write_text(
+            "-r common.txt\nurllib3==2.0.7\n",
+            encoding="utf-8",
+        )
+        (requirements_dir / "common.txt").write_text(
+            "-r ../requirements.txt\nPyYAML\n",
+            encoding="utf-8",
+        )
+
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        by_name = {c["name"]: c for c in components}
+        assert by_name["requests"]["version"] == ""
+        assert by_name["requests"]["purl"] == "pkg:pypi/requests"
+        assert by_name["PyYAML"]["version"] == ""
+        assert by_name["urllib3"]["version"] == "2.0.7"

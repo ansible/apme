@@ -7,6 +7,8 @@ import logging
 import os
 import shutil
 import tempfile
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -54,20 +56,37 @@ def _safe_wheel_path(base: Path, filename: str) -> Path:
     return base_resolved.joinpath(relative_parts[0])
 
 
+@dataclass
+class CachedMetadata:
+    """Cached Galaxy version listing for a collection.
+
+    Attributes:
+        versions: Available collection version strings from Galaxy.
+        fetched_at: Unix timestamp when the listing was fetched.
+    """
+
+    versions: list[str]
+    fetched_at: float
+
+
 class ProxyCache:
     """Manages cached collection wheels on disk."""
 
-    def __init__(self, cache_dir: Path | None = None) -> None:
+    def __init__(self, cache_dir: Path | None = None, metadata_ttl: float = 600.0) -> None:
         """Initialise cache directories under *cache_dir* (or XDG default).
 
         Args:
             cache_dir: Root directory for cached data. If None, uses XDG cache default.
+            metadata_ttl: Seconds before cached Galaxy version metadata expires.
         """
         self.root = cache_dir or _default_cache_dir()
         self.wheels_dir = self.root / "wheels"
+        self.metadata_dir = self.root / "metadata"
+        self.metadata_ttl = metadata_ttl
         self.enabled = True
         try:
             self.wheels_dir.mkdir(parents=True, exist_ok=True)
+            self.metadata_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             self.enabled = False
             logger.warning(
@@ -192,11 +211,65 @@ class ProxyCache:
         path = _safe_wheel_path(self.wheels_dir, filename)
         return path if path.exists() else None
 
+    def get_metadata(self, namespace: str, name: str) -> CachedMetadata | None:
+        """Return a fresh cached Galaxy version listing, if one exists.
+
+        Args:
+            namespace: Collection namespace.
+            name: Collection name.
+
+        Returns:
+            Fresh cached metadata, or None when missing, expired, or unreadable.
+        """
+        if not self.enabled:
+            return None
+        path = _safe_wheel_path(self.metadata_dir, f"{namespace}-{name}.json")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            versions = data["versions"]
+            fetched_at = data["fetched_at"]
+            if not isinstance(versions, list) or not all(isinstance(item, str) for item in versions):
+                return None
+            if not isinstance(fetched_at, (int, float)):
+                return None
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+        cached = CachedMetadata(versions=versions, fetched_at=float(fetched_at))
+        if time.time() - cached.fetched_at > self.metadata_ttl:
+            return None
+        return cached
+
+    def put_metadata(self, namespace: str, name: str, versions: list[str]) -> None:
+        """Atomically cache a Galaxy version listing.
+
+        Args:
+            namespace: Collection namespace.
+            name: Collection name.
+            versions: Available version strings.
+
+        Raises:
+            OSError: When the metadata cache is unavailable or cannot be written.
+        """
+        if not self.enabled:
+            raise OSError("Metadata cache is unavailable for the current Galaxy configuration")
+        path = _safe_wheel_path(self.metadata_dir, f"{namespace}-{name}.json")
+        data = {"versions": versions, "fetched_at": time.time()}
+        fd, filename = tempfile.mkstemp(dir=self.metadata_dir, suffix=".tmp")
+        temporary = Path(filename)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(data, stream)
+            temporary.replace(path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise
+
     def clear(self) -> None:
         """Remove cached wheels while preserving the cache root mount."""
-        subdir = self.wheels_dir
-        if subdir.is_symlink():
-            subdir.unlink()
-        elif subdir.exists():
-            shutil.rmtree(subdir)
-        self.wheels_dir.mkdir(parents=True, exist_ok=True)
+        for subdir in (self.wheels_dir, self.metadata_dir):
+            if subdir.is_symlink():
+                subdir.unlink()
+            elif subdir.exists():
+                shutil.rmtree(subdir)
+            subdir.mkdir(parents=True, exist_ok=True)

@@ -79,6 +79,41 @@ class GrpcReportingSink:
         self._stub: reporting_pb2_grpc.ReportingStub | None = None
         self._available = False
         self._health_task: asyncio.Task[None] | None = None
+        self._dropped_events = 0
+
+    @property
+    def dropped_events(self) -> int:
+        """Number of fix events dropped before a stub was available.
+
+        Logged per drop (see :meth:`on_fix_completed`) so silent loss is
+        observable in the engine log; this counter exposes the same count
+        programmatically for health checks and tests.
+
+        Returns:
+            Count of dropped events since construction.
+        """
+        return self._dropped_events
+
+    def _record_drop(self, scan_id: str) -> None:
+        """Count a dropped event, log it, and emit the metrics hook.
+
+        Args:
+            scan_id: Scan id of the dropped event (for the log line).
+        """
+        self._dropped_events += 1
+        logger.warning(
+            "Dropping FixCompletedEvent scan_id=%s: reporting stub not initialized (%s)",
+            scan_id,
+            self._endpoint,
+        )
+        try:
+            from apme_engine.observability import record_reporting_drop  # noqa: PLC0415
+        except ImportError:
+            return
+        try:
+            record_reporting_drop(self._endpoint)
+        except Exception:  # noqa: BLE001 — metrics never fail delivery
+            logger.debug("Failed to record reporting-drop metric", exc_info=True)
 
     async def start(self) -> None:
         """Open channel, create stub, probe with retries, then launch health-check loop."""
@@ -126,12 +161,15 @@ class GrpcReportingSink:
         Small events use unary ``ReportFixCompleted``. Oversized events
         (approaching the 50 MiB gRPC ceiling) use client-streaming
         ``ReportFixCompletedStream`` (ADR-020). Uses a fast-fail timeout
-        when the endpoint is known-down.
+        when the endpoint is known-down. When no stub is initialized the
+        event is dropped via :meth:`_record_drop` (counted in
+        :attr:`dropped_events` and logged so silent drops are observable).
 
         Args:
             event: Completed fix event to deliver.
         """
         if self._stub is None:
+            self._record_drop(event.scan_id)
             return
         loop = asyncio.get_running_loop()
         event_size = await loop.run_in_executor(None, event.ByteSize)
