@@ -36,6 +36,7 @@ _galaxy_wheel_duration: Any = None
 _galaxy_wheel_completed: Any = None
 _grpc_duration: Any = None
 _grpc_completed: Any = None
+_reporting_dropped: Any = None
 _instruments_ready = False
 
 
@@ -49,7 +50,7 @@ def _ensure_instruments() -> bool:
     global _http_duration, _venv_duration, _venv_completed
     global _galaxy_fetch_duration, _galaxy_fetch_completed
     global _galaxy_wheel_duration, _galaxy_wheel_completed
-    global _grpc_duration, _grpc_completed, _instruments_ready
+    global _grpc_duration, _grpc_completed, _reporting_dropped, _instruments_ready
     if _instruments_ready:
         return _scan_duration is not None
 
@@ -133,7 +134,31 @@ def _ensure_instruments() -> bool:
         unit="{rpc}",
         description="Completed gRPC server RPCs by method and status",
     )
+    _reporting_dropped = meter.create_counter(
+        name="apme.reporting.dropped",
+        unit="{event}",
+        description="FixCompleted events dropped before the reporting stub was available",
+    )
     return True
+
+
+def record_reporting_drop(endpoint: str) -> None:
+    """Record a FixCompleted event dropped before the stub was available.
+
+    Backs the ``GrpcReportingSink.dropped_events`` counter with the
+    ``apme.reporting.dropped`` metric (endpoint-labelled). Never raises.
+
+    Args:
+        endpoint: Reporting endpoint the event was destined for.
+    """
+    if not _ensure_instruments():
+        return
+    if _reporting_dropped is None:
+        return
+    try:
+        _reporting_dropped.add(1, {"endpoint": endpoint or "unknown"})
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to record reporting-drop metric", exc_info=True)
 
 
 def reset_instruments() -> None:
@@ -142,7 +167,7 @@ def reset_instruments() -> None:
     global _http_duration, _venv_duration, _venv_completed
     global _galaxy_fetch_duration, _galaxy_fetch_completed
     global _galaxy_wheel_duration, _galaxy_wheel_completed
-    global _grpc_duration, _grpc_completed, _instruments_ready
+    global _grpc_duration, _grpc_completed, _reporting_dropped, _instruments_ready
     _scan_duration = None
     _phase_duration = None
     _validator_duration = None
@@ -156,6 +181,7 @@ def reset_instruments() -> None:
     _galaxy_wheel_completed = None
     _grpc_duration = None
     _grpc_completed = None
+    _reporting_dropped = None
     _instruments_ready = False
 
 

@@ -10,7 +10,7 @@ argument-hint: "[branch-name] [--title 'PR title']"
 user-invocable: true
 metadata:
   author: APME Team
-  version: 1.6.0
+  version: 1.7.0
 ---
 
 # PR New
@@ -109,15 +109,55 @@ artifact type, translate it:
    For recurring background work, compare steady-state and transition logs:
    unchanged successes and repeated failures should not crowd out meaningful
    changes; initial failures and recoveries must remain visible.
+   For every public API description, compare generated OpenAPI prose with the
+   actual enforcement: quota key, scope, window, and all global and local caps
+   must match the handler.
+   For workflow guidance that maps HTTP statuses to causes, verify each status
+   against the exact handler branch. For procedures split across fenced command
+   blocks or tool calls, assume each can start a fresh process: re-establish
+   variables, persist handoff files at a stable path, and clean them up only
+   after the final consumer succeeds.
+   For large request bodies, verify the size cap runs before framework parsing,
+   covers both declared and streamed bodies, and matches the published API
+   description and error response.
+   For file pipelines with count or byte caps, enforce limits at the producer
+   before reading and retaining content beyond the cap; a check after a bundle
+   or chunk list is materialized does not bound peak memory. Test that an
+   over-cap candidate is not fully read. Make preflight size/count walks use
+   the same skipped-directory and file-selection rules as the downstream
+   consumer, or excluded content can cause false cap failures. Apply that
+   consistency check to every parallel preview, export, or indexing path that
+   walks the same tree.
+   For archive or parser iteration, inspect whether the library caches records
+   internally even when its API is an iterator. Count every record type on
+   every pass, including directories and rejected entries, so preliminary
+   scans and extraction cannot retain unbounded parser state.
+   For dependency inventory, follow supported local requirement-file includes
+   with cycle, depth, file-count, and byte limits. Preserve ranged or unpinned
+   requirements without inventing an exact version; only report a version when
+   the source declares one exact pin. Documentation for test commands must
+   match the complete tox environment, including coverage hooks that still run
+   after pytest accepts a flag such as `--no-cov`.
+   For preview-then-apply workflows, carry the preview's immutable revision
+   through checkout and application; when each preview request creates a fresh
+   clone or plan, retain and reuse that response instead of issuing a second
+   request that can return a different revision.
    When classifying free-form diagnostics, require context and token boundaries
    for numeric identifiers so unrelated values do not acquire error semantics.
    Check real diagnostics from the upstream producer, including every supported
    output format, so restrictive matching still recognizes actual failures.
+   When sharing prompt sections across different model tasks, verify each
+   section matches that task's response schema and fail-closed behavior; a
+   remediation instruction such as `skipped` does not belong in a validation
+   prompt unless that schema defines it.
 
 2. **Does this expose more than it should?** Check every log call,
    error message, and user-facing string. Does it contain user content,
    credentials, or internal state? Could a caller or log reader learn
-   something they shouldn't? Also check every capability grant:
+   something they shouldn't? Bound caller-controlled keys before they enter
+   caches, lock maps, or durable rows; enforce the bound before normalization
+   as well so padding or delimiters cannot bypass it. Also check every
+   capability grant:
    permission scopes, CORS origins, container capabilities. Does each
    grant the minimum necessary?
 
@@ -134,6 +174,12 @@ artifact type, translate it:
    including discovery, metadata probes, and parsing. Blocking storage must
    stay off the event loop, and unchanged hot paths should avoid repeated
    content reads and unnecessary shared-lock contention.
+   Keep non-critical backlog reconciliation out of pre-yield application
+   startup; track background tasks and cancel or drain them before closing
+   resources during shutdown.
+   When a request carries session-scoped configuration, trace it through every
+   helper and service boundary to the operation that uses it; an environment
+   snapshot does not change a downstream process's global configuration.
 
 4. **Is everything still true after this change?** Diff comments and
    docstrings against the code they describe. Did you rename something
@@ -178,8 +224,12 @@ artifact type, translate it:
    When a function accepts multiple input shapes (dataclass vs
    mapping, ORM vs dict), do both paths normalize and branch the
    same way for the same logical fields — or can one path skip a
-   transform the other applies? When adding an alternate branch
-   (interactive vs auto-apply, graph vs legacy text), trace both
+   transform the other applies? When joining or intersecting identifier maps,
+   canonicalize keys on every side and use the same canonical keys for lookup;
+   check how collisions between aliases are handled. When consolidating test
+   commands, preserve each package's independently enforced coverage floor
+   instead of relying on an aggregate threshold. When adding an alternate
+   branch (interactive vs auto-apply, graph vs legacy text), trace both
    paths to the same output artifact (file bytes, event payload,
    telemetry) and confirm they run the same post-processing and
    state-accounting steps — not just reach the same endpoint.
@@ -195,9 +245,18 @@ artifact type, translate it:
    Do rule IDs follow ADR-008 conventions (L/M/R/P/SEC)? Does
    `_DEFAULT_PORTS` match the services actually started? Are
    `event_emitter` calls consistent with the reporting sink
-   protocol? Cross-artifact mismatches (proto declaration vs Python
+   protocol? For outbound payloads built from proto or domain objects,
+   compare every value shape with the destination schema; normalize ranges,
+   optional values, and unions before sending and cover those shapes in a
+   request-level test. Cross-artifact mismatches (proto declaration vs Python
    implementation) are the easiest to miss and the most embarrassing
-   to ship.
+   to ship. When a client mirrors or forwards structured data, validate that
+   every field and collection count fits the destination schema before sending;
+   check aggregate serialized body limits too, test boundary truncation or
+   omission, and make dropped records visible to callers. When a result carries
+   metadata beyond its list or mapping contents,
+   preserve that result type and metadata on every branch where callers consume
+   it, including paths without optional snapshots or restoration work.
 
 8. **Would a constructed scenario break this?** For each public
    function, construct one realistic failure case: an edge-case
@@ -236,6 +295,15 @@ artifact type, translate it:
    What happens when `asyncio.gather()`
    returns a mix of results and exceptions — does every caller
    handle `return_exceptions=True` correctly?
+   Order no-op detection before strict checks that apply only to real changes,
+   and test unchanged legacy or partially populated records through strict
+   paths. For timing-sensitive concurrency tests, use event coordination or a
+   worker duration with ample margin over every pre-completion wait; avoid
+   relying on narrow wall-clock windows under loaded CI scheduling.
+   For temporary bounded stores, trace active consumers across scopes and
+   concurrency. Exercise per-scope and process-wide capacity boundaries:
+   preserve unexpired data another request may still consume, and return an
+   explicit capacity error instead of silently evicting active data.
    Trace intentional control-flow exceptions through enclosing broad catches:
    retries, cancellations, and source conflicts must retain their caller-visible
    meaning. Malformed user configuration must reach the public entry point's
@@ -443,6 +511,57 @@ GitHub ``run:``), construct interpolator collisions: unescaped
 ``{...}`` that tox substitutes before Python runs. For
 ``next(glob(...))``, construct the empty-match path and require an
 explicit error instead of ``StopIteration``.
+For file-backed hashes and metadata, construct an atomic replacement between
+the read and the later stat, including a replacement with the same size and
+mtime. Compare file identity before and after hashing; retry a bounded number
+of times or omit the cache entry when identity changes.
+When a preview request clones, fetches, or computes mutable state, keep the
+response used for the preview and derive the apply revision from that same
+response; repeating the request can produce a different result even if each
+individual response includes a revision. When policy or metadata is keyed by
+canonicalizable identifiers, normalize both the candidate IDs and every map
+key before intersections and lookups, and construct alias-collision cases.
+For caller-controlled cache, lock, or database keys, cap the trimmed raw value
+before normalization as well as validating the normalized form; test padding
+and repeated delimiters around the minimum valid identity.
+
+When embedding one structured value inside another (for example, a URL as a
+PURL qualifier), encode the inner value according to the outer format before
+assembling it; exercise reserved delimiters such as ``?``, ``&``, and ``=``.
+When assembling prompts from a catalog and a current request, include only
+catalog entries relevant to that request and test that unrelated entries do
+not leak into the prompt. Across serialization boundaries, preserve absent
+and unspecified optional fields instead of silently inventing a default that
+changes downstream routing. For dependency, cache, or requirements hashes,
+hash canonical semantic identities and resolved versions rather than names of
+input files; test ordering stability and identity changes. For asynchronous
+work that can overlap a requeue or replacement, capture the content/version
+token at attempt start and condition the durable completion update on that
+token still matching.
+For bounded retry drains whose processing mutates sort priority, advance with
+a stable cursor or captured page set; do not treat one failed page as proof
+that no later eligible rows remain, and keep total startup work bounded.
+For same-key asynchronous read-check-write flows, verify that concurrent
+callers serialize before the lookup and that persistence plus external side
+effects occur once, even when callers start together.
+For durable idempotent replay, bind the replay to the original persisted
+activity or resource, not just the incoming request. If loading or verifying
+that durable binding fails, fail closed before any fallback can return a
+success result. Distinguish an absent claim from an incomplete durable claim,
+and do not treat a missing hash as proof of equality; test explicit
+cross-activity replay, incomplete claims across fresh attempts, and
+verification failures that reach a secondary replay path.
+
+For trust-boundary address checks, require destinations to be globally
+routable and inspect embedded address forms such as mapped or well-known
+translation prefixes before allowing a request. For bounded lock retries,
+preserve worker failures while returning a retryable transport status when
+contention exhausts the acquisition budget. For inventory parsing, normalize
+each supported input shape before constructing output identifiers, including
+embedded versions and null or blank fields. For multi-step preview/apply
+recipes, retain the exact preview response through checkout alignment and
+application; for workflow commands outside tox, request their required package
+extras explicitly.
 
 For any text unescape/decode normalizer, construct inputs with one and
 multiple escaping layers, structural boundaries at root and nested
@@ -499,6 +618,9 @@ critical/high/medium/low.
 - Test gaps for behaviors the code/docs claim; verify each regression test
   reaches the changed logic and would fail without the fix (use a positive
   control or the pre-fix behavior when practical)
+- When combining test commands or coverage reports, preserve each previously
+  independent package threshold as an independently enforced gate; an aggregate
+  percentage can hide a package falling below its own required floor.
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action
   tags, base images, pip/uv specs (not tighter, not looser);

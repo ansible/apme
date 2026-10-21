@@ -99,6 +99,18 @@ UI  (global server defs) ──► Gateway ──► gRPC ScanOptions     ──
                                                               pip/uv install wheel
 ```
 
+For scan-scoped definitions, the proxy keeps converted wheels in an opaque,
+short-lived session handoff instead of the process-wide wheel cache and index.
+The handoff enforces both per-scope and process-wide byte limits, reports
+capacity exhaustion to the prepare request, and preserves unexpired scopes
+while installs may still be using them. Its process-wide limit allows multiple
+maximum-size scopes concurrently. After pip/uv finishes, Engine releases the
+scope through an authenticated admin endpoint in a `finally` block; the proxy's
+short TTL remains a fallback if release cannot be delivered. Serving any wheel
+refreshes the expiry for every wheel in that scope, so a long-running install
+can continue to fetch later wheels while explicit release remains the primary
+cleanup path.
+
 ## Alternatives Considered
 
 ### Alternative 1: Reimplement Galaxy auth in the proxy (PR #130's approach)
@@ -290,8 +302,8 @@ admin authentication also apply to the bootc Quadlet deployment.
 - [ADR-040](ADR-040-scan-metadata-enrichment.md): Scan Metadata Enrichment —
   Galaxy server config is another form of scan metadata
 - [ADR-048](ADR-048-pod-internal-admin-endpoints.md): Pod-Internal Admin
-  Endpoints — the `/admin/galaxy-config` endpoint introduced by this ADR
-  relies on pod network isolation; auth required if topology changes
+  Endpoints — admin endpoints for Galaxy configuration and scoped wheel
+  lifecycle rely on pod network isolation and shared-token authentication
 
 ## References
 
@@ -315,3 +327,6 @@ admin authentication also apply to the bootc Quadlet deployment.
 | 2026-07-08 | Brad Thornton | Accepted — core decision fully implemented |
 | 2026-10-09 | AI-assisted | Clarify per-server TLS delegation and durable cache source identity |
 | 2026-10-09 | AI-assisted | Track CA directory rotation, worker-based metadata probes, and reconciliation outcomes |
+| 2026-10-16 | AI-assisted | Record isolated scoped wheel handoffs and explicit capacity behavior |
+| 2026-10-20 | AI-assisted | Record scoped wheel release after pip/uv installation and multi-scope process budget |
+| 2026-10-20 | AI-assisted | Refresh active scoped wheel expiry on access; explicit release remains primary cleanup |

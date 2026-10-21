@@ -279,6 +279,63 @@ class TestSessionUploadAppend:
 class TestFixSessionTrust:
     """FixSession replay / unseal / drop semantics (#10)."""
 
+    async def test_upload_chunks_refresh_session_idle_clock(self) -> None:
+        """Each appended upload chunk resets the session idle timer."""
+        servicer = EngineServicer()
+        stream = _AsyncCommandStream()
+        ctx = _FakeGrpcContext()
+        stream.send(SessionCommand(upload=_upload_chunk({"first.yml": b"x: 1\n"}, scan_id="touch-1")))
+
+        append_touch_counts: list[int] = []
+        touch_sessions: list[str] = []
+        real_append = engine_upload._session_upload_append
+        real_touch = SessionState.touch
+
+        async def _noop_process(
+            self: EngineServicer, session: SessionState, scan_id: str
+        ) -> AsyncIterator[SessionEvent]:
+            """Skip remediation so the test covers upload clock updates only.
+
+            Args:
+                self: Servicer instance required by the method patch.
+                session: Uploaded session.
+                scan_id: Scan identifier.
+
+            Yields:
+                SessionEvent: No events.
+            """
+            del self, session, scan_id
+            if False:
+                yield SessionEvent()
+
+        def _spy_append(session: SessionState, chunk: ScanChunk) -> None:
+            real_append(session, chunk)
+            append_touch_counts.append(touch_sessions.count(session.session_id))
+
+        def _spy_touch(session: SessionState) -> None:
+            real_touch(session)
+            touch_sessions.append(session.session_id)
+
+        fed = False
+        with (
+            patch.object(EngineServicer, "_session_process", _noop_process),
+            patch.object(engine_upload, "_session_upload_append", _spy_append),
+            patch.object(SessionState, "touch", _spy_touch),
+        ):
+            async for event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                if event.WhichOneof("event") == "created" and not fed:
+                    fed = True
+                    stream.send(
+                        SessionCommand(upload=_upload_chunk({"second.yml": b"y: 2\n"}, last=True, scan_id="touch-1"))
+                    )
+                    stream.send(SessionCommand(close=CloseRequest()))
+                elif event.WhichOneof("event") == "closed":
+                    break
+
+        assert append_touch_counts == [0, 1]
+        assert len(touch_sessions) == 2
+        assert touch_sessions[0] == touch_sessions[1]
+
     async def test_duplicate_terminal_replays_without_rerun(self) -> None:
         """An identical duplicate terminal chunk replays state; process runs exactly once."""
         servicer = EngineServicer()

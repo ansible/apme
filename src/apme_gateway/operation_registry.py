@@ -400,6 +400,7 @@ class OperationRegistry:
                 future=loop.create_future(),
                 prompt_generation=prompt_generation,
             )
+            op.last_approval_gate_id = op.approval_gate.gate_id
         self.transition(operation_id, OperationStatus.AWAITING_APPROVAL)
         gate_id = op.approval_gate.gate_id if op.approval_gate is not None else None
         self._broadcast(

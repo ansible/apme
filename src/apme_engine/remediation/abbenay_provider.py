@@ -122,6 +122,8 @@ YAML task/block while following Ansible best practices.
 
 {rule_guidance_section}
 
+{live_policy_section}
+
 ## YAML to fix
 ```yaml
 {yaml_lines}
@@ -196,6 +198,8 @@ File: {file_path}
 
 {rule_guidance_section}
 
+{live_policy_section}
+
 ## YAML Under Review
 ```yaml
 {yaml_lines}
@@ -225,6 +229,73 @@ Respond with ONLY this JSON (no markdown fences, no explanation outside JSON):
 - "false_positive" = the flagged behavior is legitimate and expected
 - "uncertain" = not enough context to determine confidently
 """
+
+
+def _build_live_policy_section(context: AINodeContext, *, validation: bool = False) -> str:
+    """Render a compact live-policy block for AI prompts (additive).
+
+    Includes resolved severity/enabled per rule, active suppression hash
+    count, and ansible-core/collection pins. Fails closed when live policy
+    is absent. Remediation prompts request high-confidence fixes and skipped
+    items; validation prompts retain their verdict schema and prefer uncertain.
+
+    Args:
+        context: ``AINodeContext`` with optional live-policy fields.
+        validation: Whether the block is for the validation response schema.
+
+    Returns:
+        Formatted live-policy section string.
+    """
+    if not context.live_policy_available:
+        if validation:
+            return (
+                "## Live Policy\n\n"
+                "UNAVAILABLE — fail closed: live rule severities, enabled flags, "
+                "suppressions, and ansible-core/collection pins could not be "
+                'resolved. Prefer an "uncertain" verdict unless the verdict is '
+                "clear from the YAML alone."
+            )
+        return (
+            "## Live Policy\n\n"
+            "UNAVAILABLE — fail closed: live rule severities, enabled flags, "
+            "suppressions, and ansible-core/collection pins could not be "
+            "resolved. Apply only high-confidence fixes directly traceable "
+            "to a listed violation; put everything uncertain in "
+            '"skipped" with a reason.'
+        )
+    lines = ["## Live Policy", ""]
+    if context.resolved_severities or context.rule_enabled:
+        severities: dict[str, str] = {}
+        for raw_id, severity in context.resolved_severities.items():
+            rule_id = canonicalize_rule_id(str(raw_id))
+            if rule_id not in severities or str(raw_id).strip() == rule_id:
+                severities[rule_id] = severity
+        enabled_map: dict[str, bool] = {}
+        for raw_id, enabled in context.rule_enabled.items():
+            rule_id = canonicalize_rule_id(str(raw_id))
+            if rule_id not in enabled_map or str(raw_id).strip() == rule_id:
+                enabled_map[rule_id] = enabled
+        policy_rule_ids = set(severities) | set(enabled_map)
+        violation_rule_ids = {canonicalize_rule_id(str(v.get("rule_id", ""))) for v in context.violations}
+        rule_ids = sorted(policy_rule_ids & violation_rule_ids)
+        if not rule_ids:
+            lines.append("- rules: no per-rule overrides resolved for the listed violations")
+        for rid in rule_ids:
+            sev = severities.get(rid, "unknown")
+            enabled = enabled_map.get(rid, True)
+            lines.append(f"- {rid}: severity={sev} enabled={str(bool(enabled)).lower()}")
+    else:
+        lines.append("- rules: no per-rule overrides resolved")
+    supp = len(context.suppression_hashes or [])
+    lines.append(f"- suppressions: {supp} active hash(es)")
+    core = context.ansible_core_version or "unpinned"
+    lines.append(f"- ansible_core_version: {core}")
+    pins = list(context.collection_pins or [])
+    if pins:
+        lines.append(f"- collection_pins: {', '.join(pins[:8])}")
+    else:
+        lines.append("- collection_pins: none")
+    return "\n".join(lines)
 
 
 def _build_validation_prompt(context: AINodeContext) -> str:
@@ -264,6 +335,7 @@ def _build_validation_prompt(context: AINodeContext) -> str:
         parent_context_section=parent_section,
         sibling_context_section=sibling_section,
         rule_guidance_section=rule_guidance,
+        live_policy_section=_build_live_policy_section(context, validation=True),
     )
 
 
@@ -373,6 +445,7 @@ def _build_node_prompt(context: AINodeContext) -> str:
         best_practices=best_practices,
         feedback_section=feedback_section,
         rule_guidance_section=rule_guidance,
+        live_policy_section=_build_live_policy_section(context),
     )
 
 

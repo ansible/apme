@@ -28,7 +28,6 @@ _PROTO_TO_RESOLUTION: dict[int, str] = {
 }
 
 _PROTO_TO_SCOPE: dict[int, str] = {
-    common_pb2.RULE_SCOPE_UNSPECIFIED: "task",  # type: ignore[attr-defined]
     common_pb2.RULE_SCOPE_TASK: "task",  # type: ignore[attr-defined]
     common_pb2.RULE_SCOPE_BLOCK: "block",  # type: ignore[attr-defined]
     common_pb2.RULE_SCOPE_PLAY: "play",  # type: ignore[attr-defined]
@@ -55,7 +54,7 @@ def violation_proto_to_dict(
         line = [v.line_range.start, v.line_range.end]
     metadata = dict(v.metadata) if v.metadata else {}
     module_fqcn = metadata.get("resolved_fqcn") or metadata.get("original_module") or metadata.get("fqcn") or ""
-    return {
+    result: dict[str, str | int | list[int] | bool | None] = {
         "rule_id": v.rule_id,
         "severity": severity_to_label(severity_from_proto(v.severity)),
         "message": v.message,
@@ -70,10 +69,10 @@ def violation_proto_to_dict(
             v.remediation_resolution,
             "unresolved",
         ),
-        "scope": _PROTO_TO_SCOPE.get(
-            v.scope,
-            "task",
-        ),
         "original_yaml": v.original_yaml or None,
         "module_fqcn": module_fqcn or None,
     }
+    scope = _PROTO_TO_SCOPE.get(v.scope)
+    if scope is not None:
+        result["scope"] = scope
+    return result

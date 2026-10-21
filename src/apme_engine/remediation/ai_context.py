@@ -31,6 +31,13 @@ class AINodeContext:
         parent_context: Summarized ancestor chain (play vars, become, tags).
         sibling_snippets: YAML of surrounding siblings for awareness.
         feedback: Validation feedback from a prior failed AI attempt.
+        resolved_severities: Resolved severity per rule (override > default).
+        rule_enabled: Whether each rule is enabled in live policy.
+        suppression_hashes: Active suppression fingerprints hiding findings.
+        ansible_core_version: Target ansible-core version for live policy.
+        collection_pins: Pinned collection specs for live policy.
+        live_policy_available: False when live policy could not be resolved
+            (prompts fail closed — see abbenay_provider live-policy block).
     """
 
     node_id: str
@@ -41,6 +48,12 @@ class AINodeContext:
     parent_context: str = ""
     sibling_snippets: list[str] = field(default_factory=list)
     feedback: str = ""
+    resolved_severities: dict[str, str] = field(default_factory=dict)
+    rule_enabled: dict[str, bool] = field(default_factory=dict)
+    suppression_hashes: list[str] = field(default_factory=list)
+    ansible_core_version: str = ""
+    collection_pins: list[str] = field(default_factory=list)
+    live_policy_available: bool = False
 
 
 def build_ai_node_context(
@@ -50,6 +63,12 @@ def build_ai_node_context(
     *,
     feedback: str = "",
     max_siblings: int = 2,
+    resolved_severities: dict[str, str] | None = None,
+    rule_enabled: dict[str, bool] | None = None,
+    suppression_hashes: list[str] | None = None,
+    ansible_core_version: str = "",
+    collection_pins: list[str] | None = None,
+    live_policy_available: bool = False,
 ) -> AINodeContext | None:
     """Build an ``AINodeContext`` from the graph for a single node.
 
@@ -59,6 +78,12 @@ def build_ai_node_context(
         violations: Violations scoped to this node.
         feedback: Optional validation feedback from a prior AI attempt.
         max_siblings: Number of preceding/following siblings to include.
+        resolved_severities: Live resolved severity per rule (additive).
+        rule_enabled: Live enabled flag per rule (additive).
+        suppression_hashes: Active suppression fingerprints (additive).
+        ansible_core_version: Live ansible-core pin (additive).
+        collection_pins: Live collection pins (additive).
+        live_policy_available: True when live policy resolved (additive).
 
     Returns:
         Populated ``AINodeContext``, or ``None`` if the node doesn't exist
@@ -80,6 +105,12 @@ def build_ai_node_context(
         parent_context=parent_context,
         sibling_snippets=sibling_snippets,
         feedback=feedback,
+        resolved_severities=dict(resolved_severities or {}),
+        rule_enabled=dict(rule_enabled or {}),
+        suppression_hashes=list(suppression_hashes or []),
+        ansible_core_version=ansible_core_version,
+        collection_pins=list(collection_pins or []),
+        live_policy_available=live_policy_available,
     )
 
 

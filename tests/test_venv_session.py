@@ -17,6 +17,53 @@ _PATCH_INSTALL = "apme_engine.venv_manager.session.install_collections_increment
 _INSTALL_RETURN: list[str] = []
 
 
+def _wait_for(predicate: object, timeout: float = 2.0, interval: float = 0.005) -> bool:
+    """Poll predicate until true or deadline passes (deterministic wait).
+
+    Args:
+        predicate: Zero-arg callable returning truthy when the condition holds.
+        timeout: Maximum seconds to wait.
+        interval: Poll interval in seconds.
+
+    Returns:
+        Final predicate value (truthy when the condition was met).
+    """
+    deadline = time.monotonic() + timeout
+    result: object = None
+    while time.monotonic() < deadline:
+        result = predicate()  # type: ignore[operator]
+        if result:
+            return True
+        time.sleep(interval)
+    result = predicate()  # type: ignore[operator]
+    return bool(result)
+
+
+def _wait_for_clock_advance(since: float, timeout: float = 2.0) -> None:
+    """Wait until wall-clock advances past *since* (replaces bare sleeps).
+
+    Args:
+        since: Earlier ``time.time()`` value to advance beyond.
+        timeout: Maximum seconds to wait.
+    """
+    assert _wait_for(lambda: time.time() > since, timeout=timeout), "clock did not advance"
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+def _no_live_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Block live network in unit tests; network belongs behind integration marker.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    import urllib.request
+
+    def _blocked(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("live network blocked in unit tests - use integration marker")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _blocked)
+
+
 def _fake_create_base_venv(venv_dir: Path, ansible_core_version: str, **_kw: object) -> None:
     """Create a minimal venv skeleton for testing.
 
@@ -168,7 +215,7 @@ class TestWarmHit:
         """
         s1 = manager.acquire("sid", "2.17")
         t1 = s1.last_used_at
-        time.sleep(0.05)
+        _wait_for_clock_advance(t1)
         s2 = manager.acquire("sid", "2.17")
         assert s2.last_used_at > t1
 
@@ -288,7 +335,9 @@ class TestMultiVersion:
             manager: VenvSessionManager fixture.
         """
         manager.acquire("sid", "2.17")
-        time.sleep(0.05)
+        first = manager.get("sid", "2.17")
+        assert first is not None
+        _wait_for_clock_advance(first.last_used_at)
         manager.acquire("sid", "2.18")
         latest = manager.get("sid")
         assert latest is not None
@@ -314,8 +363,8 @@ class TestTTLReaping:
             sessions_root: Temporary sessions root fixture.
         """
         mgr = VenvSessionManager(sessions_root=sessions_root, ttl_seconds=0)
-        mgr.acquire("sid", "2.17")
-        time.sleep(0.05)
+        acquired = mgr.acquire("sid", "2.17")
+        _wait_for_clock_advance(acquired.last_used_at)
         count = mgr.reap_expired()
         assert count == 1
         assert mgr.get("sid", "2.17") is None
@@ -357,8 +406,8 @@ class TestTTLReaping:
             sessions_root: Temporary sessions root fixture.
         """
         mgr = VenvSessionManager(sessions_root=sessions_root, ttl_seconds=1)
-        mgr.acquire("sid", "2.17")
-        time.sleep(0.05)
+        first_acquired = mgr.acquire("sid", "2.17")
+        _wait_for_clock_advance(first_acquired.last_used_at)
         mgr.acquire("sid", "2.18")
 
         meta_path = sessions_root / "sid" / "2.17.0" / "meta.json"
@@ -393,7 +442,8 @@ class TestTouchAndRelease:
         """
         manager.acquire("sid", "2.17")
         manager.acquire("sid", "2.18")
-        time.sleep(0.05)
+        before = time.time()
+        _wait_for_clock_advance(before)
         assert manager.touch("sid") is True
         v17 = manager.get("sid", "2.17")
         v18 = manager.get("sid", "2.18")
@@ -447,9 +497,13 @@ class TestListAndDelete:
             manager: VenvSessionManager fixture.
         """
         manager.acquire("a", "2.17")
-        time.sleep(0.05)
+        got = manager.get("a", "2.17")
+        assert got is not None
+        _wait_for_clock_advance(got.last_used_at)
         manager.acquire("a", "2.18")
-        time.sleep(0.05)
+        got2 = manager.get("a", "2.18")
+        assert got2 is not None
+        _wait_for_clock_advance(got2.last_used_at)
         manager.acquire("b", "2.17")
         sessions = manager.list_sessions()
         assert len(sessions) == 3
@@ -1179,6 +1233,151 @@ def test_prepare_collections_uses_shared_proxy_token(monkeypatch: pytest.MonkeyP
     assert post.call_args.kwargs["json"] == {"specs": ["ansible.posix:1.5.4", "community.general:>=9"]}
 
 
+def test_prepare_collections_forwards_session_galaxy_servers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Session credentials travel in the authenticated, request-scoped payload.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _prepare_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [], "failed_specs": [], "scope_id": "A" * 32}
+    galaxy_servers = [
+        {
+            "name": "private_hub",
+            "url": "https://hub.example.com/api/galaxy/content/",
+            "token": "session-secret",
+            "auth_url": "",
+            "validate_certs": True,
+        }
+    ]
+    with patch("apme_engine.venv_manager.session.httpx.post", return_value=response) as post:
+        scope_id = _prepare_collections_via_proxy(
+            "http://127.0.0.1:8765",
+            ["ansible.posix:1.5.4"],
+            galaxy_servers,
+        )
+
+    assert post.call_args.kwargs["headers"] == {"x-apme-proxy-token": "shared-secret"}
+    assert post.call_args.kwargs["json"] == {"specs": ["ansible.posix:1.5.4"], "servers": galaxy_servers}
+    assert scope_id == "A" * 32
+
+
+def test_scoped_prepare_uses_its_isolated_package_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scoped Galaxy credentials install only from their matching wheel scope.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    release_response = MagicMock()
+    release_response.raise_for_status.return_value = None
+    scope_id = "B" * 32
+    response.json.return_value = {"prepared": [], "failed_specs": [], "scope_id": scope_id}
+    galaxy_servers: list[dict[str, object]] = [
+        {"name": "private", "url": "https://hub.example.com/", "token": "secret"}
+    ]
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch("apme_engine.venv_manager.session.httpx.delete", return_value=release_response) as release,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=galaxy_servers,
+        )
+
+    assert failures == []
+    assert install.call_args.args[2] == f"http://proxy/simple/session/{scope_id}/"
+    release.assert_called_once_with(
+        f"http://proxy/admin/session-scopes/{scope_id}",
+        headers={"x-apme-proxy-token": "shared-secret"},
+        timeout=10.0,
+    )
+
+
+def test_scoped_prepare_releases_scope_when_install_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pip exception still releases the prepared private wheel handoff.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    scope_id = "C" * 32
+    response.json.return_value = {"prepared": [], "failed_specs": [], "scope_id": scope_id}
+    release_response = MagicMock()
+    release_response.raise_for_status.return_value = None
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch("apme_engine.venv_manager.session.httpx.delete", return_value=release_response) as release,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            side_effect=RuntimeError("pip failed unexpectedly"),
+        ),
+        pytest.raises(RuntimeError, match="pip failed unexpectedly"),
+    ):
+        _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=[{"name": "private", "url": "https://hub.example.com/"}],
+        )
+
+    release.assert_called_once_with(
+        f"http://proxy/admin/session-scopes/{scope_id}",
+        headers={"x-apme-proxy-token": "shared-secret"},
+        timeout=10.0,
+    )
+
+
+def test_scoped_prepare_failure_does_not_fall_back_to_global_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scoped source failure cannot silently install from the global Hub.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    galaxy_servers: list[dict[str, object]] = [
+        {"name": "private", "url": "https://hub.example.com/", "token": "secret"}
+    ]
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", side_effect=httpx.ConnectError("proxy down")),
+        patch("apme_engine.venv_manager.session._run_pip_install") as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=galaxy_servers,
+        )
+
+    assert failures == ["ansible.posix:1.5.4"]
+    install.assert_not_called()
+
+
 def test_prepare_collection_error_does_not_skip_pip_install(monkeypatch: pytest.MonkeyPatch) -> None:
     """A failed prepare request still allows the ordinary install fallback.
 
@@ -1273,3 +1472,107 @@ def test_spec_to_pip_preserves_range_constraints() -> None:
     assert _spec_to_pip("ansible.posix:*") == "ansible-collection-ansible-posix"
     assert _spec_to_bare_pip("community.general:>=9,<10") == "ansible-collection-community-general"
     assert _spec_to_bare_pip("ansible.posix:1.5.4") == "ansible-collection-ansible-posix"
+
+
+class TestWaitOutWorkerDoubleCancel:
+    """wait_out_worker survives repeated cancellation (finding #2)."""
+
+    async def test_double_cancel_waits_out_worker(self) -> None:
+        """Two cancels still hold the caller until the worker finishes.
+
+        A single shield re-wait releases early on the second cancel; the
+        loop-until-done form must keep the waiter pending through both
+        cancels, then surface CancelledError only after the worker result
+        is in.
+        """
+        import asyncio
+        import time as _time
+
+        from apme_engine.venv_manager.session import wait_out_worker
+
+        loop = asyncio.get_running_loop()
+        worker_done = asyncio.Event()
+
+        def _slow() -> str:
+            _time.sleep(1.0)
+            loop.call_soon_threadsafe(worker_done.set)
+            return "built"
+
+        worker = loop.run_in_executor(None, _slow)
+        waiter = asyncio.create_task(wait_out_worker(worker))
+        await asyncio.sleep(0.05)
+        assert not worker_done.is_set()
+        waiter.cancel()
+        await asyncio.sleep(0.05)
+        assert not waiter.done()
+        waiter.cancel()
+        await asyncio.sleep(0.1)
+        assert not waiter.done()
+        assert not worker_done.is_set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(waiter, timeout=5.0)
+        assert worker_done.is_set()
+        assert worker.result() == "built"
+
+    async def test_double_cancel_holds_write_guard_until_worker_done(self) -> None:
+        """The install write guard stays held across two cancels.
+
+        Mirrors the pipeline shape (``async with venv_write_guard`` around
+        ``wait_out_worker``): cancelling twice must not release the guard
+        early — a same-key contender must stay blocked until the worker
+        finishes and the holder exits.
+        """
+        import asyncio
+        import time as _time
+
+        from apme_engine.venv_manager.session import (
+            venv_write_guard,
+            wait_out_worker,
+        )
+
+        loop = asyncio.get_running_loop()
+        sid = "double-cancel-guard-sid"
+        guard_exited = asyncio.Event()
+        contender_acquired = asyncio.Event()
+        worker_done = asyncio.Event()
+
+        def _slow() -> str:
+            # Long enough that every pre-completion assert below runs
+            # while the worker is still in flight (no wall-clock race).
+            _time.sleep(2.0)
+            loop.call_soon_threadsafe(worker_done.set)
+            return "built"
+
+        async def _holder() -> None:
+            async with venv_write_guard(sid, "2.17"):
+                try:
+                    await wait_out_worker(loop.run_in_executor(None, _slow))
+                finally:
+                    guard_exited.set()
+
+        async def _contender() -> None:
+            async with venv_write_guard(sid, "2.17", timeout=5.0):
+                contender_acquired.set()
+
+        holder = asyncio.create_task(_holder())
+        await asyncio.sleep(0.05)
+        holder.cancel()
+        await asyncio.sleep(0.05)
+        holder.cancel()
+        await asyncio.sleep(0.1)
+        assert not holder.done()
+        assert not guard_exited.is_set()
+
+        contender = asyncio.create_task(_contender())
+        await asyncio.sleep(0.1)
+        # Guard still held through both cancels: contender stays blocked
+        # while the worker is still in flight.
+        assert not worker_done.is_set()
+        assert not contender_acquired.is_set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(holder, timeout=5.0)
+        assert worker_done.is_set()
+        assert guard_exited.is_set()
+        await asyncio.wait_for(contender, timeout=5.0)
+        assert contender_acquired.is_set()

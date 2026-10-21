@@ -121,7 +121,6 @@ _SCOPE_TO_PROTO: dict[str, int] = {
 }
 
 _PROTO_TO_SCOPE: dict[int, str] = {
-    common_pb2.RULE_SCOPE_UNSPECIFIED: RuleScope.TASK.value,  # type: ignore[attr-defined]
     common_pb2.RULE_SCOPE_TASK: RuleScope.TASK.value,  # type: ignore[attr-defined]
     common_pb2.RULE_SCOPE_BLOCK: RuleScope.BLOCK.value,  # type: ignore[attr-defined]
     common_pb2.RULE_SCOPE_PLAY: RuleScope.PLAY.value,  # type: ignore[attr-defined]
@@ -180,12 +179,15 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         common_pb2.REMEDIATION_RESOLUTION_UNRESOLVED,  # type: ignore[attr-defined]
     )
 
-    scope_raw = v.get("scope") or RuleScope.TASK
-    scope_str = scope_raw.value if hasattr(scope_raw, "value") else str(scope_raw)
-    scope_proto = _SCOPE_TO_PROTO.get(
-        scope_str,
-        common_pb2.RULE_SCOPE_TASK,  # type: ignore[attr-defined]
-    )
+    scope_raw = v.get("scope")
+    if scope_raw is None:
+        scope_proto = common_pb2.RULE_SCOPE_UNSPECIFIED  # type: ignore[attr-defined]
+    else:
+        scope_str = scope_raw.value if hasattr(scope_raw, "value") else str(scope_raw)
+        scope_proto = _SCOPE_TO_PROTO.get(
+            scope_str,
+            common_pb2.RULE_SCOPE_UNSPECIFIED,  # type: ignore[attr-defined]
+        )
 
     severity_proto = _resolve_severity(v)
 
@@ -278,10 +280,7 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
         v.remediation_resolution,
         RemediationResolution.UNRESOLVED.value,
     )
-    scope = _PROTO_TO_SCOPE.get(
-        v.scope,
-        RuleScope.TASK.value,
-    )
+    scope = _PROTO_TO_SCOPE.get(v.scope)
     result: ViolationDict = {
         "rule_id": v.rule_id,
         "severity": severity_to_label(severity_from_proto(v.severity)),
@@ -291,13 +290,14 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
         "path": v.path,
         "remediation_class": remediation_class,
         "remediation_resolution": resolution,
-        "scope": scope,
         "source": v.source,
         "original_yaml": v.original_yaml,
         "fixed_yaml": v.fixed_yaml,
         "node_line_start": v.node_line_start,
         "node_type": v.node_type,
     }
+    if scope is not None:
+        result["scope"] = scope
     if v.co_fixes:
         result["co_fixes"] = list(v.co_fixes)  # type: ignore[arg-type]
 
