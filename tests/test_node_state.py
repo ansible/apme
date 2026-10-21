@@ -690,6 +690,81 @@ class TestNodeStateFields:
         ns = node.record_state(0, "scanned")
         assert ns.source == ""
 
+    def test_ids_monotonic_after_eviction(self) -> None:
+        """NodeState ids never reuse after the capped window evicts entries."""
+        node = _make_task()
+        orig_max = ContentNode.MAX_PROGRESSION
+        ContentNode.MAX_PROGRESSION = 5
+        try:
+            ids: list[str] = []
+            for i in range(8):
+                node.yaml_lines = f"{_TASK_YAML}# pass {i}\n"
+                ids.append(node.record_state(i, "transformed").id)
+        finally:
+            ContentNode.MAX_PROGRESSION = orig_max
+        assert len(set(ids)) == len(ids)
+        assert len(node.progression) == 5
+        suffixes = [int(v.rsplit("@", 1)[1]) for v in ids]
+        assert suffixes == list(range(8))
+
+    def test_baseline_retained_after_eviction(self) -> None:
+        """The scan baseline survives outside the capped progression window."""
+        node = _make_task()
+        orig_max = ContentNode.MAX_PROGRESSION
+        ContentNode.MAX_PROGRESSION = 4
+        try:
+            node.yaml_lines = _TASK_YAML
+            first = node.record_state(0, "scanned")
+            for i in range(1, 7):
+                node.yaml_lines = f"{_TASK_YAML}# pass {i}\n"
+                node.record_state(i, "transformed")
+        finally:
+            ContentNode.MAX_PROGRESSION = orig_max
+        baseline = node.baseline_state()
+        assert baseline is not None
+        assert baseline.yaml_lines == first.yaml_lines
+        assert baseline.content_hash == first.content_hash
+        assert baseline.id == first.id
+        # progression[0] is no longer the baseline after eviction.
+        assert node.progression[0].id != baseline.id
+
+    def test_baseline_serialization_round_trip(self) -> None:
+        """state_seq and baseline survive to_dict/from_dict without id reuse."""
+        node = _make_task()
+        orig_max = ContentNode.MAX_PROGRESSION
+        ContentNode.MAX_PROGRESSION = 4
+        try:
+            node.yaml_lines = _TASK_YAML
+            node.record_state(0, "scanned")
+            for i in range(1, 6):
+                node.yaml_lines = f"{_TASK_YAML}# pass {i}\n"
+                node.record_state(i, "transformed")
+        finally:
+            ContentNode.MAX_PROGRESSION = orig_max
+        baseline_before = node.baseline_state()
+        assert baseline_before is not None
+        restored = _node_from_dict(_node_to_dict(node))
+        assert restored.baseline_state() is not None
+        assert restored.baseline_state().yaml_lines == baseline_before.yaml_lines  # type: ignore[union-attr]
+        existing_ids = {s.id for s in restored.progression}
+        node_ids_before = {s.id for s in node.progression}
+        assert existing_ids == node_ids_before
+        restored.yaml_lines = f"{_TASK_YAML}# new\n"
+        new_state = restored.record_state(99, "transformed")
+        assert new_state.id not in existing_ids
+
+    def test_bool_state_seq_is_ignored(self) -> None:
+        """Booleans are not valid state_seq values (bool subclasses int)."""
+        node = _make_task()
+        node.yaml_lines = _TASK_YAML
+        node.record_state(0, "scanned")
+        d = _node_to_dict(node)
+        d["state_seq"] = False
+        restored = _node_from_dict(d)
+        # Derived from the progression id suffix, not the bool payload.
+        assert restored._state_seq == 1
+        assert not isinstance(restored._state_seq, bool)
+
 
 # ---------------------------------------------------------------------------
 # ContentGraph approval operations

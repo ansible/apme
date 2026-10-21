@@ -147,7 +147,7 @@ jobs:
       - name: Build and serve UI
         run: |
           cd frontend && npm ci && npm run build && cd ..
-          uv run python -m apme_gateway.main &
+          uv run --extra gateway python -m apme_gateway.main &
           npx serve frontend/dist -l 8081 -s &
           sleep 3
         env:

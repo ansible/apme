@@ -48,7 +48,7 @@ tox is the single entry point for all developer tasks. Every CI check has a corr
 | Environment | What it runs | Category |
 |-------------|-------------|----------|
 | `tox -e lint` | `prek run --all-files` (ruff, mypy, pydoclint, uv-lock) | Quality gate |
-| `tox -e unit` | `pytest` with coverage (`--cov-fail-under=70`) | Test |
+| `tox -e unit` | `pytest` with combined 60%, Engine 70%, and Gateway 50% coverage floors | Test |
 | `tox -e integration` | `pytest tests/integration/` (requires OPA binary) | Test |
 | `tox -e e2e` | Full pod lifecycle e2e: rebuild, start pod, scan, assert violations | Test |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | Test |
@@ -77,7 +77,6 @@ Use `--` to pass arguments through to the underlying command:
 
 ```bash
 tox -e unit -- -k test_sbom             # run a single test
-tox -e unit -- --no-cov                 # skip coverage
 tox -e build -- --no-cache          # rebuild from scratch
 tox -e wipe                          # stop + wipe DB/sessions/Abbenay secrets.json
 tox -e cli -- check .               # run CLI check in pod
@@ -374,12 +373,14 @@ To add a new service:
 ```bash
 tox -e unit                          # unit tests with coverage
 tox -e unit -- -k test_validators    # specific test
-tox -e unit -- --no-cov              # skip coverage
 tox -e integration                   # integration tests (requires OPA binary)
 tox -e ai                            # AI extra tests
 tox -e ui                            # Playwright UI tests
 tox                                  # run all default environments
 ```
+
+`tox -e unit` always enforces the combined and per-package coverage floors;
+`--no-cov` is unsupported in this environment.
 
 ### Test structure
 
@@ -416,7 +417,7 @@ podman run --rm \
 
 ### Coverage target
 
-Coverage is configured at 70% (`fail_under = 70` in `pyproject.toml`). CI and tox enforce `--cov-fail-under=70` as the gate on `src/apme_engine`. Ratchet up as tests are added (80+ once the pending review-fix and validation PRs land with their tests). Rule files under `validators/*/rules/` are excluded from coverage measurement (they have colocated tests instead). The gate measures `src/apme_engine` only — gateway (`src/apme_gateway`) and galaxy-proxy coverage is untracked follow-up work.
+Coverage is collected in one pytest run and checked against three independent floors: 60% combined across Engine and Gateway, 70% for `src/apme_engine`, and 50% for `src/apme_gateway`. The package-specific reports use the same coverage data, so coverage in one package cannot offset a shortfall in the other. Rule files under `validators/*/rules/` are excluded from coverage measurement (they have colocated tests instead); galaxy-proxy coverage remains untracked follow-up work.
 
 ## Pod lifecycle
 

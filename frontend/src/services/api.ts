@@ -62,10 +62,19 @@ export function apiErrorMessage(err: unknown, fallback = "Request failed"): stri
   if (err instanceof ApiError) {
     const body = err.body;
     try {
-      const parsed = JSON.parse(body) as { detail?: string | Array<{ msg?: string }> };
+      const parsed = JSON.parse(body) as {
+        detail?: string | Array<{ msg?: string }> | { code?: string; message?: string };
+      };
       const detail = parsed.detail;
       if (typeof detail === "string" && detail.trim()) {
         return detail;
+      }
+      // Coded 409s use {code, message} dict shape (ADR-060 additive-only).
+      if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+        const msg = (detail as { message?: unknown }).message;
+        if (typeof msg === "string" && msg.trim()) {
+          return msg;
+        }
       }
       if (Array.isArray(detail)) {
         const messages = detail

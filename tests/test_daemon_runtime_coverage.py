@@ -10,6 +10,7 @@ import sys
 import types
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import IO, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
@@ -1283,6 +1284,71 @@ def test_chunked_build_bundle_file_and_dir(tmp_path: Path) -> None:
     assert bundle2.scan_id != ""
 
 
+def test_chunked_build_bundle_enforces_file_cap_before_full_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first over-cap candidate is not fully read or retained.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    from apme_engine.daemon.chunked_fs import ScanBundleLimitExceeded, build_scan_bundle
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    first = root / "a.yml"
+    second = root / "b.yml"
+    first.write_bytes(b"a" * 32_768)
+    second.write_bytes(b"b" * 49_152)
+
+    read_totals: dict[Path, int] = {}
+    original_open = Path.open
+
+    class _TrackedReader:
+        def __init__(self, path: Path, source: BinaryIO) -> None:
+            self._path = path
+            self._source = source
+
+        def __enter__(self) -> _TrackedReader:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self._source.close()
+
+        def read(self, size: int = -1) -> bytes:
+            content = self._source.read(size)
+            read_totals[self._path] = read_totals.get(self._path, 0) + len(content)
+            return content
+
+    def tracked_open(
+        path: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> IO[str] | BinaryIO:
+        source = original_open(path, mode, buffering, encoding, errors, newline)
+        if path in {first, second} and mode == "rb":
+            return cast(BinaryIO, _TrackedReader(path, cast(BinaryIO, source)))
+        return cast(IO[str], source)
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+    with pytest.raises(ScanBundleLimitExceeded, match="file limit exceeded"):
+        build_scan_bundle(root, max_files=1)
+
+    assert 8192 in read_totals.values()
+    fully_read_paths = [path for path, total in read_totals.items() if total == path.stat().st_size]
+    assert len(fully_read_paths) == 1
+    assert sum(read_totals.values()) < first.stat().st_size + second.stat().st_size
+
+    read_totals.clear()
+    with pytest.raises(ScanBundleLimitExceeded, match="size limit exceeded"):
+        build_scan_bundle(root, max_bytes=40_000)
+    assert sum(read_totals.values()) <= 40_000 + 8193
+
+
 def test_chunked_build_bundle_options(tmp_path: Path) -> None:
     """Options fields populate from kwargs.
 
@@ -2398,6 +2464,8 @@ def test_session_store_reap_loop_removes_expired(monkeypatch: pytest.MonkeyPatch
 
     async def _run() -> None:
         monkeypatch.setattr(session_mod, "_REAP_INTERVAL", 0.01)
+        monkeypatch.setattr(session_mod, "_CREATE_INTERVAL_S", 0.0)
+        monkeypatch.setattr(session_mod, "_MIN_CREATE_INTERVAL_S", 0.0)
         store = SessionStore()
         stale = store.create()
         stale.last_activity_at = datetime.now(UTC) - timedelta(seconds=session_mod._DEFAULT_TTL + 5)
@@ -2764,7 +2832,7 @@ def test_chunked_build_bundle_read_error_skipped(tmp_path: Path) -> None:
 
     target = tmp_path / "play.yml"
     target.write_text("- hosts: all\n")
-    with patch.object(Path, "read_bytes", side_effect=OSError("denied")):
+    with patch.object(Path, "open", side_effect=OSError("denied")):
         bundle = build_scan_bundle(target, scan_id="r1")
     assert bundle.files == []
 

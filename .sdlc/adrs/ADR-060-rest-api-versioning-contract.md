@@ -208,3 +208,5 @@ incrementally.
 | 2026-07-21 | Brad Thornton | OpenAPI baseline + freshness check; break-diff still future work |
 | 2026-09-22 | Agent | Status clarified — `/api/v1` contract, checked-in OpenAPI, and `tox -e openapi` shipped; RFC 9745 middleware and break-diff CI remain |
 | 2026-09-22 | Agent | Status → Partially Implemented — OpenAPI baseline and versioning contract shipped |
+| 2026-10-16 | Agent | Document and enforce a 16 MiB pre-parse body limit for scan imports |
+| 2026-10-20 | Agent | Bound submit idempotency tokens to 128 trimmed characters and document the existing 400 invalid-token response |

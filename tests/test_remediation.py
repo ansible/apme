@@ -28,6 +28,7 @@ from apme_engine.remediation.transforms._helpers import (
 from apme_engine.remediation.transforms.L007_shell_to_command import fix_shell_to_command
 from apme_engine.remediation.transforms.L008_local_action import fix_local_action
 from apme_engine.remediation.transforms.L009_empty_string import fix_empty_string
+from apme_engine.remediation.transforms.L010_ignore_errors import fix_ignore_errors
 from apme_engine.remediation.transforms.L011_literal_bool import fix_literal_bool
 from apme_engine.remediation.transforms.L012_latest import fix_latest
 from apme_engine.remediation.transforms.L013_changed_when import fix_changed_when
@@ -148,8 +149,11 @@ class TestPartition:
         """Verifies resolvable when rule_id in registry, not otherwise."""
         reg = TransformRegistry()
         reg.register("L021", node=lambda t, v: False)
-        assert is_finding_resolvable({"rule_id": "L021"}, reg) is True
-        assert is_finding_resolvable({"rule_id": "L999"}, reg) is False
+        assert is_finding_resolvable({"rule_id": "L021", "scope": "task"}, reg) is True
+        assert is_finding_resolvable({"rule_id": "L999", "scope": "task"}, reg) is False
+        # Scope-less is never Tier 1 even with a registered transform
+        # (agrees with classify_violation returning MANUAL).
+        assert is_finding_resolvable({"rule_id": "L021"}, reg) is False
 
     def test_normalize_rule_id_strips_native_prefix(self) -> None:
         """Verifies normalize_rule_id strips 'native:' prefix."""
@@ -162,8 +166,9 @@ class TestPartition:
         """Verifies native:L021 is resolvable when L021 is registered."""
         reg = TransformRegistry()
         reg.register("L021", node=lambda t, v: False)
-        assert is_finding_resolvable({"rule_id": "native:L021"}, reg) is True
-        assert is_finding_resolvable({"rule_id": "native:L999"}, reg) is False
+        assert is_finding_resolvable({"rule_id": "native:L021", "scope": "task"}, reg) is True
+        assert is_finding_resolvable({"rule_id": "native:L999", "scope": "task"}, reg) is False
+        assert is_finding_resolvable({"rule_id": "native:L021"}, reg) is False
 
     def test_partition_native_prefix_to_tier1(self) -> None:
         """Verifies native:-prefixed violations partition into Tier 1."""
@@ -171,8 +176,8 @@ class TestPartition:
         reg.register("L021", node=lambda t, v: False)
 
         violations: list[ViolationDict] = [
-            {"rule_id": "native:L021"},
-            {"rule_id": "R118"},
+            {"rule_id": "native:L021", "scope": "task"},
+            {"rule_id": "R118", "scope": "task"},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
         assert len(t1) == 1
@@ -186,9 +191,9 @@ class TestPartition:
         reg.register("L021", node=lambda t, v: False)
 
         violations: list[ViolationDict] = [
-            {"rule_id": "L021"},
-            {"rule_id": "R118"},
-            {"rule_id": "POLICY", "ai_proposable": False},
+            {"rule_id": "L021", "scope": "task"},
+            {"rule_id": "R118", "scope": "task"},
+            {"rule_id": "POLICY", "scope": "task", "ai_proposable": False},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
         assert len(t1) == 1
@@ -200,24 +205,30 @@ class TestPartition:
 
     def test_classify_remaining_never_auto_fixable(self) -> None:
         """Remaining violations are never AUTO_FIXABLE — even if a transform exists."""
-        assert classify_violation({"rule_id": "L021"}) == RemediationClass.AI_CANDIDATE
-        assert classify_violation({"rule_id": "native:L021"}) == RemediationClass.AI_CANDIDATE
+        assert classify_violation({"rule_id": "L021", "scope": "task"}) == RemediationClass.AI_CANDIDATE
+        assert classify_violation({"rule_id": "native:L021", "scope": "task"}) == RemediationClass.AI_CANDIDATE
 
     def test_classify_violation_ai_candidate(self) -> None:
         """Verifies classify_violation returns ai-candidate for task-scoped rules."""
-        assert classify_violation({"rule_id": "R118"}) == RemediationClass.AI_CANDIDATE
-        assert classify_violation({"rule_id": "L999", "ai_proposable": True}) == RemediationClass.AI_CANDIDATE
+        assert classify_violation({"rule_id": "R118", "scope": "task"}) == RemediationClass.AI_CANDIDATE
+        assert (
+            classify_violation({"rule_id": "L999", "scope": "task", "ai_proposable": True})
+            == RemediationClass.AI_CANDIDATE
+        )
 
     def test_classify_violation_manual_review(self) -> None:
         """Verifies classify_violation returns manual-review when ai_proposable is False."""
-        assert classify_violation({"rule_id": "POLICY", "ai_proposable": False}) == RemediationClass.MANUAL_REVIEW
+        assert (
+            classify_violation({"rule_id": "POLICY", "scope": "task", "ai_proposable": False})
+            == RemediationClass.MANUAL_REVIEW
+        )
 
     def test_add_classification_to_violations(self) -> None:
         """Verifies add_classification_to_violations classifies remaining violations."""
         violations: list[ViolationDict] = [
-            {"rule_id": "L021"},
-            {"rule_id": "R118"},
-            {"rule_id": "POLICY", "ai_proposable": False},
+            {"rule_id": "L021", "scope": "task"},
+            {"rule_id": "R118", "scope": "task"},
+            {"rule_id": "POLICY", "scope": "task", "ai_proposable": False},
         ]
         add_classification_to_violations(violations)
         assert violations[0]["remediation_class"] == RemediationClass.AI_CANDIDATE
@@ -296,7 +307,7 @@ class TestPartition:
         """
         reg = build_default_registry()
         for rule_id in reg:
-            v: ViolationDict = {"rule_id": rule_id}
+            v: ViolationDict = {"rule_id": rule_id, "scope": "task"}
             assert classify_violation(v) == RemediationClass.AI_CANDIDATE, (
                 f"Remaining {rule_id} should classify as AI_CANDIDATE"
             )
@@ -384,14 +395,38 @@ class TestPartition:
         assert classify_violation({"rule_id": "L006", "scope": RuleScope.TASK}) == RemediationClass.MANUAL_REVIEW
         assert classify_violation({"rule_id": "L080", "scope": "task"}) == RemediationClass.MANUAL_REVIEW
 
-    def test_partition_missing_scope_defaults_to_task(self) -> None:
-        """Verifies violations without scope default to task (AI proposable)."""
+    def test_partition_missing_scope_routes_to_tier3_manual(self) -> None:
+        """Scope-less violations are non-AI-routable (Tier 3 manual).
+
+        Validators must stamp scope explicitly (ADR-026); without structural
+        scope the engine cannot prove a node-local fix is safe.
+        """
         reg = TransformRegistry()
         violations: list[ViolationDict] = [
             {"rule_id": "L999"},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
-        assert len(t2) == 1
+        assert len(t1) == 0
+        assert len(t2) == 0
+        assert len(t3) == 1
+        assert t3[0]["remediation_resolution"] == RemediationResolution.MANUAL
+
+    def test_classify_missing_scope_manual_review(self) -> None:
+        """Scope-less violations classify as manual-review, never AI-candidate."""
+        assert classify_violation({"rule_id": "L999"}) == RemediationClass.MANUAL_REVIEW
+        assert classify_violation({"rule_id": "L999", "scope": ""}) == RemediationClass.MANUAL_REVIEW
+        assert classify_violation({"rule_id": "L999", "scope": None}) == RemediationClass.MANUAL_REVIEW
+
+    def test_partition_scope_less_play_level_not_ai_routable(self) -> None:
+        """A scope-less play-level finding (e.g. L042 without scope) never reaches Tier 2."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "L042"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert t2 == []
+        assert len(t3) == 1
+        assert classify_violation({"rule_id": "L042"}) == RemediationClass.MANUAL_REVIEW
 
     def test_classify_play_scope_manual_review(self) -> None:
         """Verifies play-scoped violations classify as manual-review."""
@@ -506,6 +541,140 @@ class TestL021MissingMode:
         """Verifies invalid YAML returns applied False without raising."""
         result = _apply_node(fix_missing_mode, "{{{{invalid", {"rule_id": "L021", "line": 1})
         assert result.applied is False
+
+    def test_mode_uses_quoted_scalar(self) -> None:
+        """Added mode is a ruamel quoted scalar so dumps emits quotes."""
+        from ruamel.yaml.scalarstring import SingleQuotedScalarString
+
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        data = yaml.load(
+            textwrap.dedent("""\
+            - name: Copy a file
+              ansible.builtin.copy:
+                src: /tmp/foo
+                dest: /tmp/bar
+            """)
+        )
+        task = cast(CommentedMap, data[0])  # type: ignore[index]
+        assert fix_missing_mode(task, {"rule_id": "L021", "line": 1}) is True
+        assert isinstance(
+            task["ansible.builtin.copy"]["mode"],
+            SingleQuotedScalarString,
+        )
+
+    def test_round_trip(self) -> None:
+        """Transform -> dumps -> reload yields str mode; second fix is a no-op."""
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        data = yaml.load(
+            textwrap.dedent("""\
+            - name: Copy a file
+              ansible.builtin.copy:
+                src: /tmp/foo
+                dest: /tmp/bar
+            """)
+        )
+        task = cast(CommentedMap, data[0])  # type: ignore[index]
+        assert fix_missing_mode(task, {"rule_id": "L021", "line": 1}) is True
+        dumped = yaml.dumps([task])
+        assert "'0644'" in dumped or '"0644"' in dumped
+        reloaded = yaml.load(dumped)
+        reloaded_task = cast(CommentedMap, reloaded[0])  # type: ignore[index]
+        mode_val = reloaded_task["ansible.builtin.copy"]["mode"]
+        assert isinstance(mode_val, str)
+        assert str(mode_val) == "0644"
+        assert fix_missing_mode(reloaded_task, {"rule_id": "L021", "line": 1}) is False
+
+
+# ---------------------------------------------------------------------------
+# L010 transform: ignore_errors
+# ---------------------------------------------------------------------------
+
+
+class TestL010IgnoreErrors:
+    """Tests for fix_ignore_errors L010 transform branches."""
+
+    @staticmethod
+    def _parse_task(yaml_str: str) -> CommentedMap:
+        """Parse YAML and return the first task CommentedMap.
+
+        Args:
+            yaml_str: Indented YAML task list string.
+
+        Returns:
+            First task CommentedMap from the parsed list.
+        """
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        data = yaml.load(textwrap.dedent(yaml_str))
+        return cast(CommentedMap, data[0])  # type: ignore[index]
+
+    def test_missing_key_no_change(self) -> None:
+        """No ignore_errors key returns False without modifying the task."""
+        task = self._parse_task("""\
+        - name: Run command
+          ansible.builtin.command: echo hi
+        """)
+        assert fix_ignore_errors(task, {"rule_id": "L010", "line": 1}) is False
+        assert "ignore_errors" not in task
+        assert "failed_when" not in task
+
+    def test_non_true_no_change(self) -> None:
+        """ignore_errors: false is left untouched."""
+        task = self._parse_task("""\
+        - name: Run command
+          ansible.builtin.command: echo hi
+          ignore_errors: false
+        """)
+        assert fix_ignore_errors(task, {"rule_id": "L010", "line": 1}) is False
+        assert task["ignore_errors"] is False
+        assert "failed_when" not in task
+
+    def test_non_bool_no_change(self) -> None:
+        """ignore_errors as a string is not treated as True."""
+        task = self._parse_task("""\
+        - name: Run command
+          ansible.builtin.command: echo hi
+          ignore_errors: "true"
+        """)
+        assert fix_ignore_errors(task, {"rule_id": "L010", "line": 1}) is False
+        assert "failed_when" not in task
+
+    def test_true_without_failed_when(self) -> None:
+        """ignore_errors: true is replaced with failed_when: false."""
+        task = self._parse_task("""\
+        - name: Run command
+          ansible.builtin.command: echo hi
+          ignore_errors: true
+        """)
+        assert fix_ignore_errors(task, {"rule_id": "L010", "line": 1}) is True
+        assert "ignore_errors" not in task
+        assert task["failed_when"] is False
+
+    def test_true_with_existing_failed_when(self) -> None:
+        """Existing failed_when is preserved, not overwritten."""
+        task = self._parse_task("""\
+        - name: Run command
+          ansible.builtin.command: echo hi
+          ignore_errors: true
+          failed_when: result.rc != 0
+        """)
+        assert fix_ignore_errors(task, {"rule_id": "L010", "line": 1}) is True
+        assert "ignore_errors" not in task
+        assert task["failed_when"] == "result.rc != 0"
+
+    def test_idempotent(self) -> None:
+        """Second pass after the fix is a no-op (key already removed)."""
+        task = self._parse_task("""\
+        - name: Run command
+          ansible.builtin.command: echo hi
+          ignore_errors: true
+        """)
+        assert fix_ignore_errors(task, {"rule_id": "L010", "line": 1}) is True
+        assert fix_ignore_errors(task, {"rule_id": "L010", "line": 1}) is False
+
+    def test_registered_in_default_registry(self) -> None:
+        """L010 is registered for deterministic remediation."""
+        reg = build_default_registry()
+        assert "L010" in reg
 
 
 # ---------------------------------------------------------------------------
@@ -1123,6 +1292,95 @@ class TestL020OctalMode:
         """)
         assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
         assert task["ansible.builtin.file"]["mode"] == "0755"
+
+    def test_mode_uses_quoted_scalar(self) -> None:
+        """Fixed mode is a ruamel quoted scalar so dumps emits quotes."""
+        from ruamel.yaml.scalarstring import SingleQuotedScalarString
+
+        task = self._parse_task("""\
+        - name: Set perms
+          ansible.builtin.file:
+            path: /tmp/foo
+            mode: 644
+        """)
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        assert isinstance(
+            task["ansible.builtin.file"]["mode"],
+            SingleQuotedScalarString,
+        )
+
+    def test_str_branch_uses_quoted_scalar(self) -> None:
+        """String '644' branch also produces a quoted scalar."""
+        from ruamel.yaml.scalarstring import SingleQuotedScalarString
+
+        task = self._parse_task("""\
+        - name: Set perms
+          ansible.builtin.file:
+            path: /tmp/foo
+            mode: "644"
+        """)
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        assert isinstance(
+            task["ansible.builtin.file"]["mode"],
+            SingleQuotedScalarString,
+        )
+
+    def test_round_trip_int_branch(self) -> None:
+        """Transform -> dumps -> reload yields str mode; rule no longer fires."""
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        task = self._parse_task("""\
+        - name: Set perms
+          ansible.builtin.file:
+            path: /tmp/foo
+            mode: 644
+        """)
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        dumped = yaml.dumps([task])
+        assert "'0644'" in dumped or '"0644"' in dumped
+        reloaded = yaml.load(dumped)
+        reloaded_task = cast(CommentedMap, reloaded[0])  # type: ignore[index]
+        mode_val = reloaded_task["ansible.builtin.file"]["mode"]
+        assert isinstance(mode_val, str)
+        assert not isinstance(mode_val, int)
+        assert str(mode_val) == "0644"
+        assert fix_octal_mode(reloaded_task, {"rule_id": "L020", "line": 1}) is False
+
+    def test_round_trip_str_branch(self) -> None:
+        """String '644' -> dumps -> reload yields quoted str; rule no longer fires."""
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        task = self._parse_task("""\
+        - name: Set perms
+          ansible.builtin.file:
+            path: /tmp/foo
+            mode: "644"
+        """)
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        dumped = yaml.dumps([task])
+        assert "'0644'" in dumped or '"0644"' in dumped
+        reloaded = yaml.load(dumped)
+        reloaded_task = cast(CommentedMap, reloaded[0])  # type: ignore[index]
+        mode_val = reloaded_task["ansible.builtin.file"]["mode"]
+        assert isinstance(mode_val, str)
+        assert str(mode_val) == "0644"
+        assert fix_octal_mode(reloaded_task, {"rule_id": "L020", "line": 1}) is False
+
+    def test_round_trip_octal_literal(self) -> None:
+        """YAML 1.1 octal 0644 -> dumps -> reload yields str; rule no longer fires."""
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        task = self._parse_task("""\
+        - name: Set perms
+          ansible.builtin.file:
+            path: /tmp/foo
+            mode: 0644
+        """)
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        dumped = yaml.dumps([task])
+        reloaded = yaml.load(dumped)
+        reloaded_task = cast(CommentedMap, reloaded[0])  # type: ignore[index]
+        mode_val = reloaded_task["ansible.builtin.file"]["mode"]
+        assert isinstance(mode_val, str)
+        assert str(mode_val) == "0644"
+        assert fix_octal_mode(reloaded_task, {"rule_id": "L020", "line": 1}) is False
 
 
 # ---------------------------------------------------------------------------

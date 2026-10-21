@@ -257,6 +257,11 @@ message ApprovalAck {
   int32 applied_count = 1;
   SessionStatus status = 2;
   int32 ttl_seconds = 3;
+  // Files with approved modifications that could not be spliced (no
+  // original content or no scan baseline). Additive (N20 surfacing):
+  // default strictness is unchanged, skips are only reported.
+  int32 unpatched_count = 4;
+  repeated string unpatched_files = 5;
 }
 
 message SessionResult {
