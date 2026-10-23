@@ -175,6 +175,69 @@ async def test_approve_rejects_second_submit_after_first_succeeds(client: AsyncC
     assert gate.future.result() == ["t1-aaa"]
 
 
+async def test_in_flight_draft_update_finishes_before_approval(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Serialize draft persistence before the gate decision commits.
+
+    Args:
+        client: Async HTTPX test client.
+        monkeypatch: Test dependency patcher.
+    """
+    project_id = "proj-lifecycle-draft-race"
+    state = await _setup_awaiting_approval(
+        project_id=project_id,
+        scan_id="scan-lifecycle-draft-race",
+        operation_id="op-lifecycle-draft-race",
+    )
+    gate = state.approval_gate
+    assert gate is not None
+    draft_entered = asyncio.Event()
+    resume_draft = asyncio.Event()
+    events: list[str] = []
+
+    async def delayed_draft_update(_db: object, *, scan_id: str, updates: list[dict[str, str]]) -> list[object]:
+        assert scan_id == state.scan_id
+        assert updates == [{"proposal_id": "t1-aaa", "status": "approved"}]
+        events.append("draft-started")
+        draft_entered.set()
+        await resume_draft.wait()
+        events.append("draft-finished")
+        return []
+
+    async def record_gate_commit(*_args: object, **_kwargs: object) -> int:
+        events.append("gate-committed")
+        return 0
+
+    monkeypatch.setattr("apme_gateway.proposals.draft.apply_draft_updates", delayed_draft_update)
+    monkeypatch.setattr("apme_gateway.proposals.draft.commit_gate_decisions", record_gate_commit)
+
+    draft_task = asyncio.create_task(
+        client.patch(
+            _operation_url(project_id, "/proposals"),
+            json={"updates": [{"proposal_id": "t1-aaa", "status": "approved"}]},
+        )
+    )
+    await asyncio.wait_for(draft_entered.wait(), timeout=1)
+    approve_task = asyncio.create_task(
+        client.post(
+            _operation_url(project_id, "/approve"),
+            json={"approved_ids": ["t1-aaa"], "approval_gate_id": gate.gate_id},
+        )
+    )
+    await asyncio.sleep(0)
+    assert not gate.future.done()
+
+    resume_draft.set()
+    draft_response, approve_response = await asyncio.gather(draft_task, approve_task)
+
+    assert draft_response.status_code == 200
+    assert approve_response.status_code == 200
+    assert events == ["draft-started", "draft-finished", "gate-committed"]
+    assert gate.future.result() == ["t1-aaa"]
+
+
 async def test_set_proposals_retires_pending_gate() -> None:
     """A superseding proposals event resolves the previous gate with []."""
     registry = get_operation_registry()

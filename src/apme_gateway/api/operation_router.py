@@ -529,27 +529,37 @@ async def patch_draft_proposals(project_id: str, body: DraftProposalsRequest) ->
             detail=f"Operation is in '{state.status.value}', not 'awaiting_approval'",
         )
 
+    gate = state.approval_gate
+    if gate is None:
+        raise HTTPException(status_code=409, detail="No active approval gate")
+
     from apme_gateway.proposals.draft import apply_draft_updates  # noqa: PLC0415
     from apme_gateway.proposals.flush import proposal_to_detail_dict  # noqa: PLC0415
 
     updates = [{"proposal_id": u.proposal_id, "status": u.status} for u in body.updates]
-    try:
-        async with get_session() as db:
-            rows = await apply_draft_updates(db, scan_id=state.scan_id, updates=updates)
-            await db.commit()
-            payloads = [proposal_to_detail_dict(r) for r in rows]
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    async with state.approval_gate_lock:
+        if state.approval_gate is not gate:
+            raise HTTPException(status_code=409, detail="Approval superseded by newer proposals")
+        if gate.future.done():
+            raise HTTPException(status_code=409, detail="Approval already submitted")
 
-    # Mirror onto in-memory registry proposals when engine ids match.
-    if state.proposals:
-        by_engine = {p.id: p for p in state.proposals}
-        for item in payloads:
-            eng = str(item.get("engine_proposal_id") or "")
-            if eng and eng in by_engine:
-                by_engine[eng].status = str(item.get("status") or by_engine[eng].status)
+        try:
+            async with get_session() as db:
+                rows = await apply_draft_updates(db, scan_id=state.scan_id, updates=updates)
+                await db.commit()
+                payloads = [proposal_to_detail_dict(r) for r in rows]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    registry.broadcast_proposal_updated(state.operation_id, payloads)
+        # Mirror onto in-memory registry proposals when engine ids match.
+        if state.proposals:
+            by_engine = {p.id: p for p in state.proposals}
+            for item in payloads:
+                eng = str(item.get("engine_proposal_id") or "")
+                if eng and eng in by_engine:
+                    by_engine[eng].status = str(item.get("status") or by_engine[eng].status)
+
+        registry.broadcast_proposal_updated(state.operation_id, payloads)
     return {"updated": payloads}
 
 

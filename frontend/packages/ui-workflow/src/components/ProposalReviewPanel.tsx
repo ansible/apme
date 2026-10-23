@@ -411,7 +411,7 @@ export function ProposalReviewPanel({
     return n;
   }, [actionable, decisions]);
 
-  /** All undecided locations (gates Next regardless of filters). */
+  /** Undecided locations are skipped on continue; one explicit decision enables Next. */
   const pendingIds = useMemo(() => {
     const ids: string[] = [];
     for (const p of actionable) {

@@ -57,6 +57,32 @@ describe("ProposalReviewPanel", () => {
     expect(onApprove).toHaveBeenCalledWith(["t1-0000"]);
   });
 
+  it("enables Next after accepting one location while another remains undecided", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    render(
+      <ProposalReviewPanel proposals={nodeProposals} onApprove={onApprove} />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: /^Accept$/i })[0]!);
+    expect(screen.getByRole("button", { name: /^Next$/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /^Next$/i }));
+    expect(onApprove).toHaveBeenCalledWith(["t1-0000"]);
+  });
+
+  it("enables Next after declining one location while another remains undecided", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    render(
+      <ProposalReviewPanel proposals={nodeProposals} onApprove={onApprove} />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: /^Decline$/i })[0]!);
+    expect(screen.getByRole("button", { name: /^Next$/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /^Next$/i }));
+    expect(onApprove).toHaveBeenCalledWith([]);
+  });
+
   it("Decline remaining then Next sends empty approved_ids", async () => {
     const user = userEvent.setup();
     const onApprove = vi.fn();
