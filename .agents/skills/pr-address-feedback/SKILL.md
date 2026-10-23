@@ -268,18 +268,148 @@ Remove unused imports or use the symbol. Prefer trimming the import list over `#
 
 ## Workflow
 
-1. **Sync Branch:** Ensure the PR branch is up to date with upstream main.
+1. **Rebase Before Review Work:** Before reading feedback to plan changes or
+   editing code, confirm the PR's base branch and make sure the working tree is
+   clean. Preserve any existing work by committing or safely stashing it; never
+   discard it to make the rebase possible. Always fetch the latest PR base and
+   attempt to rebase the PR branch onto it, even when it appears up to date.
+   Record the PR's base branch, head repository, head branch, and URL from its
+   metadata, keeping those values as data rather than interpolating them into
+   shell command text. Map the base and head repositories to configured Git
+   remotes by checking their fetch and push URLs; do not assume the remotes are
+   named `upstream` or `origin`. The PR URL identifies the base repository.
+   Normalize SSH and HTTPS URLs and an optional `.git` suffix when comparing
+   repository names. Verify that the checked-out local branch is the PR head
+   branch and tracks the recorded head remote and branch. If detached or
+   mismatched, use `gh pr checkout N` and verify the checkout before continuing:
 
    ```bash
-   git fetch upstream
-   git rebase upstream/main
+   gh pr view N --json baseRefName,headRefName,headRepository,headRefOid,url
+   git remote -v
+   git branch --show-current
+   git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
    ```
+
+   Before editing review feedback, capture the current `headRefOid` as the
+   expected remote value for the later lease check. Keep that snapshot
+   unchanged while making fixes; on a later feedback cycle, capture the new
+   head again before editing.
+
+   ```bash
+   pr_number=N
+   pr_branch=$(gh pr view "$pr_number" --json headRefName --jq .headRefName) || exit 1
+   expected_head=$(gh pr view "$pr_number" --json headRefOid --jq .headRefOid) || exit 1
+   git check-ref-format --branch "$pr_branch" >/dev/null || exit 1
+   case "$expected_head" in
+     *[!0-9a-fA-F]*|'') echo "Invalid PR head commit metadata; stop." >&2; exit 1 ;;
+   esac
+   test "${#expected_head}" -eq 40 || exit 1
+   git config --local pr-address-feedback.expectedHead "$expected_head"
+   ```
+
+   Before fetching, confirm that the base remote's fetch URL matches the
+   repository identified by the PR URL. Confirm that the PR head remote's push
+   fetch and push URLs match `headRepository.nameWithOwner`. Keep the verified
+   base remote name in a quoted shell variable and validate it against
+   `git remote`; read the base branch into a quoted variable and validate it with
+   `git check-ref-format --branch` before using it:
+
+   ```bash
+   pr_number=N
+   pr_branch=$(gh pr view "$pr_number" --json headRefName --jq .headRefName) || exit 1
+   expected_head=$(git config --local --get pr-address-feedback.expectedHead) || exit 1
+   pr_remote='verified-pr-remote-name'
+   base_remote='verified-base-remote-name'
+   base_branch=$(gh pr view "$pr_number" --json baseRefName --jq .baseRefName) || exit 1
+   git remote | grep -Fxq -- "$pr_remote" || exit 1
+   git remote | grep -Fxq -- "$base_remote" || exit 1
+   git fetch "$pr_remote" "+refs/heads/$pr_branch:refs/remotes/$pr_remote/$pr_branch" || exit 1
+   fetched_head=$(git rev-parse "refs/remotes/$pr_remote/$pr_branch^{commit}") || exit 1
+   test "$fetched_head" = "$expected_head" || {
+     echo "The PR head changed after it was recorded; stop and resync." >&2
+     exit 1
+   }
+   git merge-base --is-ancestor "$expected_head" HEAD || {
+     echo "Local HEAD does not contain the recorded PR head; stop and sync the branch." >&2
+     exit 1
+   }
+   git check-ref-format --branch "$base_branch" >/dev/null || exit 1
+   git fetch "$base_remote" "refs/heads/$base_branch:refs/remotes/$base_remote/$base_branch"
+   git rebase "$base_remote/$base_branch"
+   ```
+
+   The PR head fetch must match the saved `headRefOid`, and that commit must be
+   an ancestor of local `HEAD`; stop if either check fails. This prevents
+   rebasing or pushing from a stale or divergent checkout. If the PR targets
+   another branch or uses a differently named base remote,
+   use its recorded remote and branch in these variables. If no
+   remote URL matches the PR base repository or no current base can be fetched,
+   stop and report the blocker. Do not inspect or address review feedback until
+   the rebase completes successfully.
+
+   Resolve every rebase conflict before starting review changes. Inspect each
+   conflicted file and preserve both the latest base-branch changes and the
+   intent of the PR commits. Then stage the resolved files and continue the
+   rebase, repeating until it completes:
+
+   ```bash
+   git status
+   # edit conflicted files, then:
+   git add <resolved-files>
+   git rebase --continue
+   ```
+
+   Do not use `git rebase --skip` to drop substantive PR work or resolve
+   conflicts by blindly choosing one side. If a conflict cannot be resolved
+   safely, abort the rebase, preserve the branch, and report the conflict
+   before making review changes. Once the rebase completes, verify the branch
+   is still the recorded PR head branch and inspect the diff, then restore any
+   safely stashed work and resolve any resulting conflicts before continuing.
 
 2. **Review & Plan:** Check CI status and read all review comments. **Write out a brief Action Plan** detailing which files you will edit to fix the comments.
 
 3. **Fix & Validate Locally:** Fix all issues in minimal commits. **Crucially, run local validation before pushing** (e.g., `tox -e lint` or `tox -e unit`) to ensure your fix doesn't break something else.
 
-4. **Push:** `git push --force-with-lease`
+4. **Push:** Push only to the verified PR remote and head branch, using an
+   explicit refspec so Git's push configuration cannot select other branches:
+
+   ```bash
+   pr_number=N
+   pr_branch=$(gh pr view "$pr_number" --json headRefName --jq .headRefName) || exit 1
+   expected_head=$(git config --local --get pr-address-feedback.expectedHead) || exit 1
+   pr_remote='verified-pr-remote-name'
+   git check-ref-format --branch "$pr_branch" >/dev/null || {
+     echo "Invalid PR branch metadata; refusing to push." >&2
+     exit 1
+   }
+   git remote | grep -Fxq -- "$pr_remote" || {
+     echo "PR remote is not configured; refusing to push." >&2
+     exit 1
+   }
+   case "$expected_head" in
+     *[!0-9a-fA-F]*|'')
+       echo "Invalid PR head commit metadata; refusing to push." >&2
+       exit 1
+       ;;
+   esac
+   test "${#expected_head}" -eq 40 || {
+     echo "Unexpected PR head commit length; refusing to push." >&2
+     exit 1
+   }
+   test "$(git branch --show-current)" = "$pr_branch" || {
+     echo "Not on the verified PR branch; refusing to push." >&2
+     exit 1
+   }
+   test "$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')" = "$pr_remote/$pr_branch" || {
+     echo "PR branch tracking does not match; refusing to push." >&2
+     exit 1
+   }
+   git push --force-with-lease="refs/heads/$pr_branch:$expected_head" \
+     "$pr_remote" "HEAD:refs/heads/$pr_branch" &&
+     git config --local --unset pr-address-feedback.expectedHead
+   ```
+
+   Stop without pushing if either check fails or `HEAD` is detached.
 
 5. **Wait & Verify Remote CI:** Wait 2-3 minutes for remote CI pipelines to run, then check their status. Some tests only run remotely; fix any remote-only failures before proceeding.
 
