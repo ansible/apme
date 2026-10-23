@@ -426,15 +426,23 @@ export function ProposalReviewPanel({
   const pendingCount = pendingIds.length;
 
   const workflowNext = useMemo((): WorkflowNextConfig => {
-    // No silent default: every location must be Accept or Decline before Next.
     if (pendingCount > 0) {
+      const hasDecision = acceptedIds.length > 0 || declinedCount > 0;
+      const pendingSummary = `${pendingCount} undecided location${
+        pendingCount !== 1 ? 's' : ''
+      } will be skipped`;
+      const summary = hasDecision
+        ? acceptedIds.length > 0
+          ? `Apply ${acceptedIds.length} accepted ${isAiGate ? 'AI' : 'rule-based'} fix${
+              acceptedIds.length !== 1 ? 'es' : ''
+            } and ${pendingSummary}.`
+          : `Continue without applying fixes and ${pendingSummary}.`
+        : `Accept or Decline at least one location to continue. ${pendingSummary}.`;
       return {
         label: 'Next',
-        summary: `${pendingCount} location${
-          pendingCount !== 1 ? 's' : ''
-        } still undecided. Accept or Decline each one, then Next unlocks. Accept remaining / Decline remaining only decide currently visible rows — widen filters to reach the rest.`,
+        summary,
         onNext: () => onApprove(acceptedIds),
-        isDisabled: true,
+        isDisabled: !hasDecision,
       };
     }
     const declinedNote =
@@ -462,7 +470,6 @@ export function ProposalReviewPanel({
     };
   }, [
     acceptedIds,
-    actionable.length,
     declinedCount,
     isAiGate,
     onApprove,
@@ -778,10 +785,11 @@ export function ProposalReviewPanel({
         {actionable.length > 0 ? (
           pendingCount > 0 ? (
             <>
-              Every location starts undecided. Next stays disabled until you Accept
-              or Decline each one. Decided rows collapse. Accept remaining /
-              Decline remaining only apply to currently visible rows — widen
-              filters to decide the rest, or Clear to reset and expand again.
+              Every location starts undecided. Make at least one decision to
+              continue; any locations still undecided will be skipped, not
+              applied. Decided rows collapse. Accept remaining / Decline
+              remaining only apply to currently visible rows — widen filters to
+              reach the rest, or Clear to reset and expand again.
             </>
           ) : (
             <>
