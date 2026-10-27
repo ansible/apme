@@ -433,7 +433,6 @@ class TestDefaultRegistry:
             "L021",
             "L022",
             "L025",
-            "L026",
             "L043",
             "L046",
             "L084",
@@ -444,7 +443,7 @@ class TestDefaultRegistry:
             "M009",
         ):
             assert rule_id in reg, f"{rule_id} missing from default registry"
-        assert len(reg) == 26
+        assert len(reg) == 25
 
 
 # ---------------------------------------------------------------------------
@@ -715,7 +714,7 @@ class TestL007ShellToCommand:
 
 
 class TestFQCNTransform:
-    """Tests for fix_fqcn M001/M003 transforms."""
+    """Tests for the shared fix_fqcn transform."""
 
     def test_rewrites_short_name_with_resolved_fqcn(self) -> None:
         """Verifies short module name replaced with resolved_fqcn from violation."""

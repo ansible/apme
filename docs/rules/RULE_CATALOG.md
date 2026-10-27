@@ -9,7 +9,7 @@
 | Implemented | 153/158 |
 | Tested | 155/158 |
 | Documented | 157/158 |
-| Deterministic fixer (Tier 1) | 25/158 |
+| Deterministic fixer (Tier 1) | 24/158 |
 | Severity resolved (ADR-043 table or SEC: prefix) | 158/158 |
 | Severity fallback (medium default) | 0/158 |
 
@@ -50,8 +50,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
-| 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 69 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 1 | auto | 24 | Deterministic transform in registry — applied by `apme remediate` |
+| 2 | ai | 70 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
 | 3 | manual | 64 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
@@ -85,7 +85,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L023 | L | OPA | info | play | manual | Consider whether run_once is appropriate. | Yes | Yes | Yes | — |
 | L024 | L | OPA | low | task | ai | Task should have a name. | Yes | Yes | Yes | — |
 | L025 | L | OPA | low | task | auto | Task/play name should start with uppercase. | Yes | Yes | Yes | Yes |
-| L026 | L | Native | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
+| L026 | L | Native | low | task | ai | Tasks should use FQCN for modules. | Yes | Yes | Yes | — |
 | L027 | L | Native | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
 | L031 | L | Native | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | L | Native | low | task | ai | Variable redefinition may cause confusion. | Yes | Yes | Yes | — |
@@ -275,13 +275,13 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M028 | high | task | ai | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | R118 | info | task | manual | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 
-### Native (96 rules, 95 impl, 95 tested, 4 fixers)
+### Native (96 rules, 95 impl, 95 tested, 3 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
 | A001 | medium | task | ai | Tasks should use named_url instead of hardcoded template IDs. | Yes | Yes | Yes | — |
 | A002 | high | task | ai | Tasks should not use deprecated AAP API endpoints or deprecated ansible.hub modules. | Yes | Yes | Yes | — |
-| L026 | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
+| L026 | low | task | ai | Tasks should use FQCN for modules. | Yes | Yes | Yes | — |
 | L027 | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
 | L031 | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | low | task | ai | Variable redefinition may cause confusion. | Yes | Yes | Yes | — |
@@ -436,7 +436,6 @@ Deterministic fixers are auto-applied by `apme remediate`.
 | L021 | low | task | Set mode explicitly for file/copy/template. |
 | L022 | low | task | Shell with pipe should set set -o pipefail. |
 | L025 | low | task | Task/play name should start with uppercase. |
-| L026 | low | task | Tasks should use FQCN for modules. |
 | L043 | low | task | Bare variable in with_* loop directive; use {{ var }}. |
 | L046 | low | task | Avoid raw/command/shell without args key. |
 | L084 | low | task | Task names in included sub-task files should use a prefix. |
