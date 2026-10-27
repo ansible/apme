@@ -130,9 +130,52 @@ sudo systemctl restart apme-pod.service
 
 The shipped quadlet files use fixed image references (e.g.
 `ghcr.io/ansible/apme-engine:2026.7.3`). Prefer a digest pin in production
-(`ghcr.io/ansible/apme-engine@sha256:…`). To use different images or tags,
-edit the quadlet files under `/usr/share/containers/systemd/` and run
+(`ghcr.io/ansible/apme-engine@sha256:…`). To use different images or tags in a
+new bootc image, edit the source files under `deploy/bootc/quadlet/` and rebuild.
+For a running VM, place same-named override files in
+`/etc/containers/systemd/`; Podman's administrator directory takes precedence
+over the image-provided files in `/usr/share/containers/systemd/`. Then run
 `systemctl daemon-reload && systemctl restart apme-pod.service`.
+
+#### Release digest pins
+
+For each stable `vX.Y.Z` GitHub Release, the release-assets workflow attaches
+`apme-bootc-quadlets-vX.Y.Z.tar.gz`. It contains the complete Quadlet set with
+each APME image pinned to the multi-architecture manifest digest for that
+release. Push the matching `vX.Y.Z` tag before publishing a release. The
+release-assets workflow waits for that tag's **Container Images**
+`merge-manifests` job to succeed before resolving the versioned GHCR tags.
+
+To use the asset in a bootc build, extract its Quadlet files over
+`deploy/bootc/quadlet/` in the release source tree before building the bootc
+image. To update a running VM, extract them into the administrator override
+directory, then reload and restart the pod:
+
+Back up any custom APME Quadlet overrides you want to keep before running this
+command. The cleanup removes `apme-*.container`, `apme-*.pod`, and `apme.pod`
+files in `/etc/containers/systemd/` so files removed from a newer release
+cannot remain active.
+
+```bash
+sudo install -d /etc/containers/systemd
+sudo rm -f /etc/containers/systemd/apme-*.container \
+  /etc/containers/systemd/apme-*.pod /etc/containers/systemd/apme.pod
+sudo tar -xzf apme-bootc-quadlets-vX.Y.Z.tar.gz -C /etc/containers/systemd
+sudo systemctl daemon-reload
+sudo systemctl restart apme-pod.service
+```
+
+Podman's [Quadlet search paths](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
+give `/etc/containers/systemd/` precedence over `/usr/share/containers/systemd/`.
+
+The same overlay can be rendered manually after logging in to GHCR and setting
+up Docker Buildx:
+
+```bash
+python3 deploy/bootc/render-quadlet-pins.py \
+  --version 2026.7.3 \
+  --output-dir /tmp/apme-bootc-quadlets
+```
 
 ### Environment Variables
 

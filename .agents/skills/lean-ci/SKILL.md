@@ -45,8 +45,12 @@ locally-runnable tox environments; CI just calls them.
 4. **Minimal setup actions.** `astral-sh/setup-uv` and `actions/checkout` only.
    No `actions/setup-python` (uv handles it). No other setup actions without
    explicit justification.
-   **Exception:** `test.yml` jobs `ui` and `ui-workflow-pack` use
-   `actions/setup-node` because `tox -e ui` / `ui-workflow-pack` need `npm`.
+   **Exceptions:** `test.yml` jobs `ui` and `ui-workflow-pack` use
+   `actions/setup-node` because they need `npm`; `ui-workflow-release.yml` uses
+   it to package the published UI artifact. `container-images.yml` and the
+   bootc asset job in `ui-workflow-release.yml` use Docker's Buildx and login
+   actions to publish or inspect registry images. These release workflows also
+   assemble uploadable artifacts directly; reusable logic belongs in scripts.
 
 5. **Pin actions to commit SHAs.** Mutable tags (`@v4`) allow upstream changes
    to affect CI without review. Always pin to a full commit SHA with a comment
@@ -94,7 +98,9 @@ CI has six workflows in `.github/workflows/`:
 - **deprecation-scrape.yml**: Monthly cron scraping ansible-core for deprecation
   gaps.
 - **pr-feedback.yml**: Labels PRs with failing checks or merge conflicts.
-- **ui-workflow-release.yml**: Publishes the `@apme/ui-workflow` release tarball.
+- **ui-workflow-release.yml**: Attaches the `@apme/ui-workflow` tarball and
+  digest-pinned bootc Quadlets to stable releases. The Quadlet job waits for
+  the matching `Container Images` manifest merge before resolving image tags.
 
 `prek.yml` and `test.yml` trigger on `pull_request` targeting `main` and use
 `concurrency` groups with `cancel-in-progress` to avoid stacking runs on rapid
