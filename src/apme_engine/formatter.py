@@ -26,6 +26,11 @@ YAML_EXTENSIONS = {".yml", ".yaml"}
 JINJA_NORMALIZE_RE = re.compile(r"\{\{(\s*)(.*?)(\s*)\}\}")
 
 _JINJA_PIPE_RE = re.compile(r"(?<!\|)\|(?!\|)")
+_BLOCK_SCALAR_HEADER_RE = re.compile(
+    r"^(?P<indent> *)(?:.*?:\s*|-\s+)"
+    r"(?:(?:&[^\s]+|![^\s]+)\s+)*"
+    r"(?P<style>[>|])(?P<modifiers>(?:[+-]?\d?|\d?[+-]?))(?:\s+#.*)?$",
+)
 
 TASK_KEY_ORDER = [
     "name",
@@ -229,28 +234,58 @@ def _quote_free_form_args(text: str) -> str:
     return "\n".join(lines)
 
 
-def _strip_stray_blanks(text: str) -> str:
-    """Remove interior blank lines inserted by ruamel round-trip dumping.
+def _collapse_blank_lines(text: str) -> str:
+    """Collapse consecutive formatting blank lines to one.
 
-    Keeps blank lines before document markers (``---``) and at EOF.
-    Intentional task-level spacing is re-inserted by ``_add_task_spacing``.
+    Existing single blank lines are kept. Runs of multiple blank lines are
+    reduced to one outside YAML block scalars. Literal and folded scalar
+    contents are preserved because their blank lines are data.
 
     Args:
         text: YAML text possibly containing stray blank lines.
 
     Returns:
-        Cleaned text with interior blank lines removed.
+        Text with layout blank lines reduced to at most one.
     """
-    lines = text.split("\n")
     result: list[str] = []
-    for i, line in enumerate(lines):
-        if line.strip() == "" and i > 0 and i < len(lines) - 1:
-            next_line = lines[i + 1] if i + 1 < len(lines) else ""
-            if next_line.startswith("---") or next_line.strip() == "":
+    block_parent_indent: int | None = None
+    block_content_indent: int | None = None
+    block_explicit_indent: int | None = None
+
+    for line in text.split("\n"):
+        if block_parent_indent is not None:
+            if line.strip() == "":
                 result.append(line)
                 continue
-            continue
-        result.append(line)
+
+            line_indent = len(line) - len(line.lstrip(" "))
+            min_content_indent = block_explicit_indent or block_content_indent
+            if line_indent <= block_parent_indent or (
+                min_content_indent is not None and line_indent < min_content_indent
+            ):
+                block_parent_indent = None
+                block_content_indent = None
+                block_explicit_indent = None
+            else:
+                if block_content_indent is None and block_explicit_indent is None:
+                    block_content_indent = line_indent
+                result.append(line)
+                continue
+
+        if line.strip() == "":
+            if result and result[-1].strip() == "":
+                continue
+            result.append("")
+        else:
+            result.append(line)
+            header = _BLOCK_SCALAR_HEADER_RE.match(line)
+            if header is not None:
+                block_parent_indent = len(header.group("indent"))
+                modifiers = header.group("modifiers")
+                indent_indicator = re.search(r"\d", modifiers)
+                block_explicit_indent = (
+                    block_parent_indent + int(indent_indicator.group()) if indent_indicator is not None else None
+                )
     return "\n".join(result)
 
 
@@ -798,7 +833,7 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     try:
         formatted = yaml.dumps(data)
         formatted = _fix_jinja_spacing(formatted)
-        formatted = _strip_stray_blanks(formatted)
+        formatted = _collapse_blank_lines(formatted)
         formatted = _add_task_spacing(formatted)
     except Exception as exc:
         return FormatResult(
