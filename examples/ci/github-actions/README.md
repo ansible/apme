@@ -16,15 +16,15 @@ running pod). No image pulls, no pod startup — just the CLI calling your
 centralized instance.
 
 ```yaml
-- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
+- uses: ansible/apme@v1
   with:
     engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
     target: .
 ```
 
-Pin to an immutable commit SHA. The example above is an unreleased development
-revision from PR #500; replace it with a published release SHA once available
-(see issue #501 for the `v1` action tag).
+The `v1` tag tracks the latest stable `vX.Y.Z` APME release. The former `primary-address`
+input was renamed to `engine-address`; update older workflows to use the new name.
+Pin a release tag or commit SHA instead if you need an immutable reference.
 
 **Trade-off:** ~10s total. Requires network connectivity from the runner to your
 APME deployment and a running instance.
@@ -48,7 +48,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
+      - uses: ansible/apme@v1
         with:
           engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
 ```
@@ -140,7 +140,7 @@ To make APME a required check before merging:
 ### Scan a specific directory
 
 ```yaml
-- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
+- uses: ansible/apme@v1
   with:
     engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
     target: playbooks/
@@ -149,7 +149,7 @@ To make APME a required check before merging:
 ### Target specific ansible-core version
 
 ```yaml
-- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
+- uses: ansible/apme@v1
   with:
     engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
     ansible-version: "2.18"
@@ -158,7 +158,7 @@ To make APME a required check before merging:
 ### Non-blocking scan (continue on violations)
 
 ```yaml
-- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
+- uses: ansible/apme@v1
   id: scan
   continue-on-error: true
   with:
@@ -169,7 +169,7 @@ To make APME a required check before merging:
 ### Self-hosted runners with internal APME
 
 ```yaml
-- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
+- uses: ansible/apme@v1
   with:
     engine-address: apme-engine.internal.svc:50051
 ```

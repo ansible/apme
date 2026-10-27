@@ -76,7 +76,7 @@ Install: `uv tool install tox==4.63.0 --with tox-uv==1.36.0` (match CI pins, #59
 
 ## Workflow structure
 
-CI has six workflows in `.github/workflows/`:
+CI has seven workflows in `.github/workflows/`:
 
 - **prek.yml**: Runs `prek` (ruff lint, ruff format, mypy strict, pydoclint,
   uv-lock). Quality gate for code style and type safety. Uses
@@ -95,6 +95,10 @@ CI has six workflows in `.github/workflows/`:
   gaps.
 - **pr-feedback.yml**: Labels PRs with failing checks or merge conflicts.
 - **ui-workflow-release.yml**: Publishes the `@apme/ui-workflow` release tarball.
+- **action-major-tag.yml**: Maintains the public `v1` GitHub Action tag at the
+  latest stable `vX.Y.Z` release. It is the intentional contents-write
+  exception required by issue #501; its tag-update logic is in the locally
+  runnable `scripts/publish_action_major_tag.sh`.
 
 `prek.yml` and `test.yml` trigger on `pull_request` targeting `main` and use
 `concurrency` groups with `cancel-in-progress` to avoid stacking runs on rapid
@@ -120,3 +124,6 @@ When adding or modifying CI:
 - **DO NOT** hardcode tool versions in YAML. Versions belong in
   `.pre-commit-config.yaml` or `pyproject.toml`.
 - **DO NOT** add secrets or publishing steps without explicit approval.
+  Exception: issue #501 explicitly authorizes the `action-major-tag.yml`
+  workflow to update the public `v1` Git tag using its job-scoped
+  `contents: write` permission.
