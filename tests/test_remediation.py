@@ -326,15 +326,19 @@ class TestPartition:
         t1, t2, t3 = partition_violations(violations, reg)
         assert len(t3) == 2
 
-    def test_partition_task_scope_to_tier2(self) -> None:
-        """Verifies task-scoped violations route to tier2 (AI proposable)."""
+    def test_unresolved_fqcn_findings_route_to_tier3(self) -> None:
+        """Verifies unresolved FQCN findings stay manual instead of going to AI."""
         reg = TransformRegistry()
         violations: list[ViolationDict] = [
             {"rule_id": "L026", "scope": RuleScope.TASK},
             {"rule_id": "L026", "scope": "task"},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
-        assert len(t2) == 2
+        assert t1 == []
+        assert t2 == []
+        assert len(t3) == 2
+        for v in t3:
+            assert v["remediation_resolution"] == RemediationResolution.MANUAL
 
     def test_partition_block_scope_to_tier2(self) -> None:
         """Verifies block-scoped violations are AI-proposable."""
@@ -401,9 +405,9 @@ class TestPartition:
         """Verifies collection-scoped violations classify as manual-review."""
         assert classify_violation({"rule_id": "L037", "scope": RuleScope.COLLECTION}) == RemediationClass.MANUAL_REVIEW
 
-    def test_classify_task_scope_ai_candidate(self) -> None:
-        """Verifies task-scoped violations classify as AI candidate."""
-        assert classify_violation({"rule_id": "L026", "scope": RuleScope.TASK}) == RemediationClass.AI_CANDIDATE
+    def test_classify_unresolved_fqcn_manual_review(self) -> None:
+        """Verifies unresolved FQCN findings classify as manual review."""
+        assert classify_violation({"rule_id": "L026", "scope": RuleScope.TASK}) == RemediationClass.MANUAL_REVIEW
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +424,7 @@ class TestDefaultRegistry:
         for rule_id in (
             "L002",
             "L005",
+            "L026",
             "L007",
             "L008",
             "L009",
@@ -438,12 +443,13 @@ class TestDefaultRegistry:
             "L084",
             "M001",
             "M003",
+            "M048",
             "M006",
             "M008",
             "M009",
         ):
             assert rule_id in reg, f"{rule_id} missing from default registry"
-        assert len(reg) == 25
+        assert len(reg) == 27
 
 
 # ---------------------------------------------------------------------------

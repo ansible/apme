@@ -9,15 +9,15 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 | Tier | Count | % of 158 |
 |------|-------|--------|
-| Tier 1 — auto (has transform) | 24 | 15% |
-| Tier 2 — AI (task/block, no fixer) | 70 | 44% |
+| Tier 1 — auto (has transform) | 26 | 16% |
+| Tier 2 — AI (task/block, no fixer) | 68 | 43% |
 | Tier 3 — manual | 64 | 41% |
 
 ### Promotion potential
 
 - **26** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
 - **9** Tier 3 rules have mechanical fixes blocked by scope
-- **70 - 26 = 44** Tier 2 rules should stay AI (judgment/security)
+- **68 - 26 = 42** Tier 2 rules should stay AI (judgment/security)
 
 ### Tier 3 breakdown
 
@@ -31,7 +31,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | play scope | 7 |
 | inventory scope | 3 |
 
-## Tier 1 — Auto (24 rules)
+## Tier 1 — Auto (26 rules)
 
 | Rule ID | Validator | Severity | Scope | Description |
 |---------|-----------|----------|-------|-------------|
@@ -49,6 +49,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L021 | OPA | low | task | Set mode explicitly for file/copy/template. |
 | L022 | OPA | low | task | Shell with pipe should set set -o pipefail. |
 | L025 | OPA | low | task | Task/play name should start with uppercase. |
+| L026 | Native | low | task | Tasks should use FQCN for modules. |
 | L043 | Native | low | task | Bare variable in with_* loop directive; use {{ var }}. |
 | L046 | Native | low | task | Avoid raw/command/shell without args key. |
 | L084 | Native | low | task | Task names in included sub-task files should use a prefix. |
@@ -59,8 +60,9 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M006 | OPA | high | task | become with ignore_errors will not catch timeout in 2.19+. |
 | M008 | OPA | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | OPA | high | task | with_* loops are deprecated; use loop instead. |
+| M048 | Ansible | low | task | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. |
 
-## Tier 2 — AI (70 rules)
+## Tier 2 — AI (68 rules)
 
 ### Could move to Tier 1 auto
 
@@ -102,7 +104,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L004 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | L014 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L017 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L026 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L031 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | L032 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L033 | low | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -125,7 +126,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M022 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | M028 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | M030 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
-| M048 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | P001 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P002 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P003 | error | task | Task/block scope — AI can propose fix (Tier 2) |
