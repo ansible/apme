@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope
 from apme_engine.graph.scanner import DISABLED_BY_DEFAULT_GRAPH_RULE_IDS
 from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.remediation.transforms.M001_fqcn import has_fqcn_target
 from apme_engine.rule_ids import normalize_rule_id as normalize_rule_id
 
 AI_PROPOSABLE_SCOPES: frozenset[str] = frozenset({RuleScope.TASK, RuleScope.BLOCK})
@@ -30,6 +31,12 @@ CROSS_FILE_RULES: frozenset[str] = frozenset(
         "L006",  # command→module (e.g. cat→slurp) changes register result shape
         "L080",  # __ prefix on set_fact keys — consumers keep the old name
     }
+)
+
+# FQCN changes require an explicit resolver target. Findings without one are
+# manual-review items, never guesses for an AI provider to invent.
+FQCN_RULES: frozenset[str] = frozenset(
+    {"L002", "L005", "L026", "M001", "M002", "M003", "M004", "M048"},
 )
 
 AI_REVIEWABLE_RULES: frozenset[str] = frozenset(
@@ -71,7 +78,26 @@ def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry)
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
         return False
+    if bare_id in FQCN_RULES and not has_fqcn_target(violation):
+        return False
     return bare_id in registry
+
+
+def is_ai_escalatable(violation: ViolationDict) -> bool:
+    """Return whether a stalled deterministic finding may be sent to AI.
+
+    FQCN findings require a target from Ansible or the validator. If that
+    target is missing or a deterministic rewrite cannot be applied, preserve
+    the finding for manual review instead of asking AI to invent a module.
+
+    Args:
+        violation: Finding considered for AI escalation.
+
+    Returns:
+        False for FQCN findings, otherwise True.
+    """
+    bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
+    return bare_id not in FQCN_RULES
 
 
 def partition_violations(
@@ -107,6 +133,9 @@ def partition_violations(
         if bare_id in CROSS_FILE_RULES:
             v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
             tier3.append(v)
+        elif bare_id in FQCN_RULES and not has_fqcn_target(v):
+            v["remediation_resolution"] = RemediationResolution.MANUAL
+            tier3.append(v)
         elif is_finding_resolvable(v, registry):
             tier1.append(v)
         elif _get_scope(v) not in AI_PROPOSABLE_SCOPES:
@@ -140,6 +169,8 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
         return RemediationClass.MANUAL_REVIEW
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
+        return RemediationClass.MANUAL_REVIEW
+    if bare_id in FQCN_RULES:
         return RemediationClass.MANUAL_REVIEW
     if _get_scope(violation) not in AI_PROPOSABLE_SCOPES:
         return RemediationClass.MANUAL_REVIEW

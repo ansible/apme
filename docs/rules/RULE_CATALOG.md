@@ -9,7 +9,7 @@
 | Implemented | 157/162 |
 | Tested | 159/162 |
 | Documented | 161/162 |
-| Deterministic fixer (Tier 1) | 24/162 |
+| Deterministic fixer (Tier 1) | 26/162 |
 | Severity resolved (ADR-043 table or SEC: prefix) | 162/162 |
 | Severity fallback (medium default) | 0/162 |
 
@@ -50,8 +50,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
-| 1 | auto | 24 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 73 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 1 | auto | 26 | Deterministic transform in registry — applied by `apme remediate` |
+| 2 | ai | 71 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
 | 3 | manual | 65 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
@@ -85,7 +85,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L023 | L | OPA | info | play | manual | Consider whether run_once is appropriate. | Yes | Yes | Yes | — |
 | L024 | L | OPA | low | task | ai | Task should have a name. | Yes | Yes | Yes | — |
 | L025 | L | OPA | low | task | auto | Task/play name should start with uppercase. | Yes | Yes | Yes | Yes |
-| L026 | L | Native | low | task | ai | Tasks should use FQCN for modules. | Yes | Yes | Yes | — |
+| L026 | L | Native | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
 | L027 | L | Native | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
 | L031 | L | Native | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | L | Native | low | task | ai | Variable redefinition may cause confusion. | Yes | Yes | Yes | — |
@@ -197,7 +197,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M030 | M | Native | medium | task | ai | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | Yes | Yes | — |
 | M031 | M | Native | medium | task | ai | Register sensitive-looking string values with register_secret for output masking (ansible-core 2.22+). | Yes | Yes | Yes | — |
 | M047 | M | Native | medium | inventory | manual | Inventory plugin disable_lookups argument has no effect (removed in 2.23) | Yes | Yes | Yes | — |
-| M048 | M | Ansible | low | task | ai | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
+| M048 | M | Ansible | low | task | auto | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | Yes |
 | P001 | P | Ansible | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | P | Ansible | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | P | Ansible | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -279,13 +279,13 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M028 | high | task | ai | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | R118 | info | task | manual | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 
-### Native (99 rules, 98 impl, 98 tested, 3 fixers)
+### Native (99 rules, 98 impl, 98 tested, 4 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
 | A001 | medium | task | ai | Tasks should use named_url instead of hardcoded template IDs. | Yes | Yes | Yes | — |
 | A002 | high | task | ai | Tasks should not use deprecated AAP API endpoints or deprecated ansible.hub modules. | Yes | Yes | Yes | — |
-| L026 | low | task | ai | Tasks should use FQCN for modules. | Yes | Yes | Yes | — |
+| L026 | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
 | L027 | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
 | L031 | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | low | task | ai | Variable redefinition may cause confusion. | Yes | Yes | Yes | — |
@@ -383,7 +383,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | R404 | info | task | manual | Expose variable_set for the task. | Yes | Yes | Yes | — |
 | R501 | info | collection | manual | Suggest collection/role dependency. | — | — | Yes | — |
 
-### Ansible (13 rules, 9 impl, 11 tested, 4 fixers)
+### Ansible (13 rules, 9 impl, 11 tested, 5 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
@@ -395,7 +395,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M002 | high | task | auto | Deprecated module — module has deprecation metadata. | Yes | Yes | Yes | Yes |
 | M003 | high | task | auto | Module redirect — module name was redirected to a new FQCN. | Yes | Yes | Yes | Yes |
 | M004 | error | task | auto | Removed module — tombstoned module that raises AnsiblePluginRemovedError. | Yes | Yes | Yes | Yes |
-| M048 | low | task | ai | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
+| M048 | low | task | auto | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | Yes |
 | P001 | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -444,6 +444,7 @@ Deterministic fixers are auto-applied by `apme remediate`.
 | L021 | low | task | Set mode explicitly for file/copy/template. |
 | L022 | low | task | Shell with pipe should set set -o pipefail. |
 | L025 | low | task | Task/play name should start with uppercase. |
+| L026 | low | task | Tasks should use FQCN for modules. |
 | L043 | low | task | Bare variable in with_* loop directive; use {{ var }}. |
 | L046 | low | task | Avoid raw/command/shell without args key. |
 | L084 | low | task | Task names in included sub-task files should use a prefix. |
@@ -454,3 +455,4 @@ Deterministic fixers are auto-applied by `apme remediate`.
 | M006 | high | task | become with ignore_errors will not catch timeout in 2.19+. |
 | M008 | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | high | task | with_* loops are deprecated; use loop instead. |
+| M048 | low | task | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. |

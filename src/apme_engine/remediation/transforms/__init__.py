@@ -58,13 +58,16 @@ def build_default_registry() -> TransformRegistry:
     reg.register("M002", node=fix_fqcn)
     reg.register("M003", node=fix_fqcn)
     reg.register("M004", node=fix_fqcn)
+    reg.register("M048", node=fix_fqcn)
 
     # Keep L002 for backward compatibility with older scan results.
     reg.register("L002", node=fix_fqcn)
 
     # L005 includes the resolved FQCN from the engine hierarchy.
     reg.register("L005", node=fix_fqcn)
-    # L026 reports only the short name, so it has no safe deterministic target.
+    # L026 is deterministic when its finding has a canonical resolved target.
+    # Unresolved short names are held for manual review rather than sent to AI.
+    reg.register("L026", node=fix_fqcn)
 
     # Migration rules
     reg.register("M006", node=fix_become_unreachable)
