@@ -237,4 +237,5 @@ members = []
 [dependency-groups]
 dev = [
     "ansible-dev-tools>=25.10.0",
+    "tox==4.64.4",
 ]
