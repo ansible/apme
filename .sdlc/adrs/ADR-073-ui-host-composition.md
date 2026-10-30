@@ -46,6 +46,16 @@ the personal UI and the native SPA is removed after feature acceptance. No nativ
 support window, route migration or migration path is required. Backend topology
 and the CLI remain governed by their existing ADRs.
 
+### Local image build contract
+
+`tox -e build` builds the current checkout into an RHDH-based `apme-ui`
+image, including frontend and upload backend dynamic plugins and personal-host
+configuration. `tox -e up` starts this image in the existing local Podman pod on
+port 8081. No published APME release or manual package installation is required
+for Local. Portal continues to pin standard package artifacts from an APME
+release and compose them with its catalog/RBAC during its own image build.
+The development harness is not the Local runtime.
+
 ## Alternatives Considered
 
 ### Keep separate UI ownership

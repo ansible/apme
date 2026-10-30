@@ -19,7 +19,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./host-api": {
+      "types": "./dist/api/apmeApi.d.ts",
+      "default": "./dist/api/apmeApi.js"
+    },
+    "./page": {
+      "types": "./dist/components/ApmePage.d.ts",
+      "default": "./dist/components/ApmePage.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",

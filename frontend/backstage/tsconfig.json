@@ -20,7 +20,13 @@
       "react-dom": ["../../node_modules/@types/react-dom"],
       "react-dom/*": ["../../node_modules/@types/react-dom/*"],
       "typescript": ["../../node_modules/typescript"],
-      "@apme/ui-workflow/graph": ["../packages/ui-workflow/src/graph/index.ts"]
+      "@apme/ui-workflow/graph": ["../packages/ui-workflow/src/graph/index.ts"],
+      "@apme/backstage-plugin/host-api": [
+        "./plugins/backstage-apme/src/api/apmeApi.ts"
+      ],
+      "@apme/backstage-plugin/page": [
+        "./plugins/backstage-apme/src/components/ApmePage.tsx"
+      ]
     }
   },
   "include": [

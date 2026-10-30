@@ -1,0 +1,49 @@
+# Personal, loopback-only RHDH profile. Portal supplies its own identity and RBAC.
+app:
+  title: APME
+  baseUrl: http://127.0.0.1:8081
+  extensions:
+    - page:home: false
+    - page:apme:
+        config:
+          path: /
+backend:
+  baseUrl: http://127.0.0.1:8081
+  listen:
+    host: 0.0.0.0
+    port: 8081
+  database:
+    client: better-sqlite3
+    connection: ":memory:"
+  cors:
+    origin: http://127.0.0.1:8081
+    credentials: true
+auth:
+  environment: development
+  providers:
+    guest:
+      dangerouslyAllowOutsideDevelopment: true
+permission:
+  enabled: false
+catalog:
+  rules:
+    - allow: [Component, System, API, Resource, Location, User, Group]
+  locations: []
+techdocs:
+  builder: local
+  generator:
+    runIn: local
+  publisher:
+    type: local
+dynamicPlugins:
+  rootDirectory: dynamic-plugins-root
+proxy:
+  endpoints:
+    /apme:
+      target: http://127.0.0.1:8080/api/v1
+      changeOrigin: true
+      credentials: require
+      allowedMethods: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+      proxyTimeout: 0
+apme:
+  gatewayBaseUrl: http://127.0.0.1:8080

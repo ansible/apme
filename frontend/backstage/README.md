@@ -5,6 +5,42 @@ RHDH Local is a personal deployment; Portal supplies catalog integration and
 RBAC. Both target all APME features except fleet, which can initially be Portal
 only. See [REQ-021](../../.sdlc/specs/REQ-021-ui-host-consolidation/requirement.md).
 
+## Run the personal RHDH UI
+
+From the repository root, with Podman and tox installed:
+
+```sh
+tox -e build
+tox -e up
+```
+
+Open `http://127.0.0.1:8081` and choose guest sign-in. The local `apme-ui`
+image now contains RHDH, the shared APME page, the authenticated upload backend
+and the guest provider. `build` compiles the current checkout inside the image
+build; no host Node installation, APME release, separate RHDH checkout or manual
+plugin installation is required. `up` also builds images, using cached layers.
+`up` replaces an existing pod while retaining its persistent data.
+
+Use `tox -e build-ui` to build only this image. `tox -e frontend-rhdh-export`
+exports the dynamic plugins on the host for development (requires the Node/npm
+baseline and `tox -e frontend-ci`). Both use the same export script.
+
+RHDH is pinned to the multi-platform community `next-2.1` manifest
+`sha256:3bd31bddec7e9b37856fa8ae375e1461076c88d287a2cb0bbda86651e4243f49`,
+source revision `131ebce80d1285ced5c5ef6f0a24807cf6d3db82` (Backstage 1.54.9).
+The frontend wrapper uses NFS and RHDH CLI 2.1.2; it lazily loads the shared page.
+The backend bundles private dependencies and shares the host backend API.
+Plugins are installed during the image build, so startup does not download them.
+This is a pinned community development image; host acceptance is tracked in TASK-005.
+
+The Local profile is one deployment per person and publishes the UI on loopback.
+It uses authenticated guest credentials, a host REST/SSE proxy to the pod-local
+Gateway, and the authenticated upload backend. RHDH uses an in-memory database
+for host metadata; APME projects and scan history remain in the Gateway database.
+Portal consumes the standard versioned release packages during its own image
+build and supplies its own catalog/identity/RBAC. It does not use this personal
+profile or the Local frontend wrapper.
+
 ## Shared baseline
 
 | Dependency | Initial baseline | Evidence                                                    |

@@ -78,9 +78,31 @@ Portal full TypeScript checks, backend build, lint, OpenAPI drift/lint and
 110 route tests pass. APME supplies the matching project adapter and optional
 authenticated upload backend (ADR-074), plus focused channel and UI checks.
 
-Still required: release artifact installation/pinning, Portal composition and
-mounting the upload backend with tenant/user/scan authorization, actual RHDH and
-Portal workflows, keyboard/theme and measured runtime resources. No running hosts,
-container runtime or connected browser renderer exist in this workspace. The user
-has been asked for runtime URLs/access; no answer has arrived. Native retirement
-remains gated on that acceptance rather than inferred from unit/package checks.
+Still required: Portal release artifact pinning/composition and upload router
+mounting with tenant/user/scan authorization; actual scan/remediation/SCM flows
+in both hosts, keyboard/theme acceptance and measured runtime resources. Local
+image build/startup is implemented below. Native source retirement remains gated
+on workflow acceptance rather than inferred from package checks.
+
+## Local build integration
+
+User clarified the delivery contract: the existing `tox -e build` must build
+the checkout plugins and an RHDH image containing them; `tox -e up` must start
+that image as the local UI. Keep the existing localhost port 8081 and pod-local
+Gateway address. Export frontend and backend dynamic plugins for a pinned RHDH
+image, include authenticated guest sign-in for this personal-only deployment,
+and wire REST/SSE proxy and upload discovery. Portal uses versioned standard
+release artifacts in its own image build. Do not require a release for Local.
+
+Implementation: `containers/rhdh/Dockerfile` builds the four standard packages,
+exports the NFS Local frontend and a self-contained upload backend, installs them
+and the host guest provider into pinned RHDH. The existing Podman build now uses
+this Dockerfile and the pod publishes port 8081 on loopback. The native image
+recipe/source remain for pending retirement; the Local build no longer uses it.
+
+Build evidence: all dynamic plugins installed during an arm64 image build.
+The built image started RHDH, initialized the `apme` backend and guest auth,
+served the app and exposed the frontend federation remote. Readiness and guest
+refresh returned HTTP 200. This workspace required Buildah with VFS/chroot through
+tox because nested Podman's single-UID/fuse setup cannot perform a normal build.
+Full pod startup, browser rendering and real Engine/SCM workflows are not claimed.

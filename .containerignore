@@ -84,6 +84,10 @@ ENV/
 
 # Host node_modules (container runs npm ci fresh)
 frontend/node_modules/
+**/node_modules/
+node_modules/
+**/dist/
+**/dist-dynamic/
 
 # Python cache
 __pycache__/

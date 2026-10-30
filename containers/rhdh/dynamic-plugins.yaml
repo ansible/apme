@@ -1,0 +1,8 @@
+includes: []
+plugins:
+  - package: ./local-plugins/apme-frontend
+    disabled: false
+  - package: ./local-plugins/apme-backend
+    disabled: false
+  - package: ./local-plugins/guest-provider
+    disabled: false

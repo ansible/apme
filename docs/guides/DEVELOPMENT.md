@@ -640,3 +640,12 @@ Defined in `pyproject.toml`:
 | `apme-opa-validator` | `apme_engine.daemon.opa_validator_main:main` | OPA validator daemon |
 | `apme-ansible-validator` | `apme_engine.daemon.ansible_validator_main:main` | Ansible validator daemon |
 | `apme-gitleaks-validator` | `apme_engine.daemon.gitleaks_validator_main:main` | Gitleaks validator daemon |
+
+## Personal RHDH UI image
+
+`tox -e build` builds the checkout APME packages into an RHDH-based `apme-ui`
+image. `tox -e up` starts it at `http://127.0.0.1:8081` (guest sign-in).
+No published APME release or host Node installation is required for this path.
+`tox -e build-ui` rebuilds just that image. See the
+[host workspace guide](../../frontend/backstage/README.md#run-the-personal-rhdh-ui)
+for the pinned RHDH baseline and package export details.

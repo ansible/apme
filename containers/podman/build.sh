@@ -29,7 +29,7 @@ podman build "${BUILD_ARGS[@]}" -t apme-dep-audit:latest -f containers/dep-audit
 podman build "${BUILD_ARGS[@]}" -t apme-galaxy-proxy:latest -f containers/galaxy-proxy/Dockerfile .
 podman build "${BUILD_ARGS[@]}" -t apme-gateway:latest -f containers/gateway/Dockerfile .
 podman build "${BUILD_ARGS[@]}" -t apme-cli:latest -f containers/cli/Dockerfile .
-podman build "${BUILD_ARGS[@]}" -t apme-ui:latest -f containers/ui/Dockerfile .
+podman build "${BUILD_ARGS[@]}" -t apme-ui:latest -f containers/rhdh/Dockerfile .
 
 echo "==> Checking UBI volume write permissions (ADR-061)..."
 bash containers/podman/check-volume-permissions.sh

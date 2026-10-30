@@ -1,0 +1,4 @@
+{
+  "extends": "./frontend/backstage/tsconfig.json",
+  "include": ["containers/rhdh/plugin/src"]
+}
