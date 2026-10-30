@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { BUIProvider } from "@backstage/ui";
 import {
   createDefaultApmeApiAdapter,
@@ -57,6 +63,8 @@ it("shows deployment providers without editing actions", async () => {
 });
 it("pastes content into the existing upload session protocol and shows its result", async () => {
   const sent: Array<Record<string, unknown>> = [];
+  let finishClose: (() => void) | undefined;
+  const close = vi.fn();
   const socket: ApmeSessionSocket = {
     readyState: 1,
     onopen: null,
@@ -66,6 +74,10 @@ it("pastes content into the existing upload session protocol and shows its resul
     send(text) {
       const frame = JSON.parse(text);
       sent.push(frame);
+      if (frame.type === "close")
+        return new Promise<void>((resolve) => {
+          finishClose = resolve;
+        });
       if (frame.type === "files_done") {
         socket.onmessage?.(
           new MessageEvent("message", {
@@ -90,7 +102,7 @@ it("pastes content into the existing upload session protocol and shows its resul
         );
       }
     },
-    close() {},
+    close,
   };
   const adapter = createDefaultApmeApiAdapter({
     fetch: vi.fn(async () => new Response("[]")),
@@ -120,6 +132,11 @@ it("pastes content into the existing upload session protocol and shows its resul
   ]);
   expect(sent[1]).toMatchObject({ path: "playbook.yml" });
   expect(atob(String(sent[1].content))).toBe("- hosts: all\n  tasks: []\n");
+  expect(close).not.toHaveBeenCalled();
+  act(() => socket.onerror?.(new Event("error")));
+  expect(screen.queryByText("WebSocket connection error")).toBeNull();
+  await act(async () => finishClose?.());
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   await waitFor(() =>
     expect(screen.getByText("0 remaining findings")).toBeTruthy(),
   );

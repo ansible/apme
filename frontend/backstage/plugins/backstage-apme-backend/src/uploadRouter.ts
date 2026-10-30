@@ -44,8 +44,12 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
     channels.delete(id);
     clearTimeout(channel.orphan);
     channel.response?.end();
-    channel.socket.close();
-    channel.socket.terminate();
+    if (channel.socket.readyState === WebSocket.OPEN) {
+      channel.socket.close();
+      const deadline = setTimeout(() => channel.socket.terminate(), 1000);
+      deadline.unref();
+      channel.socket.once("close", () => clearTimeout(deadline));
+    } else channel.socket.terminate();
   }
   function emit(id: string, frame: Frame) {
     const channel = channels.get(id);
@@ -66,6 +70,7 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
     action: (req: Request, res: Response, owner: string) => Promise<void>,
   ) {
     return (req: Request, res: Response, next: NextFunction) => {
+      res.setHeader("Cache-Control", "no-store");
       void options
         .authorize(req)
         .then((owner) => action(req, res, owner))

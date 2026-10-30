@@ -608,15 +608,19 @@ export function useSessionStream() {
             clearPersistedSession();
             updateStatus("complete");
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "close" }));
-              setTimeout(() => {
+              const finish = () => {
                 if (
                   ws.readyState === WebSocket.OPEN ||
                   ws.readyState === WebSocket.CLOSING
                 ) {
                   ws.close(1000);
                 }
-              }, 100);
+              };
+              try {
+                const sent = ws.send(JSON.stringify({ type: "close" }));
+                if (sent) void sent.then(finish, finish);
+                else setTimeout(finish, 100);
+              } catch { finish(); }
             }
             break;
 
@@ -656,6 +660,7 @@ export function useSessionStream() {
 
       ws.onerror = () => {
         if (wsRef.current !== ws) return;
+        if (statusRef.current === 'complete') return;
         errorSourceRef.current = null;
         if (RECONNECTABLE_PHASES.has(statusRef.current) && sessionIdRef.current) {
           setError("Connection lost. Your session is still active on the server.");
