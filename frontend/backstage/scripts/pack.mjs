@@ -30,6 +30,10 @@ const packages = [
     ["@apme/client", "frontend/packages/apme-client"],
     ["@apme/ui-workflow", "frontend/packages/ui-workflow"],
     ["@apme/backstage-plugin", "frontend/backstage/plugins/backstage-apme"],
+    [
+        "@apme/backstage-backend",
+        "frontend/backstage/plugins/backstage-apme-backend",
+    ],
 ];
 const filenames = Object.fromEntries(
     packages.map(([name]) => [

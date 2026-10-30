@@ -71,7 +71,7 @@ Model preferences and Galaxy server management are available through Settings.
 Pure client/transport extraction preserves native import paths.
 
 Before native removal, finish
-AI provider administration, paste/upload, Portal contribution integration,
+Portal artifact consumption and contribution integration,
 and actual two-host scan/remediation/SCM and permission-denial acceptance.
 Existing PatternFly workflow presentation is an explicit transitional exception
 to new BUI host controls. Measure real host startup/memory after a runnable RHDH
@@ -160,3 +160,62 @@ SBOM comes from recorded Gateway dependencies, not a raw source archive. Portal'
 current catalog backend has no graph/SBOM route; it must add authorized forwarding
 before those views work there. Failed/denied requests remain visible with no
 direct-Gateway retry.
+
+## AI provider administration
+
+`ApmeAiProviders` supplies create/edit/delete, engine discovery and model
+configuration. It reuses the original plugin's public metadata normalization
+and model-merge contract. Deployment-only providers stay read-only; keys are
+write-only and stored by Abbenay. If credentials succeed but model configuration
+fails, the error states the partial save. Unrelated provider/model options are
+preserved. Provider changes refresh the model selector. Settings view/manage
+props remain explicit host permission decisions.
+
+## Authenticated paste and upload
+
+`ApmeUploadWorkbench` reuses `useSessionStream` and the existing progress,
+Tier 1, proposal and result components. It accepts pasted content, files and
+directories, preserves relative paths, rejects duplicates/traversal paths, and
+produces a ZIP of remediated files. HTTP uploads wait for each send to complete;
+ZIP code loads only on download preparation.
+
+Install `@apme/backstage-backend` alongside the frontend plugin in Local:
+
+```ts
+backend.add(import("@apme/backstage-backend"));
+```
+
+Configure server-only `apme.gatewayBaseUrl` to the private Gateway origin. The
+frontend discovers `apme` for uploads; ordinary REST/SSE retain the existing
+proxy. `apme.uploadApiBase` can override the authenticated backend prefix.
+The development harness needs that backend running for uploads; its direct
+Gateway HTTP proxy alone cannot provide authenticated upload channels.
+
+The backend relays the existing WebSocket protocol through authenticated HTTP
+commands and an NDJSON stream, so no browser bearer token enters a WebSocket URL.
+See ADR-074 and the backend README for bounds and sticky-routing requirements.
+Unknown owner bindings fail closed after a host restart; users start a new upload.
+Embedded upload views default to denied and require `canUpload` plus an injected
+`adapter.openSessionSocket`.
+
+Portal must mount `createUploadSessionRouter` with its own authorization callback
+(user, organization, entitlement and scan permission) and shutdown hook. Bind the
+returned owner to both tenant and user. Do not register the personal Local policy
+in Portal. The released backend artifact is `apme-backstage-backend-VERSION.tgz`;
+release packaging now includes four packages.
+
+## Portal lossless project integration
+
+The companion Portal branch adds `/apme/shared/projects/:projectId` data routes,
+project-bound activity lookup, `/apme/shared/rules` and settings-authorized shared
+AI discovery routes. It preserves Gateway pagination, numeric rule metadata,
+graph/SBOM bodies and error statuses. Galaxy writes also forward certificate
+policy. Legacy Portal response shapes remain available for existing consumers.
+
+After those routes are deployed, use `createPortalProjectApiAdapter` with the
+canonical project ID and host discovery/fetch. It selects the lossless routes
+and keeps operation writes/SSE on the existing authorized path. Passing
+`enableUploads: true` additionally enables the HTTP channel after Portal mounts
+the backend router. This is an explicit deployment capability, not a fallback.
+Actual artifact consumption, two-host workflows, theme and resource acceptance
+are still tracked in TASK-005; package tests do not certify running hosts.

@@ -39,14 +39,14 @@ try {
         [
             "--input-type=module",
             "-e",
-            "import {createDefaultApmeApiAdapter} from '@apme/client'; if(createDefaultApmeApiAdapter().apiBase !== '/api/v1') process.exit(1)",
+            "import {createDefaultApmeApiAdapter} from '@apme/client'; import {createUploadSessionRouter} from '@apme/backstage-backend'; if(typeof createUploadSessionRouter !== 'function') process.exit(1); if(createDefaultApmeApiAdapter().apiBase !== '/api/v1') process.exit(1)",
         ],
         { cwd: temp, stdio: "inherit" },
     );
     // Bundle the installed tarballs, with no source aliases or repository imports.
     writeFileSync(
         join(temp, "main.ts"),
-        "import {ApmeProjectWorkflow,ApmeProjectFindings,ApmeProjectHistory,ApmeActivityDetails,ApmeProjectDependencies,createPortalApmeApiAdapter,apmePlugin,type ApmeProjectWorkflowProps} from '@apme/backstage-plugin'; import {useProjectWorkflow} from '@apme/ui-workflow/headless'; import {createDefaultApmeApiAdapter} from '@apme/client'; const props: ApmeProjectWorkflowProps = {projectId:'repo',adapter:createDefaultApmeApiAdapter()}; Object.assign(window,{apme:{ApmeProjectWorkflow,ApmeProjectFindings,ApmeProjectHistory,ApmeActivityDetails,ApmeProjectDependencies,createPortalApmeApiAdapter,apmePlugin,useProjectWorkflow,props}});",
+        "import {ApmeProjectWorkflow,ApmeProjectFindings,ApmeProjectHistory,ApmeActivityDetails,ApmeProjectDependencies,ApmeAiProviders,ApmeUploadWorkbench,ApmeProjectGraph,ApmeProjectSbom,createPortalProjectApiAdapter,createPortalApmeApiAdapter,apmePlugin,type ApmeProjectWorkflowProps} from '@apme/backstage-plugin'; import {useProjectWorkflow} from '@apme/ui-workflow/headless'; import {createDefaultApmeApiAdapter} from '@apme/client'; const props: ApmeProjectWorkflowProps = {projectId:'repo',adapter:createDefaultApmeApiAdapter()}; Object.assign(window,{apme:{ApmeProjectWorkflow,ApmeProjectFindings,ApmeProjectHistory,ApmeActivityDetails,ApmeProjectDependencies,ApmeAiProviders,ApmeUploadWorkbench,ApmeProjectGraph,ApmeProjectSbom,createPortalProjectApiAdapter,createPortalApmeApiAdapter,apmePlugin,useProjectWorkflow,props}});",
     );
     // Type-check only the installed public declarations, without source aliases.
     execFileSync(

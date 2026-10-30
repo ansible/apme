@@ -4,5 +4,7 @@ export interface Config {
      * @visibility frontend
      */
     apiBase?: string;
+    /** Authenticated upload backend; defaults to discovery('apme'). @visibility frontend */
+    uploadApiBase?: string;
   };
 }

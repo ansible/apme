@@ -36,6 +36,11 @@ const ApmeHealth = lazy(() =>
 const ApmeSettings = lazy(() =>
   import("./ApmeSettings").then((module) => ({ default: module.ApmeSettings })),
 );
+const ApmeUploadWorkbench = lazy(() =>
+  import("./ApmeUploadWorkbench").then((module) => ({
+    default: module.ApmeUploadWorkbench,
+  })),
+);
 
 export function ApmePageContent() {
   const hostApi = useApi(apmeHostApiRef);
@@ -54,6 +59,7 @@ export function ApmePageContent() {
     <ApmeWorkbench
       adapter={adapter}
       canManageRules={hostApi.canManageRules === true}
+      canUpload={hostApi.canUpload === true}
       canViewSettings={hostApi.canViewSettings === true}
       canManageSettings={hostApi.canManageSettings === true}
       supportsGalaxyCertificateSettings={
@@ -66,12 +72,14 @@ export function ApmePageContent() {
 export interface ApmeWorkbenchProps extends ApmeSettingsProps {
   /** Host-evaluated permission; defaults to read-only for embedded hosts. */
   canManageRules?: boolean;
+  canUpload?: boolean;
 }
 
 /** Shared page; embedding hosts can supply their own authorized adapter. */
 export function ApmeWorkbench({
   adapter,
   canManageRules = false,
+  canUpload = false,
   canViewSettings = false,
   canManageSettings = false,
   supportsGalaxyCertificateSettings = false,
@@ -81,7 +89,8 @@ export function ApmeWorkbench({
   const view =
     requestedView === "rules" ||
     requestedView === "health" ||
-    requestedView === "settings"
+    requestedView === "settings" ||
+    requestedView === "upload"
       ? requestedView
       : "repositories";
   const selected = params.get("project");
@@ -181,10 +190,21 @@ export function ApmeWorkbench({
           >
             Settings
           </Button>
+          {canUpload && (
+            <Button
+              variant="secondary"
+              aria-current={view === "upload" ? "page" : undefined}
+              onPress={() => selectView("upload")}
+            >
+              Paste / upload
+            </Button>
+          )}
         </Flex>
       </nav>
       <Suspense fallback={<Text role="status">Loading APME view…</Text>}>
-        {view === "rules" ? (
+        {view === "upload" ? (
+          <ApmeUploadWorkbench adapter={adapter} canUpload={canUpload} />
+        ) : view === "rules" ? (
           <ApmeRules adapter={adapter} canManage={canManageRules} />
         ) : view === "health" ? (
           <ApmeHealth adapter={adapter} />

@@ -23,6 +23,9 @@ Model preferences and Galaxy settings are tracked in
 
 Content graph and SBOM are tracked in [TASK-010](TASK-010-graph-sbom.md).
 
+Provider administration and paste/upload are tracked in TASK-011 and TASK-012.
+The optional authenticated upload transport is specified in ADR-074.
+
 ## Prerequisites
 
 TASK-001 through TASK-003.

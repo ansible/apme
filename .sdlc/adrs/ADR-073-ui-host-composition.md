@@ -90,6 +90,7 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 - ADR-052 and ADR-065: operation streaming and Gateway state ownership preserved.
 - ADR-056 and ADR-060: SCM and public API boundaries preserved.
 - ADR-066: extend product-release tarballs to the client and standard plugin.
+- ADR-074: optional authenticated host upload channel and backend package.
 - ADR-054 and ADR-069: external Operator for Kubernetes; no Helm chart restored.
 
 ## References

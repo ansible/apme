@@ -20,7 +20,7 @@ export function ApmeApiProvider({
 }) {
   const value = useMemo(
     () => createDefaultApmeApiAdapter(adapter ?? {}),
-    [adapter?.fetch, adapter?.apiBase, adapter?.origin],
+    [adapter?.fetch, adapter?.apiBase, adapter?.origin, adapter?.openSessionSocket],
   );
 
   return (

@@ -6,7 +6,7 @@
 
 ## Status
 
-Pending
+In Progress
 
 ## Description
 
@@ -67,3 +67,20 @@ host test environments before claiming runtime acceptance.
 ## Acceptance Criteria Reference
 
 AC2 authoritative workflow, AC3 host permissions, AC5 measured runtime efficiency.
+
+## Current Implementation Evidence
+
+2026-10-30: companion branch `feat/apme-shared-host-integration` implements
+authorized lossless project/history/findings/dependency/graph/SBOM and rule routes,
+project-bound activity details, settings-authorized AI discovery and Galaxy
+certificate-policy forwarding. Existing Portal envelopes remain stable.
+Portal full TypeScript checks, backend build, lint, OpenAPI drift/lint and
+110 route tests pass. APME supplies the matching project adapter and optional
+authenticated upload backend (ADR-074), plus focused channel and UI checks.
+
+Still required: release artifact installation/pinning, Portal composition and
+mounting the upload backend with tenant/user/scan authorization, actual RHDH and
+Portal workflows, keyboard/theme and measured runtime resources. No running hosts,
+container runtime or connected browser renderer exist in this workspace. The user
+has been asked for runtime URLs/access; no answer has arrived. Native retirement
+remains gated on that acceptance rather than inferred from unit/package checks.

@@ -1,0 +1,38 @@
+{
+  "name": "@apme/backstage-backend",
+  "version": "0.0.0-dev",
+  "type": "module",
+  "license": "Apache-2.0",
+  "backstage": {
+    "role": "backend-plugin",
+    "pluginId": "apme"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "config.d.ts"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.21.0",
+    "@types/express": "^4.17.21"
+  },
+  "peerDependencies": {
+    "@backstage/backend-plugin-api": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "configSchema": "config.d.ts"
+}

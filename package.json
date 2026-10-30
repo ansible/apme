@@ -11,14 +11,14 @@
     "frontend/backstage/plugins/*"
   ],
   "scripts": {
-    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin",
+    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin && npm run build -w @apme/backstage-backend",
     "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json",
     "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",
     "dev": "vite --config frontend/backstage/vite.config.ts --host 127.0.0.1",
     "build:dev": "vite build --config frontend/backstage/vite.config.ts",
     "pack": "node frontend/backstage/scripts/pack.mjs",
-    "format": "prettier --write frontend/backstage",
-    "format:check": "prettier --check frontend/backstage",
+    "format": "prettier --write frontend/backstage frontend/packages/apme-client",
+    "format:check": "prettier --check frontend/backstage frontend/packages/apme-client",
     "pack:verify": "node frontend/backstage/scripts/verify-pack.mjs"
   },
   "dependencies": {
@@ -30,7 +30,8 @@
     "@patternfly/react-icons": "6.6.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-router-dom": "6.30.6"
+    "react-router-dom": "6.30.6",
+    "@backstage/backend-plugin-api": "1.10.0"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.2",

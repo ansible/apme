@@ -32,7 +32,8 @@
   },
   "dependencies": {
     "@apme/client": "*",
-    "@apme/ui-workflow": "*"
+    "@apme/ui-workflow": "*",
+    "jszip": "^3.10.2"
   },
   "peerDependencies": {
     "@backstage/core-plugin-api": "^1.12.9",

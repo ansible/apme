@@ -78,6 +78,7 @@ Decisions with substantial code shipped; ADR-defined scope still incomplete.
 | [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push (Partially Implemented (fixed APME commit author and committer identity pending)) | 2026-07-06 |
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract (Partially Implemented (deprecation middleware and break-diff CI pending)) | 2026-07-08 |
 | [ADR-073](ADR-073-ui-host-composition.md) | APME UI Package Ownership and Host Composition | 2026-10-30 |
+| [ADR-074](ADR-074-host-upload-session-channel.md) | Authenticated Host Upload Session Channel | 2026-10-30 |
 
 ## Accepted
 
@@ -115,7 +116,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-074)
+2. Use the next available number (currently ADR-075)
 3. Include:
    - Status (Proposed → Accepted → Partially Implemented → Implemented)
    - Date

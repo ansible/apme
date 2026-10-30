@@ -176,7 +176,7 @@ export interface ProjectSummary {
   created_at: string;
   health_score: number;
   total_violations: number;
-  violation_trend: 'improving' | 'declining' | 'stable';
+  violation_trend: "improving" | "declining" | "stable";
   scan_count: number;
   last_scanned_at: string | null;
   scm_provider: string | null;
@@ -433,7 +433,7 @@ export interface NotificationItem {
   type: string;
   title: string;
   message: string;
-  variant: 'success' | 'danger' | 'warning' | 'info';
+  variant: "success" | "danger" | "warning" | "info";
   project_id: string | null;
   scan_id: string | null;
   link: string;

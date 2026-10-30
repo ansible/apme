@@ -14,6 +14,7 @@ import {
   createDefaultApmeApiAdapter,
   type ApmeApiAdapter,
 } from "@apme/client/transport";
+import { createHostSessionSocket } from "@apme/client";
 
 export interface ApmeHostApi {
   getAdapter(): Promise<ApmeApiAdapter>;
@@ -22,6 +23,7 @@ export interface ApmeHostApi {
   canViewSettings?: boolean;
   canManageSettings?: boolean;
   supportsGalaxyCertificateSettings?: boolean;
+  canUpload?: boolean;
 }
 
 export const apmeHostApiRef = createApiRef<ApmeHostApi>({
@@ -49,15 +51,27 @@ export const apmeHostApiFactory: ApiFactory<
     canViewSettings: true,
     canManageSettings: true,
     supportsGalaxyCertificateSettings: true,
+    canUpload: true,
     async getAdapter() {
       const configured = configApi.getOptionalString("apme.apiBase");
       const apiBase =
         configured ??
         `${(await discoveryApi.getBaseUrl("proxy")).replace(/\/$/, "")}/apme`;
+      const uploadApiBase =
+        configApi.getOptionalString("apme.uploadApiBase") ??
+        (await discoveryApi.getBaseUrl("apme"));
       // Both REST and fetch-based SSE must use the authenticated host fetch.
       return createDefaultApmeApiAdapter({
         apiBase,
         fetch: fetchApi.fetch.bind(fetchApi),
+        openSessionSocket: (url) =>
+          createHostSessionSocket(
+            createDefaultApmeApiAdapter({
+              apiBase: uploadApiBase,
+              fetch: fetchApi.fetch.bind(fetchApi),
+            }),
+            url,
+          ),
         origin: /^https?:\/\//i.test(apiBase)
           ? new URL(apiBase).origin
           : window.location.origin,

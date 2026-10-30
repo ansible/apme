@@ -1,3 +1,9 @@
+import {
+  normalizeApmeAiProviders,
+  mergeApmeAiProviderLists,
+  type ApmeAiEnginesResponse,
+  type ApmeAiProviderConfigureRequest,
+} from "./aiProviders.js";
 import type {
   ActivityDetail,
   ActivitySummary,
@@ -58,11 +64,16 @@ class ApiError extends Error {
 }
 
 /** Extract a user-facing message from a failed API request. */
-export function apiErrorMessage(err: unknown, fallback = "Request failed"): string {
+export function apiErrorMessage(
+  err: unknown,
+  fallback = "Request failed",
+): string {
   if (err instanceof ApiError) {
     const body = err.body;
     try {
-      const parsed = JSON.parse(body) as { detail?: string | Array<{ msg?: string }> };
+      const parsed = JSON.parse(body) as {
+        detail?: string | Array<{ msg?: string }>;
+      };
       const detail = parsed.detail;
       if (typeof detail === "string" && detail.trim()) {
         return detail;
@@ -129,7 +140,11 @@ export function listSessions(
   offset = 0,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<SessionSummary>> {
-  return request(`/sessions?limit=${limit}&offset=${offset}`, undefined, adapter);
+  return request(
+    `/sessions?limit=${limit}&offset=${offset}`,
+    undefined,
+    adapter,
+  );
 }
 
 export function listActivity(
@@ -154,7 +169,11 @@ export async function deleteActivity(
   scanId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<void> {
-  const res = await apiFetch(`/activity/${encodeURIComponent(scanId)}`, { method: "DELETE" }, adapter);
+  const res = await apiFetch(
+    `/activity/${encodeURIComponent(scanId)}`,
+    { method: "DELETE" },
+    adapter,
+  );
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -214,6 +233,129 @@ export function listAiModels(
   return request(`/ai/models`, undefined, adapter);
 }
 
+/** Only public provider metadata leaves this function; config may contain secrets. */
+export async function getAiProviderSettings(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+) {
+  const [providers, config] = await Promise.all([
+    request<unknown>("/ai/providers", undefined, adapter),
+    request<unknown>("/ai/config", undefined, adapter),
+  ]);
+  return mergeApmeAiProviderLists(
+    normalizeApmeAiProviders(providers),
+    normalizeApmeAiProviders(config),
+  );
+}
+
+export function getAiEngines(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<ApmeAiEnginesResponse> {
+  return request("/ai/engines", undefined, adapter);
+}
+
+function configRecord(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("Invalid AI configuration response");
+  const root = "config" in raw ? raw.config : raw;
+  if (!root || typeof root !== "object" || Array.isArray(root))
+    throw new Error("Invalid AI configuration response");
+  return root as Record<string, unknown>;
+}
+
+/** Existing Portal configure + model merge, with visible partial-save failures. */
+export async function saveAiProvider(
+  id: string,
+  configure: ApmeAiProviderConfigureRequest,
+  models: string[],
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  if (!/^[A-Za-z0-9_-]+$/.test(id))
+    throw new Error(
+      "Provider name must contain only letters, numbers, underscores or hyphens",
+    );
+  const configured = await apiFetch(
+    `/ai/provider/${encodeURIComponent(id)}/configure`,
+    {
+      method: "POST",
+      body: JSON.stringify(configure),
+      headers: { "Content-Type": "application/json" },
+    },
+    adapter,
+  );
+  if (!configured.ok)
+    throw new ApiError(configured.status, await configured.text());
+  try {
+    const config = configRecord(
+      await request<unknown>("/ai/config", undefined, adapter),
+    );
+    const current = config.providers;
+    if (
+      current != null &&
+      (typeof current !== "object" || Array.isArray(current))
+    )
+      throw new Error("Invalid provider configuration");
+    const providers = { ...(current as Record<string, unknown> | undefined) };
+    const previous = providers[id];
+    const prior =
+      previous && typeof previous === "object" && !Array.isArray(previous)
+        ? previous
+        : {};
+    const modelOptions = (prior as Record<string, unknown>).models;
+    const retainedModels =
+      modelOptions &&
+      typeof modelOptions === "object" &&
+      !Array.isArray(modelOptions)
+        ? (modelOptions as Record<string, unknown>)
+        : {};
+    Object.defineProperty(providers, id, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+      value: {
+        ...prior,
+        engine: configure.engine,
+        models: Object.fromEntries(
+          models.map((model) => [
+            model,
+            Object.prototype.hasOwnProperty.call(retainedModels, model)
+              ? retainedModels[model]
+              : {},
+          ]),
+        ),
+        ...(configure.baseUrl ? { base_url: configure.baseUrl } : {}),
+      },
+    });
+    await request(
+      "/ai/config",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          location: "user",
+          config: { ...config, providers },
+        }),
+        headers: { "Content-Type": "application/json" },
+      },
+      adapter,
+    );
+  } catch {
+    throw new Error(
+      "Provider credentials were saved, but model configuration could not be saved. Refresh and retry the model update.",
+    );
+  }
+}
+
+export async function deleteAiProvider(
+  id: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const response = await apiFetch(
+    `/ai/provider/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    adapter,
+  );
+  if (!response.ok) throw new ApiError(response.status, await response.text());
+}
+
 // ── Project API (ADR-037) ────────────────────────────────────────────
 
 export function createProject(
@@ -249,7 +391,11 @@ export function getProject(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ProjectDetail> {
-  return request(`/projects/${encodeURIComponent(projectId)}`, undefined, adapter);
+  return request(
+    `/projects/${encodeURIComponent(projectId)}`,
+    undefined,
+    adapter,
+  );
 }
 
 export function updateProject(
@@ -301,10 +447,17 @@ export function listProjectViolations(
   ruleId?: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ViolationDetail[]> {
-  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-  if (severity) query.set('severity', severity);
-  if (ruleId) query.set('rule_id', ruleId);
-  return request(`/projects/${encodeURIComponent(projectId)}/violations?${query}`, undefined, adapter);
+  const query = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (severity) query.set("severity", severity);
+  if (ruleId) query.set("rule_id", ruleId);
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/violations?${query}`,
+    undefined,
+    adapter,
+  );
 }
 
 export function getProjectTrend(
@@ -372,7 +525,12 @@ export function getProjectDependencies(
 export interface GraphData {
   version: number;
   nodes: Array<{ id: string; data: Record<string, unknown> }>;
-  edges: Array<{ source: string; target: string; edge_type?: string; position?: number }>;
+  edges: Array<{
+    source: string;
+    target: string;
+    edge_type?: string;
+    position?: number;
+  }>;
   execution_edges?: Array<{ source: string; target: string }>;
 }
 
@@ -380,7 +538,11 @@ export function getProjectGraph(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<GraphData> {
-  return request(`/projects/${encodeURIComponent(projectId)}/graph`, undefined, adapter);
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/graph`,
+    undefined,
+    adapter,
+  );
 }
 
 export async function getProjectSbom(
@@ -404,21 +566,33 @@ export function listCollections(
   offset = 0,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<CollectionSummary[]> {
-  return request(`/collections?limit=${limit}&offset=${offset}`, undefined, adapter);
+  return request(
+    `/collections?limit=${limit}&offset=${offset}`,
+    undefined,
+    adapter,
+  );
 }
 
 export function getCollectionDetail(
   fqcn: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<CollectionDetail> {
-  return request(`/collections/${encodeURIComponent(fqcn)}`, undefined, adapter);
+  return request(
+    `/collections/${encodeURIComponent(fqcn)}`,
+    undefined,
+    adapter,
+  );
 }
 
 export function listCollectionProjects(
   fqcn: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<CollectionProjectRef[]> {
-  return request(`/collections/${encodeURIComponent(fqcn)}/projects`, undefined, adapter);
+  return request(
+    `/collections/${encodeURIComponent(fqcn)}/projects`,
+    undefined,
+    adapter,
+  );
 }
 
 export function listPythonPackages(
@@ -426,14 +600,22 @@ export function listPythonPackages(
   offset = 0,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PythonPackageSummary[]> {
-  return request(`/python-packages?limit=${limit}&offset=${offset}`, undefined, adapter);
+  return request(
+    `/python-packages?limit=${limit}&offset=${offset}`,
+    undefined,
+    adapter,
+  );
 }
 
 export function getPythonPackageDetail(
   name: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PythonPackageDetail> {
-  return request(`/python-packages/${encodeURIComponent(name)}`, undefined, adapter);
+  return request(
+    `/python-packages/${encodeURIComponent(name)}`,
+    undefined,
+    adapter,
+  );
 }
 
 // ── Dependency health (ADR-051) ─────────────────────────────────────────
@@ -535,7 +717,11 @@ export async function deleteSuppression(
   id: number,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<void> {
-  const res = await apiFetch(`/suppressions/${id}`, { method: "DELETE" }, adapter);
+  const res = await apiFetch(
+    `/suppressions/${id}`,
+    { method: "DELETE" },
+    adapter,
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new ApiError(res.status, text);
@@ -605,18 +791,22 @@ export function listRules(
   if (params?.source) sp.set("source", params.source);
   if (params?.enabled_only === true) sp.set("enabled_only", "true");
   const q = sp.toString();
-  return request<RuleApiRow[]>(`/rules${q ? `?${q}` : ""}`, undefined, adapter).then((rows) =>
-    rows.map(mapRuleApiToDetail),
-  );
+  return request<RuleApiRow[]>(
+    `/rules${q ? `?${q}` : ""}`,
+    undefined,
+    adapter,
+  ).then((rows) => rows.map(mapRuleApiToDetail));
 }
 
 export function getRule(
   ruleId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<RuleDetail> {
-  return request<RuleApiRow>(`/rules/${encodeURIComponent(ruleId)}`, undefined, adapter).then(
-    mapRuleApiToDetail,
-  );
+  return request<RuleApiRow>(
+    `/rules/${encodeURIComponent(ruleId)}`,
+    undefined,
+    adapter,
+  ).then(mapRuleApiToDetail);
 }
 
 export async function updateRuleConfig(
@@ -628,7 +818,10 @@ export async function updateRuleConfig(
     `/rules/${encodeURIComponent(ruleId)}/config`,
     {
       method: "PUT",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(config),
     },
     adapter,
@@ -677,14 +870,22 @@ export async function markNotificationRead(
   id: number,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<void> {
-  const res = await apiFetch(`/notifications/${id}/read`, { method: "PATCH" }, adapter);
+  const res = await apiFetch(
+    `/notifications/${id}/read`,
+    { method: "PATCH" },
+    adapter,
+  );
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
 export async function markAllNotificationsRead(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<void> {
-  const res = await apiFetch(`/notifications/read-all`, { method: "POST" }, adapter);
+  const res = await apiFetch(
+    `/notifications/read-all`,
+    { method: "POST" },
+    adapter,
+  );
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -692,6 +893,10 @@ export async function deleteNotification(
   id: number,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<void> {
-  const res = await apiFetch(`/notifications/${id}`, { method: "DELETE" }, adapter);
+  const res = await apiFetch(
+    `/notifications/${id}`,
+    { method: "DELETE" },
+    adapter,
+  );
   if (!res.ok) throw new Error(`${res.status}`);
 }

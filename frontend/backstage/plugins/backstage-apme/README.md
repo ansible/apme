@@ -128,8 +128,8 @@ certificate settings disabled until the host forwards the field. Local enables
 this capability and settings view/manage access for its personal deployment.
 The Galaxy form never displays saved tokens, leaves them unchanged on blank edits
 and offers explicit removal; deletion has a confirmation dialog. These controls
-use the existing authorized CRUD routes. Full AI provider administration is
-still pending; this model selector only manages a browser preference.
+use the existing authorized CRUD routes. The model selector manages a browser preference; provider administration is
+provided by the separate component described below.
 
 ## Graph and SBOM
 
@@ -145,3 +145,22 @@ authorized `GET /apme/projects/:projectId/graph` and `/sbom` routes in Portal be
 enabling them there. The shared components display failures and never fall back
 to a direct Gateway. The specialist graph palette remains a documented styling
 exception pending actual-host theme and accessibility acceptance.
+
+## AI administration and uploads
+
+Settings now includes `ApmeAiProviders`, using the original plugin's provider
+normalization and model merge. It shares the explicit settings view/manage props.
+Deployment providers remain read-only and API keys are never stored in browser
+storage. Model-save failures after credential persistence are reported explicitly.
+
+`ApmeUploadWorkbench` accepts `adapter` and `canUpload` (default false), supports
+paste/files/directories, reconnect, proposal approval and remediated ZIP download.
+It requires `adapter.openSessionSocket`. Local gets this from the separately
+registered `@apme/backstage-backend` plugin, configured with server-only
+`apme.gatewayBaseUrl`. See the workspace README and ADR-074 for installation.
+
+Use `createPortalProjectApiAdapter` after deploying the companion shared-data
+routes. It preserves full rule metadata and project history pagination, checks
+project ownership for activity, and routes AI discovery through settings RBAC.
+`enableUploads` must remain false until Portal mounts the shared backend router
+with its tenant/user/entitlement/scan authorization and shutdown hook.

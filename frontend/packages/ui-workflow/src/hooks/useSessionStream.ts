@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apmeWsUrl, useApmeApi } from "../api/apmeApiAdapter";
+import type { ApmeSessionSocket } from '@apme/client/transport';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -300,6 +301,7 @@ export function useSessionStream() {
   const apiRef = useRef(api);
   apiRef.current = api;
   const prevEndpointRef = useRef<string | null>(null);
+  const connectionGeneration = useRef(0);
   const [status, setStatus] = useState<SessionStatus>("idle");
   const [progress, setProgress] = useState<ProgressEntry[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -309,7 +311,7 @@ export function useSessionStream() {
   const [result, setResult] = useState<SessionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [canReconnect, setCanReconnect] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<ApmeSessionSocket | null>(null);
   const statusRef = useRef<SessionStatus>("idle");
   const sessionIdRef = useRef<string | null>(null);
   // True once session_created arrived on the current socket. Distinguishes a
@@ -331,6 +333,7 @@ export function useSessionStream() {
   }, []);
 
   const reset = useCallback(() => {
+    connectionGeneration.current += 1;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -353,7 +356,7 @@ export function useSessionStream() {
 
   /** Wire shared WS event handlers (used by both start and resume). */
   const wireHandlers = useCallback(
-    (ws: WebSocket) => {
+    (ws: ApmeSessionSocket) => {
       // A malformed TERMINAL result means the server stream cannot be
       // trusted: surface the error and close the socket instead of leaving
       // the UI on a non-terminal spinner with no recovery path.
@@ -709,14 +712,19 @@ export function useSessionStream() {
   const startSession = useCallback(
     async (files: File[], options: SessionOptions = {}) => {
       reset();
+      const generation = connectionGeneration.current;
       updateStatus("connecting");
 
       // apiBase-relative so custom provider bases (Portal) resolve; the
       // default /api/v1 base reproduces the historical absolute path.
-      const ws = new WebSocket(apmeWsUrl("/ws/session", api));
+      let ws: ApmeSessionSocket;
+      try { ws = api.openSessionSocket ? await api.openSessionSocket(apmeWsUrl('/ws/session', api)) : new WebSocket(apmeWsUrl('/ws/session', api)); }
+      catch { if (generation === connectionGeneration.current) { setError('Could not open the upload session through this host.'); updateStatus('error'); } return; }
+      if (generation !== connectionGeneration.current) { ws.close(); return; }
       wsRef.current = ws;
 
       ws.onopen = async () => {
+        if (wsRef.current !== ws) return;
         updateStatus("uploading");
 
         const startOptions: Record<string, unknown> = {
@@ -728,17 +736,20 @@ export function useSessionStream() {
         if (options.aiModel) {
           startOptions.ai_model = options.aiModel;
         }
-        ws.send(JSON.stringify({ type: "start", options: startOptions }));
+        await ws.send(JSON.stringify({ type: "start", options: startOptions }));
 
         for (const file of files) {
-          const content = await fileToBase64(file);
+          let content: string;
+          try { content = await fileToBase64(file); }
+          catch { if (wsRef.current === ws) { setError('Could not read an uploaded file.'); updateStatus('error'); ws.close(); } return; }
+          if (wsRef.current !== ws || ws.readyState !== 1) return;
           const path =
             (file as File & { webkitRelativePath?: string })
               .webkitRelativePath || file.name;
-          ws.send(JSON.stringify({ type: "file", path, content }));
+          await ws.send(JSON.stringify({ type: "file", path, content }));
         }
 
-        ws.send(JSON.stringify({ type: "files_done" }));
+        if (wsRef.current === ws && ws.readyState === 1) await ws.send(JSON.stringify({ type: "files_done" }));
       };
 
       wireHandlers(ws);
@@ -747,7 +758,8 @@ export function useSessionStream() {
   );
 
   const resumeSession = useCallback(
-    (sid: string, originalScanId?: string) => {
+    async (sid: string, originalScanId?: string) => {
+      const generation = ++connectionGeneration.current;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -764,7 +776,10 @@ export function useSessionStream() {
       if (originalScanId) {
         url += `&scan_id=${encodeURIComponent(originalScanId)}`;
       }
-      const ws = new WebSocket(apmeWsUrl(url, api));
+      let ws: ApmeSessionSocket;
+      try { ws = api.openSessionSocket ? await api.openSessionSocket(apmeWsUrl(url, api)) : new WebSocket(apmeWsUrl(url, api)); }
+      catch { if (generation === connectionGeneration.current) { setError('Could not reconnect through this host.'); updateStatus('error'); } return; }
+      if (generation !== connectionGeneration.current) { ws.close(); return; }
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -814,6 +829,7 @@ export function useSessionStream() {
   }, []);
 
   const cancel = useCallback(() => {
+    connectionGeneration.current += 1;
     wsRef.current?.close();
     clearPersistedSession();
     updateStatus("idle");
@@ -854,6 +870,7 @@ export function useSessionStream() {
   // session reference so the user can resume when they navigate back.
   useEffect(() => {
     return () => {
+      connectionGeneration.current += 1;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
