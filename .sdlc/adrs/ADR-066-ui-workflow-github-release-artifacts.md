@@ -4,6 +4,11 @@
 
 Implemented
 
+Extended by [ADR-073](ADR-073-ui-host-composition.md): the same product release
+also carries the Gateway client and standard Backstage plugin. The workflow
+tarball asset name remains compatible; its manifest pins the client artifact
+from that same release.
+
 ## Date
 
 2026-07-23 (revised 2026-07-31)

@@ -1,0 +1,46 @@
+{
+  "name": "@apme/backstage-plugin",
+  "version": "0.0.0-dev",
+  "type": "module",
+  "description": "APME project workflows for RHDH Local and Portal host composition.",
+  "license": "Apache-2.0",
+  "backstage": {
+    "role": "frontend-plugin",
+    "pluginId": "apme"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ansible/apme.git",
+    "directory": "frontend/backstage/plugins/backstage-apme"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "config.d.ts",
+    "README.md"
+  ],
+  "configSchema": "config.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@apme/client": "*",
+    "@apme/ui-workflow": "*"
+  },
+  "peerDependencies": {
+    "@backstage/core-plugin-api": "^1.12.9",
+    "@backstage/ui": "^0.17.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6",
+    "@patternfly/react-core": "^6.3.1",
+    "@patternfly/react-icons": "^6.3.1"
+  }
+}

@@ -128,7 +128,7 @@ export function useProjectOperationActions(projectId: string) {
       const { abandon_working_set, ...opOptions } = options;
       return postJson<{ operation_id: string }>(
         api,
-        `/projects/${projectId}/operation`,
+        `/projects/${encodeURIComponent(projectId)}/operation`,
         {
           action,
           options: opOptions,
@@ -143,7 +143,7 @@ export function useProjectOperationActions(projectId: string) {
     async (approvedIds: string[], approvalGateId?: string) => {
       return postJson<{ status: string }>(
         api,
-        `/projects/${projectId}/operation/approve`,
+        `/projects/${encodeURIComponent(projectId)}/operation/approve`,
         {
           approved_ids: approvedIds,
           ...(approvalGateId != null ? { approval_gate_id: approvalGateId } : {}),
@@ -156,7 +156,7 @@ export function useProjectOperationActions(projectId: string) {
   const beginRemediate = useCallback(async () => {
     return postJson<{ status: string }>(
       api,
-      `/projects/${projectId}/operation/begin-remediate`,
+      `/projects/${encodeURIComponent(projectId)}/operation/begin-remediate`,
     );
   }, [api, projectId]);
 
@@ -166,7 +166,7 @@ export function useProjectOperationActions(projectId: string) {
     ) => {
       return patchJson<{ updated: unknown[] }>(
         api,
-        `/projects/${projectId}/operation/proposals`,
+        `/projects/${encodeURIComponent(projectId)}/operation/proposals`,
         { updates },
       );
     },
@@ -176,7 +176,7 @@ export function useProjectOperationActions(projectId: string) {
   const cancel = useCallback(async () => {
     return postJson<{ status: string }>(
       api,
-      `/projects/${projectId}/operation/cancel`,
+      `/projects/${encodeURIComponent(projectId)}/operation/cancel`,
     );
   }, [api, projectId]);
 
@@ -185,7 +185,7 @@ export function useProjectOperationActions(projectId: string) {
     async (targets: Array<{ path: string; rule_ids?: string[] }> = []) => {
       return postJson<{ status?: string }>(
         api,
-        `/projects/${projectId}/operation/escalate-ai`,
+        `/projects/${encodeURIComponent(projectId)}/operation/escalate-ai`,
         { targets },
       );
     },
@@ -204,7 +204,7 @@ export function useProjectOperationActions(projectId: string) {
         commit_sha: string;
         pr_url: string | null;
         provider: string;
-      }>(api, `/projects/${projectId}/operation/submit`, options);
+      }>(api, `/projects/${encodeURIComponent(projectId)}/operation/submit`, options);
     },
     [api, projectId],
   );

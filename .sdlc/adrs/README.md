@@ -77,6 +77,7 @@ Decisions with substantial code shipped; ADR-defined scope still incomplete.
 | [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression (Partially Implemented (rule_module mode and export/import remain)) | 2026-05-21 |
 | [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push (Partially Implemented (fixed APME commit author and committer identity pending)) | 2026-07-06 |
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract (Partially Implemented (deprecation middleware and break-diff CI pending)) | 2026-07-08 |
+| [ADR-073](ADR-073-ui-host-composition.md) | APME UI Package Ownership and Host Composition | 2026-10-30 |
 
 ## Accepted
 
@@ -114,7 +115,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-073)
+2. Use the next available number (currently ADR-074)
 3. Include:
    - Status (Proposed → Accepted → Partially Implemented → Implemented)
    - Date

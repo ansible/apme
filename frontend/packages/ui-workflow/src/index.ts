@@ -107,3 +107,4 @@ export {
 export { DiffView, textsFromUnifiedDiff, CurrentYamlView } from './components/DiffView';
 
 export { toPrFilesDiffUrl } from './utils/prDiffUrl';
+export { violationToFinding, type FindingSource } from './shared/violationToFinding';

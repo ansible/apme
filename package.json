@@ -1,0 +1,48 @@
+{
+  "name": "apme-ui-workspaces",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "workspaces": [
+    "frontend/packages/*",
+    "frontend/backstage/plugins/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin",
+    "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json",
+    "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",
+    "dev": "vite --config frontend/backstage/vite.config.ts --host 127.0.0.1",
+    "build:dev": "vite build --config frontend/backstage/vite.config.ts",
+    "pack": "node frontend/backstage/scripts/pack.mjs",
+    "format": "prettier --write frontend/backstage",
+    "format:check": "prettier --check frontend/backstage",
+    "pack:verify": "node frontend/backstage/scripts/verify-pack.mjs"
+  },
+  "dependencies": {
+    "@backstage/config": "1.3.8",
+    "@backstage/core-app-api": "1.20.4",
+    "@backstage/core-plugin-api": "1.12.9",
+    "@backstage/ui": "0.17.1",
+    "@patternfly/react-core": "6.6.2",
+    "@patternfly/react-icons": "6.6.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.30.6"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.1.1",
+    "prettier": "^3.9.6",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

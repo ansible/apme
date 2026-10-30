@@ -34,7 +34,8 @@
     "react-syntax-highlighter": "^16.1.1",
     "styled-components": "^6.5.3",
     "swr": "^2.5.1",
-    "undici": "8.11.2"
+    "undici": "8.11.2",
+    "@apme/client": "*"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.2",

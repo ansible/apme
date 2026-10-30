@@ -30,6 +30,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-018 | Python AST Validator | PHASE-002 | Draft |
 | REQ-019 | Scan Attestation | Unassigned | Draft |
 | REQ-020 | Unified Supply Chain Security (SBOM, CVE, CWE) | PHASE-003 | Draft |
+| REQ-021 | APME UI Host Consolidation | PHASE-003 | In Progress |
 
 ## Directory Structure
 
