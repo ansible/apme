@@ -1973,8 +1973,13 @@
         "type": "object"
       },
       "RuleDetailOut": {
-        "description": "Single rule with full override information.\n\nAttributes:\n    rule_id: Rule identifier.\n    category: Rule category (lint, modernize, risk, policy, secrets).\n    source: Validator source name.\n    description: Human-readable description.\n    scope: RuleScope enum value from registration.\n    default_severity: Catalog default severity (proto enum int).\n    default_severity_label: Label for default_severity.\n    resolved_severity: Effective severity after override.\n    resolved_severity_label: Label for resolved_severity.\n    enabled: Catalog default enabled flag.\n    resolved_enabled: Effective enabled state after override.\n    registered_at: ISO 8601 registration timestamp.\n    override: Active override row, if any.",
+        "description": "Single rule with full override information.\n\nAttributes:\n    rule_id: Rule identifier.\n    category: Rule category (lint, modernize, risk, policy, secrets).\n    source: Validator source name.\n    description: Human-readable description.\n    scope: RuleScope enum value from registration.\n    default_severity: Catalog default severity (proto enum int).\n    default_severity_label: Label for default_severity.\n    resolved_severity: Effective severity after override.\n    resolved_severity_label: Label for resolved_severity.\n    enabled: Catalog default enabled flag.\n    ansible_core_version: PEP 440 specifier for applicable ansible-core versions.\n    resolved_enabled: Effective enabled state after override.\n    registered_at: ISO 8601 registration timestamp.\n    override: Active override row, if any.",
         "properties": {
+          "ansible_core_version": {
+            "default": "",
+            "title": "Ansible Core Version",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"
@@ -2053,8 +2058,13 @@
         "type": "object"
       },
       "RuleListItem": {
-        "description": "One rule with default and resolved severity / enabled state.\n\nAttributes:\n    rule_id: Rule identifier.\n    category: Rule category (lint, modernize, risk, policy, secrets).\n    source: Validator source name.\n    description: Human-readable description.\n    scope: RuleScope enum value from registration.\n    default_severity: Catalog default severity (proto enum int).\n    default_severity_label: Label for default_severity.\n    resolved_severity: Effective severity after override.\n    resolved_severity_label: Label for resolved_severity.\n    enabled: Catalog default enabled flag.\n    resolved_enabled: Effective enabled state after override.\n    registered_at: ISO 8601 registration timestamp.\n    override: Active override row, if any.",
+        "description": "One rule with default and resolved severity / enabled state.\n\nAttributes:\n    rule_id: Rule identifier.\n    category: Rule category (lint, modernize, risk, policy, secrets).\n    source: Validator source name.\n    description: Human-readable description.\n    scope: RuleScope enum value from registration.\n    default_severity: Catalog default severity (proto enum int).\n    default_severity_label: Label for default_severity.\n    resolved_severity: Effective severity after override.\n    resolved_severity_label: Label for resolved_severity.\n    enabled: Catalog default enabled flag.\n    ansible_core_version: PEP 440 specifier for applicable ansible-core versions.\n    resolved_enabled: Effective enabled state after override.\n    registered_at: ISO 8601 registration timestamp.\n    override: Active override row, if any.",
         "properties": {
+          "ansible_core_version": {
+            "default": "",
+            "title": "Ansible Core Version",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"

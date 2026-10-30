@@ -483,6 +483,7 @@ class Rule(Base):
         description: Human-readable description.
         scope: Numeric ``RuleScope`` proto enum value.
         enabled: Default enabled state.
+        ansible_core_version: PEP 440 specifier describing applicable ansible-core versions.
         registered_at: ISO 8601 timestamp of last registration.
         overrides: Associated configuration overrides for this rule.
     """
@@ -496,6 +497,7 @@ class Rule(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     scope: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ansible_core_version: Mapped[str] = mapped_column(Text, nullable=False, default="")
     registered_at: Mapped[str] = mapped_column(Text, nullable=False)
 
     overrides: Mapped[list[RuleOverride]] = relationship(back_populates="rule", cascade="all, delete-orphan")

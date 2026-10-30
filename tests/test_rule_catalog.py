@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from packaging.specifiers import SpecifierSet
+from sqlalchemy import create_engine, text
 
 from apme.v1 import common_pb2, engine_pb2, reporting_pb2
 from apme_engine.daemon.engine_server import (
@@ -26,7 +28,10 @@ from apme_engine.rule_catalog import (
     get_rule_guidance,
     list_rules_with_guidance,
 )
-from apme_gateway.db import get_session
+from apme_gateway import db as gateway_db
+from apme_gateway.api.router import _to_rule_detail, _to_rule_list_item
+from apme_gateway.app import create_app
+from apme_gateway.db import _migrate_rules_table, get_session
 from apme_gateway.db import queries as q
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
@@ -628,11 +633,12 @@ def _grpc_context() -> AsyncMock:
     return AsyncMock()
 
 
-def _sample_rule(rule_id: str) -> reporting_pb2.RuleDefinition:
+def _sample_rule(rule_id: str, *, ansible_core_version: str = "") -> reporting_pb2.RuleDefinition:
     """Construct a minimal ``RuleDefinition`` for registration tests.
 
     Args:
         rule_id: Rule identifier.
+        ansible_core_version: PEP 440 specifier for rule applicability.
 
     Returns:
         Populated ``RuleDefinition`` proto.
@@ -645,7 +651,48 @@ def _sample_rule(rule_id: str) -> reporting_pb2.RuleDefinition:
         description="test rule",
         scope=common_pb2.RULE_SCOPE_TASK,  # type: ignore[attr-defined]
         enabled=True,
+        ansible_core_version=ansible_core_version,
     )
+
+
+def test_migrate_rules_table_adds_version_column_to_existing_catalog() -> None:
+    """The ADR-057 migration adds a defaulted column and safely reruns."""
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE rules (rule_id TEXT PRIMARY KEY)"))
+            conn.execute(text("INSERT INTO rules (rule_id) VALUES ('M001')"))
+
+            _migrate_rules_table(conn)
+            version = conn.execute(text("SELECT ansible_core_version FROM rules WHERE rule_id = 'M001'")).scalar_one()
+            assert version == ""
+
+            conn.execute(text("UPDATE rules SET ansible_core_version = '>=2.19' WHERE rule_id = 'M001'"))
+            _migrate_rules_table(conn)
+            version = conn.execute(text("SELECT ansible_core_version FROM rules WHERE rule_id = 'M001'")).scalar_one()
+            assert version == ">=2.19"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
+async def test_migrate_rules_table_adds_version_column_to_legacy_postgresql_catalog() -> None:
+    """The PostgreSQL migration defaults pre-existing rows and is idempotent."""
+    assert gateway_db._engine is not None
+    async with gateway_db._engine.begin() as conn:
+        await conn.execute(text("DROP TABLE rules CASCADE"))
+        await conn.execute(text("CREATE TABLE rules (rule_id TEXT PRIMARY KEY)"))
+        await conn.execute(text("INSERT INTO rules (rule_id) VALUES ('M001')"))
+
+        await conn.run_sync(_migrate_rules_table)
+        version = await conn.scalar(text("SELECT ansible_core_version FROM rules WHERE rule_id = 'M001'"))
+        assert version == ""
+
+        await conn.execute(text("UPDATE rules SET ansible_core_version = '>=2.19' WHERE rule_id = 'M001'"))
+        await conn.run_sync(_migrate_rules_table)
+        version = await conn.scalar(text("SELECT ansible_core_version FROM rules WHERE rule_id = 'M001'"))
+        assert version == ">=2.19"
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
@@ -695,6 +742,64 @@ async def test_register_rules_adds_new_rules() -> None:
         rows = await q.list_rules(db)
     ids = {r.rule_id for r in rows}
     assert ids == {"L010", "L020"}, "database should contain exactly the registered rule IDs"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
+async def test_rule_version_is_persisted_and_exposed_in_catalog_responses() -> None:
+    """ADR-057 applicability metadata survives registration and both REST shapes."""
+    servicer = ReportingServicer()
+    req = reporting_pb2.RegisterRulesRequest(
+        pod_id="pod-a",
+        is_authority=True,
+        rules=[_sample_rule("M001", ansible_core_version=">=2.19")],
+    )
+    response = await servicer.RegisterRules(req, _grpc_context())
+    assert response.accepted is True
+
+    async with get_session() as db:
+        rows = await q.list_rules(db)
+        assert len(rows) == 1
+        rule = rows[0]
+        assert rule.rule_id == "M001"
+        assert rule.ansible_core_version == ">=2.19"
+        assert _to_rule_list_item(rule).ansible_core_version == ">=2.19"
+        assert _to_rule_detail(rule).ansible_core_version == ">=2.19"
+
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        list_response = await client.get("/api/v1/rules")
+        detail_response = await client.get("/api/v1/rules/M001")
+
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["ansible_core_version"] == ">=2.19"
+    assert detail_response.status_code == 200
+    assert detail_response.json()["ansible_core_version"] == ">=2.19"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
+async def test_rule_version_is_updated_during_reconciliation() -> None:
+    """A later authority registration refreshes the persisted specifier."""
+    servicer = ReportingServicer()
+    context = _grpc_context()
+    for specifier in (">=2.19", ">=2.20"):
+        response = await servicer.RegisterRules(
+            reporting_pb2.RegisterRulesRequest(
+                pod_id="pod-a",
+                is_authority=True,
+                rules=[_sample_rule("M001", ansible_core_version=specifier)],
+            ),
+            context,
+        )
+        assert response.accepted is True
+
+    async with get_session() as db:
+        rows = await q.list_rules(db)
+        assert len(rows) == 1
+        rule = rows[0]
+        assert rule.rule_id == "M001"
+        assert rule.ansible_core_version == ">=2.20"
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

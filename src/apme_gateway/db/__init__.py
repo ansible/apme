@@ -49,6 +49,7 @@ async def init_db(database_url: str) -> None:
                 await conn.run_sync(_migrate_projects_table)
                 await conn.run_sync(_migrate_galaxy_servers_table)
                 await conn.run_sync(_migrate_notifications_table)
+                await conn.run_sync(_migrate_rules_table)
         except (OperationalError, OSError):
             if engine is not None:
                 await engine.dispose()
@@ -95,6 +96,7 @@ async def reset_db() -> None:
         await conn.run_sync(_migrate_projects_table)
         await conn.run_sync(_migrate_galaxy_servers_table)
         await conn.run_sync(_migrate_notifications_table)
+        await conn.run_sync(_migrate_rules_table)
 
 
 def _migrate_galaxy_servers_table(conn: Connection) -> None:
@@ -362,6 +364,25 @@ def _migrate_projects_table(conn: Connection) -> None:
                 text("UPDATE projects SET normalized_repo_url = :normalized WHERE id = :pid"),
                 {"normalized": canonical, "pid": row[0]},
             )
+
+
+def _migrate_rules_table(conn: Connection) -> None:
+    """Add ADR-057 version applicability metadata to existing rule catalogs.
+
+    Args:
+        conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+    """
+    insp = inspect(conn)
+    if not insp.has_table("rules"):
+        return
+    existing = {c["name"] for c in insp.get_columns("rules")}
+    if "ansible_core_version" not in existing:
+        if conn.dialect.name == "postgresql":
+            conn.execute(
+                text("ALTER TABLE rules ADD COLUMN IF NOT EXISTS ansible_core_version TEXT NOT NULL DEFAULT ''")
+            )
+        else:
+            conn.execute(text("ALTER TABLE rules ADD COLUMN ansible_core_version TEXT NOT NULL DEFAULT ''"))
 
 
 async def close_db() -> None:

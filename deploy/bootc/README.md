@@ -134,6 +134,17 @@ The shipped quadlet files use fixed image references (e.g.
 edit the quadlet files under `/usr/share/containers/systemd/` and run
 `systemctl daemon-reload && systemctl restart apme-pod.service`.
 
+When upgrading only the Gateway image, wait for the Gateway to start, then
+restart the authority Engine so it registers the full rule catalog with the
+Gateway again:
+
+```bash
+sudo systemctl restart apme-engine.service
+```
+
+A full bootc image upgrade already reboots the VM, so the Engine registers its
+catalog during normal startup and does not need a separate restart.
+
 ### Environment Variables
 
 | Variable | Purpose |

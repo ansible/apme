@@ -1794,6 +1794,7 @@ class RuleListItem(BaseModel):  # type: ignore[misc]
         resolved_severity: Effective severity after override.
         resolved_severity_label: Label for resolved_severity.
         enabled: Catalog default enabled flag.
+        ansible_core_version: PEP 440 specifier for applicable ansible-core versions.
         resolved_enabled: Effective enabled state after override.
         registered_at: ISO 8601 registration timestamp.
         override: Active override row, if any.
@@ -1809,6 +1810,7 @@ class RuleListItem(BaseModel):  # type: ignore[misc]
     resolved_severity: int
     resolved_severity_label: str
     enabled: bool
+    ansible_core_version: str = ""
     resolved_enabled: bool
     registered_at: str
     override: RuleOverrideOut | None
@@ -1828,6 +1830,7 @@ class RuleDetailOut(BaseModel):  # type: ignore[misc]
         resolved_severity: Effective severity after override.
         resolved_severity_label: Label for resolved_severity.
         enabled: Catalog default enabled flag.
+        ansible_core_version: PEP 440 specifier for applicable ansible-core versions.
         resolved_enabled: Effective enabled state after override.
         registered_at: ISO 8601 registration timestamp.
         override: Active override row, if any.
@@ -1843,6 +1846,7 @@ class RuleDetailOut(BaseModel):  # type: ignore[misc]
     resolved_severity: int
     resolved_severity_label: str
     enabled: bool
+    ansible_core_version: str = ""
     resolved_enabled: bool
     registered_at: str
     override: RuleOverrideOut | None
@@ -1966,6 +1970,7 @@ def _to_rule_list_item(rule: Rule) -> RuleListItem:
         resolved_severity=rs,
         resolved_severity_label=_severity_label_from_int(rs),
         enabled=rule.enabled,
+        ansible_core_version=rule.ansible_core_version,
         resolved_enabled=_resolved_enabled(rule),
         registered_at=rule.registered_at,
         override=_override_out(_primary_override(rule)),
@@ -1985,6 +1990,7 @@ def _to_rule_detail(rule: Rule) -> RuleDetailOut:
         resolved_severity=rs,
         resolved_severity_label=_severity_label_from_int(rs),
         enabled=rule.enabled,
+        ansible_core_version=rule.ansible_core_version,
         resolved_enabled=_resolved_enabled(rule),
         registered_at=rule.registered_at,
         override=_override_out(_primary_override(rule)),

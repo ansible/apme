@@ -450,6 +450,7 @@ async def _reconcile_rules(
                 description=rd.description,  # type: ignore[attr-defined]
                 scope=rd.scope,  # type: ignore[attr-defined]
                 enabled=rd.enabled,  # type: ignore[attr-defined]
+                ansible_core_version=rd.ansible_core_version,  # type: ignore[attr-defined]
                 registered_at=now,
             )
         )
@@ -471,6 +472,7 @@ async def _reconcile_rules(
         existing.description = rd.description  # type: ignore[attr-defined]
         existing.scope = rd.scope  # type: ignore[attr-defined]
         existing.enabled = rd.enabled  # type: ignore[attr-defined]
+        existing.ansible_core_version = rd.ansible_core_version  # type: ignore[attr-defined]
         existing.registered_at = now
         unchanged += 1
 
