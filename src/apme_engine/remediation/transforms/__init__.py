@@ -53,16 +53,20 @@ def build_default_registry() -> TransformRegistry:
 
     reg.register("L084", node=fix_subtask_prefix)
 
-    # Ansible validator rules (carry resolved_fqcn from ansible-core)
-    # M001-M004 all report FQCN violations, so the same fix applies
+    # Ansible validator findings carry the canonical rewrite target.
     reg.register("M001", node=fix_fqcn)
     reg.register("M002", node=fix_fqcn)
     reg.register("M003", node=fix_fqcn)
     reg.register("M004", node=fix_fqcn)
+    reg.register("M048", node=fix_fqcn)
 
-    # OPA L002/L005 and native L026 also detect non-FQCN; reuse the same fixer
+    # Keep L002 for backward compatibility with older scan results.
     reg.register("L002", node=fix_fqcn)
+
+    # L005 includes the resolved FQCN from the engine hierarchy.
     reg.register("L005", node=fix_fqcn)
+    # L026 is deterministic when its finding has a canonical resolved target.
+    # Unresolved short names are held for manual review rather than sent to AI.
     reg.register("L026", node=fix_fqcn)
 
     # Migration rules

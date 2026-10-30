@@ -40,7 +40,52 @@ set_fact_modules[m] if {
 # is treated as using shell features — the rendered value is unknown.
 # Use trim_space so tabs/CR match Python str.strip(), not a space-only cutset.
 # [ and ] are glob character classes (cat /tmp/[ab].txt).
-shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?", "&", "(", ")", "[", "]", "$", "\n"]
+shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?", "&", "!", "(", ")", "[", "]", "$", "\n"]
+shell_builtin_commands := {
+	".",
+	":",
+	"alias",
+	"bg",
+	"builtin",
+	"break",
+	"cd",
+	"command",
+	"continue",
+	"declare",
+	"eval",
+	"exit",
+	"exec",
+	"export",
+	"fg",
+	"getopts",
+	"hash",
+	"help",
+	"jobs",
+	"let",
+	"local",
+	"logout",
+	"mapfile",
+	"popd",
+	"pushd",
+	"read",
+	"readarray",
+	"readonly",
+	"return",
+	"set",
+	"shopt",
+	"source",
+	"suspend",
+	"time",
+	"trap",
+	"times",
+	"type",
+	"typeset",
+	"ulimit",
+	"umask",
+	"unalias",
+	"unset",
+	"wait",
+}
 
 # Non-greedy {{ ... }} so dict literals like {{ {'k': 'v'} }} are stripped.
 jinja_stripped(cmd) := regex.replace(cmd, `\{\{.*?\}\}`, " ") if {
@@ -63,6 +108,42 @@ uses_shell_features(cmd) if {
 	is_string(cmd)
 	stripped := trim_space(jinja_stripped(cmd))
 	stripped == ""
+}
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	stripped := trim_space(jinja_stripped(cmd))
+	regex.match(`^[A-Za-z_][A-Za-z0-9_]*=`, stripped)
+}
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	normalized := normalized_cmd(jinja_stripped(cmd))
+	first_token := split(normalized, " ")[0]
+	first_token in shell_builtin_commands
+}
+
+# Avoid replacing shell-quoted or escaped executable names with command. This
+# is deliberately conservative: shell tokenization is not repeated in OPA.
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	normalized := normalized_cmd(jinja_stripped(cmd))
+	first_token := split(normalized, " ")[0]
+	contains(first_token, "'")
+}
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	normalized := normalized_cmd(jinja_stripped(cmd))
+	first_token := split(normalized, " ")[0]
+	contains(first_token, "\"")
+}
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	normalized := normalized_cmd(jinja_stripped(cmd))
+	first_token := split(normalized, " ")[0]
+	contains(first_token, "\\")
 }
 
 uses_shell_features(cmd) if {

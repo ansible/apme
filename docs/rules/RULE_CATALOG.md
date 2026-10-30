@@ -9,7 +9,7 @@
 | Implemented | 153/158 |
 | Tested | 155/158 |
 | Documented | 157/158 |
-| Deterministic fixer (Tier 1) | 25/158 |
+| Deterministic fixer (Tier 1) | 26/158 |
 | Severity resolved (ADR-043 table or SEC: prefix) | 158/158 |
 | Severity fallback (medium default) | 0/158 |
 
@@ -50,8 +50,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
-| 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 69 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 1 | auto | 26 | Deterministic transform in registry — applied by `apme remediate` |
+| 2 | ai | 68 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
 | 3 | manual | 64 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
@@ -193,7 +193,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M029 | M | Native | medium | playbook | manual | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | Yes | Yes | Yes | — |
 | M030 | M | Native | medium | task | ai | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | Yes | Yes | — |
 | M047 | M | Native | medium | inventory | manual | Inventory plugin disable_lookups argument has no effect (removed in 2.23) | Yes | Yes | Yes | — |
-| M048 | M | Ansible | low | task | ai | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
+| M048 | M | Ansible | low | task | auto | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | Yes |
 | P001 | P | Ansible | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | P | Ansible | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | P | Ansible | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -376,7 +376,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | R404 | info | task | manual | Expose variable_set for the task. | Yes | Yes | Yes | — |
 | R501 | info | collection | manual | Suggest collection/role dependency. | — | — | Yes | — |
 
-### Ansible (12 rules, 8 impl, 10 tested, 4 fixers)
+### Ansible (12 rules, 8 impl, 10 tested, 5 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
@@ -387,7 +387,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M002 | high | task | auto | Deprecated module — module has deprecation metadata. | Yes | Yes | Yes | Yes |
 | M003 | high | task | auto | Module redirect — module name was redirected to a new FQCN. | Yes | Yes | Yes | Yes |
 | M004 | error | task | auto | Removed module — tombstoned module that raises AnsiblePluginRemovedError. | Yes | Yes | Yes | Yes |
-| M048 | low | task | ai | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
+| M048 | low | task | auto | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | Yes |
 | P001 | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -447,3 +447,4 @@ Deterministic fixers are auto-applied by `apme remediate`.
 | M006 | high | task | become with ignore_errors will not catch timeout in 2.19+. |
 | M008 | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | high | task | with_* loops are deprecated; use loop instead. |
+| M048 | low | task | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. |

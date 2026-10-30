@@ -1,10 +1,10 @@
-"""M001/M003/L005: Rewrite short module names to FQCN.
+"""Rewrite module names to a resolved FQCN target.
 
 M001 violations carry ``resolved_fqcn`` from ansible-core's plugin loader.
-L005 violations carry ``resolved_fqcn`` from the engine's hierarchy payload.
+L005 carries ``resolved_fqcn`` from the engine's hierarchy payload.
 When the violation lacks a resolved FQCN the transform falls back to parsing
-the message text (``"Use FQCN: apt -> ansible.builtin.apt"``).  If that also
-fails the violation escalates to AI (Tier 2).
+the message text (``"Use FQCN: apt -> ansible.builtin.apt"``). Findings with
+no canonical target are kept for manual review rather than guessed.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ _FQCN_FROM_MSG_RE = re.compile(
 def _resolve_fqcn(violation: ViolationDict, current_key: str) -> str | None:
     """Get the target FQCN from the violation metadata.
 
-    Checks ``resolved_fqcn`` (from Ansible validator M001 / OPA L005)
-    and ``fqcn`` (from native validator L026).  Falls back to parsing
+    Checks ``resolved_fqcn`` (from Ansible validator findings and OPA L005)
+    and any supplied ``fqcn`` field. Falls back to parsing
     the violation message for ``"X -> Y"`` patterns.  Returns None when
     no source carries a usable FQCN so the violation escalates to AI.
 
@@ -49,6 +49,19 @@ def _resolve_fqcn(violation: ViolationDict, current_key: str) -> str | None:
             return candidate
 
     return None
+
+
+def has_fqcn_target(violation: ViolationDict) -> bool:
+    """Return whether a finding carries a deterministic FQCN target.
+
+    Args:
+        violation: Violation dict with optional target and module metadata.
+
+    Returns:
+        True when the finding has a well-formed, non-identity target.
+    """
+    current_key = str(violation.get("original_module") or violation.get("module") or "")
+    return _resolve_fqcn(violation, current_key) is not None
 
 
 def _is_valid_fqcn(candidate: str, current_key: str) -> bool:
@@ -75,7 +88,7 @@ def _is_valid_fqcn(candidate: str, current_key: str) -> bool:
 
 
 def fix_fqcn(task: CommentedMap, violation: ViolationDict) -> bool:
-    """Rename a short module name to its FQCN.
+    """Rewrite a module key to its resolved FQCN target.
 
     Args:
         task: Task CommentedMap to modify in-place.
