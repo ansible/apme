@@ -34,6 +34,4 @@ RUN ./install-dynamic-plugins.sh dynamic-plugins-root \
     && chown -R 1001:0 dynamic-plugins-root
 USER 1001
 EXPOSE 8081
-HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:8081/.backstage/health/v1/readiness').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 ENTRYPOINT ["/entrypoint.sh"]
