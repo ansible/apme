@@ -42,7 +42,11 @@ const ApmeUploadWorkbench = lazy(() =>
   })),
 );
 
-export function ApmePageContent() {
+export function ApmePageContent({
+  showGlobalSettings = true,
+}: {
+  showGlobalSettings?: boolean;
+}) {
   const hostApi = useApi(apmeHostApiRef);
   const load = useCallback(() => hostApi.getAdapter(), [hostApi]);
   const { value: adapter, error } = useLoad(load);
@@ -59,6 +63,8 @@ export function ApmePageContent() {
     <ApmeWorkbench
       adapter={adapter}
       canManageRules={hostApi.canManageRules === true}
+      canManageProjects={hostApi.canManageProjects === true}
+      showGlobalSettings={showGlobalSettings}
       canUpload={hostApi.canUpload === true}
       canViewSettings={hostApi.canViewSettings === true}
       canManageSettings={hostApi.canManageSettings === true}
@@ -72,13 +78,18 @@ export function ApmePageContent() {
 export interface ApmeWorkbenchProps extends ApmeSettingsProps {
   /** Host-evaluated permission; defaults to read-only for embedded hosts. */
   canManageRules?: boolean;
+  canManageProjects?: boolean;
   canUpload?: boolean;
+  /** Local contributes these to the existing host Settings page instead. */
+  showGlobalSettings?: boolean;
 }
 
 /** Shared page; embedding hosts can supply their own authorized adapter. */
 export function ApmeWorkbench({
   adapter,
   canManageRules = false,
+  canManageProjects = false,
+  showGlobalSettings = true,
   canUpload = false,
   canViewSettings = false,
   canManageSettings = false,
@@ -89,13 +100,17 @@ export function ApmeWorkbench({
   const view =
     requestedView === "rules" ||
     requestedView === "health" ||
-    requestedView === "settings" ||
+    (requestedView === "settings" && showGlobalSettings) ||
     requestedView === "upload"
       ? requestedView
       : "repositories";
   const selected = params.get("project");
   const requestedTab = params.get("tab");
-  const tab = isApmeProjectTab(requestedTab) ? requestedTab : "workflow";
+  const tab =
+    isApmeProjectTab(requestedTab) &&
+    (requestedTab !== "settings" || canManageProjects)
+      ? requestedTab
+      : "workflow";
   const activityId = params.get("scan") || undefined;
   const [adding, setAdding] = useState(false);
   const [offset, setOffset] = useState(0);
@@ -183,13 +198,15 @@ export function ApmeWorkbench({
           >
             Health
           </Button>
-          <Button
-            variant="secondary"
-            aria-current={view === "settings" ? "page" : undefined}
-            onPress={() => selectView("settings")}
-          >
-            Settings
-          </Button>
+          {showGlobalSettings && (
+            <Button
+              variant="secondary"
+              aria-current={view === "settings" ? "page" : undefined}
+              onPress={() => selectView("settings")}
+            >
+              Settings
+            </Button>
+          )}
           {canUpload && (
             <Button
               variant="secondary"
@@ -227,10 +244,28 @@ export function ApmeWorkbench({
               projectId={selected}
               adapter={adapter}
             >
-              {(project) => (
+              {(project, onProjectUpdated) => (
                 <ApmeProjectTabs
                   key={selected}
                   projectId={project.id}
+                  project={project}
+                  canManageProject={canManageProjects}
+                  onProjectUpdated={() => {
+                    // A name alias stops resolving after a rename. Keep the
+                    // selected tab, but refresh via the canonical project ID.
+                    if (selected !== project.id) {
+                      setParams(
+                        (previous) => {
+                          const next = new URLSearchParams(previous);
+                          next.set("project", project.id);
+                          return next;
+                        },
+                        { replace: true },
+                      );
+                    } else {
+                      onProjectUpdated();
+                    }
+                  }}
                   adapter={adapter}
                   tab={tab}
                   activityId={activityId}

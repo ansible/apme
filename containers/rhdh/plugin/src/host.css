@@ -1,0 +1,10 @@
+/* The pinned host clips its fixed sidebar to the desktop page's 1.5rem inset.
+ * Align the sidebar with that viewport so its first and last items remain visible.
+ * This stylesheet belongs only to the personal Local host, not Portal embeds.
+ */
+@media (min-width: 600px) {
+  nav[aria-label="sidebar nav"] [data-testid="sidebar-root"] {
+    top: 1.5rem;
+    bottom: 1.5rem;
+  }
+}

@@ -149,6 +149,24 @@ in the CSS `base` layer so its global reset cannot override BUI component colors
 or form controls, including dialogs rendered outside the page container. The
 libraries and host supply the palettes; Local does not define custom colors.
 
+### Local navigation and settings
+
+Projects is the default page and a persistent sidebar link. Select a repository,
+then its **Settings** tab to edit its name, URL, branch, SCM provider or token.
+Blank tokens preserve the existing credential; token removal is explicit. Saving
+refreshes the project header and returning to the list shows the updated metadata.
+
+Instance-wide AI providers, model preferences and Galaxy servers are under the
+existing host **Settings → APME** tab (`/settings/apme`). Local no longer has a
+duplicate global Settings button inside Projects. Old `?view=settings` links
+redirect to the host settings page.
+
+The shared components expose project editing only with an explicit
+`canManageProjects` / `canManageProject` host capability. Local enables it for its
+single owner. Portal must supply resource authorization and an authorized update
+route before enabling the shared editor. Local sidebar/layout overrides and the
+host settings contribution are kept in the private Local wrapper.
+
 ## Project views and Portal list compatibility
 
 The workbench uses `project`, `tab` and `scan` query parameters for deep links.

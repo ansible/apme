@@ -12,13 +12,14 @@ export function ProjectDetails({
 }: {
   projectId: string;
   adapter: ApmeApiAdapter;
-  children?: ReactNode | ((project: ProjectDetail) => ReactNode);
+  children?:
+    ReactNode | ((project: ProjectDetail, onUpdated: () => void) => ReactNode);
 }) {
   const load = useCallback(
     () => getProject(projectId, adapter),
     [projectId, adapter],
   );
-  const { value: project, error } = useLoad(load);
+  const { value: project, error, reload } = useLoad(load);
   if (error)
     return (
       <Alert
@@ -39,7 +40,7 @@ export function ProjectDetails({
       <Text>
         {project.total_violations} findings · {project.scan_count} checks
       </Text>
-      {typeof children === "function" ? children(project) : children}
+      {typeof children === "function" ? children(project, reload) : children}
     </Flex>
   );
 }

@@ -12,6 +12,15 @@ authenticated fetch and an explicit backend path. Requests must not retry at a
 direct Gateway origin after permission denial. Gateway operation state remains
 authoritative; controllers do not create a parallel lifecycle or durable store.
 
+Project editing is opt-in: `ApmeHostApi.canManageProjects`, workbench
+`canManageProjects`, project tabs `canManageProject`, and standalone editor
+`canManage` default to denied for embedded hosts. Local's personal API factory
+enables it. The editor calls the existing authenticated Gateway PATCH contract
+through the supplied adapter; Portal must authorize the selected resource and
+expose an update route before enabling it. Blank, untouched tokens are omitted;
+explicit removal sends an empty token. Global settings remain independently
+gated and Local mounts them at the host Settings page via the `./settings` export.
+
 Product release tarballs use the product version and immutable GitHub Release
 URLs for package-to-package dependencies. Local verification can pack the same
 artifacts with local tarball references for a clean install smoke check. Preserve

@@ -29,8 +29,13 @@ export { ApmeRules, type ApmeRulesProps } from "./components/ApmeRules";
 export { ApmeHealth, type ApmeHealthProps } from "./components/ApmeHealth";
 export {
   ApmeSettings,
+  ApmeSettingsPageContent,
   type ApmeSettingsProps,
 } from "./components/ApmeSettings";
+export {
+  ApmeProjectSettings,
+  type ApmeProjectSettingsProps,
+} from "./components/ApmeProjectSettings";
 export {
   ApmeModelSettings,
   type ApmeModelSettingsProps,

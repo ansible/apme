@@ -113,6 +113,11 @@ read-only. Real-host RBAC/theme acceptance remains in TASK-005.
 
 ## Model and Galaxy settings
 
+Local contributes global APME settings under the host's existing **Settings →
+APME** tab using `ApmeSettingsPageContent` from the `./settings` entry point.
+The shared workbench can hide its global settings control with
+`showGlobalSettings={false}` when its host supplies that navigation.
+
 Embed `ApmeSettings` or its `ApmeModelSettings` / `ApmeGalaxySettings` children.
 The model selector uses the existing workflow's browser preference and model API.
 Galaxy access defaults to disabled for embedded hosts:
@@ -130,6 +135,20 @@ The Galaxy form never displays saved tokens, leaves them unchanged on blank edit
 and offers explicit removal; deletion has a confirmation dialog. These controls
 use the existing authorized CRUD routes. The model selector manages a browser preference; provider administration is
 provided by the separate component described below.
+
+## Project settings
+
+`ApmeProjectSettings` edits existing project metadata through the adapter's
+authenticated `PATCH /projects/:id`. Supply the current `ProjectDetail`, adapter,
+an authorized `canManage` decision and an `onSaved` refresh callback. The project
+tabs also accept `project`, `canManageProject` and `onProjectUpdated`; the
+workbench uses the host API's opt-in `canManageProjects` capability. These default
+to denied for embedded hosts. Portal must authorize the selected resource and
+provide its update route before opting in; no direct Gateway fallback is added.
+
+The editor never reads back credentials, omits an untouched token from updates,
+and requires explicit removal or a new value to change it. It sends only changed
+metadata and reloads project details after a workbench save.
 
 ## Graph and SBOM
 

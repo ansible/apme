@@ -1,15 +1,16 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
-import { BUIProvider } from "@backstage/ui";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { ApmePageContent } from "@apme/backstage-plugin/page";
-import { useSyncPatternFlyTheme } from "./useSyncPatternFlyTheme";
-import "@backstage/ui/css/styles.css";
-import "./theme.css";
+import { LocalThemeProvider } from "./LocalThemeProvider";
 
 export function LocalApmePage() {
-  useSyncPatternFlyTheme();
+  const [params] = useSearchParams();
+  if (params.get("view") === "settings") {
+    return <Navigate to="/settings/apme" replace />;
+  }
   return (
-    <BUIProvider>
-      <ApmePageContent />
-    </BUIProvider>
+    <LocalThemeProvider>
+      <ApmePageContent showGlobalSettings={false} />
+    </LocalThemeProvider>
   );
 }

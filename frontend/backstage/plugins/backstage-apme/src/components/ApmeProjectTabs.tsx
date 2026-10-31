@@ -2,6 +2,7 @@
 import { lazy, Suspense } from "react";
 import { Text, Tab, TabList, TabPanel, Tabs } from "@backstage/ui";
 import type { ApmeApiAdapter } from "@apme/client/transport";
+import type { ProjectDetail } from "@apme/client";
 const ApmeProjectWorkflow = lazy(() =>
   import("./ApmeProjectWorkflow").then((module) => ({
     default: module.ApmeProjectWorkflow,
@@ -32,9 +33,14 @@ const ApmeProjectGraph = lazy(() =>
     default: module.ApmeProjectGraph,
   })),
 );
+const ApmeProjectSettings = lazy(() =>
+  import("./ApmeProjectSettings").then((module) => ({
+    default: module.ApmeProjectSettings,
+  })),
+);
 
 export type ApmeProjectTab =
-  "workflow" | "findings" | "history" | "dependencies" | "graph";
+  "workflow" | "findings" | "history" | "dependencies" | "graph" | "settings";
 export function isApmeProjectTab(
   value: string | null,
 ): value is ApmeProjectTab {
@@ -43,7 +49,8 @@ export function isApmeProjectTab(
     value === "findings" ||
     value === "history" ||
     value === "dependencies" ||
-    value === "graph"
+    value === "graph" ||
+    value === "settings"
   );
 }
 
@@ -56,6 +63,9 @@ export function ApmeProjectTabs({
   onTabChange,
   onOpenActivity,
   onCloseActivity,
+  project,
+  canManageProject = false,
+  onProjectUpdated,
 }: {
   projectId: string;
   adapter: ApmeApiAdapter;
@@ -64,6 +74,9 @@ export function ApmeProjectTabs({
   onTabChange: (tab: ApmeProjectTab) => void;
   onOpenActivity: (scanId: string) => void;
   onCloseActivity: () => void;
+  project?: ProjectDetail;
+  canManageProject?: boolean;
+  onProjectUpdated?: () => void;
 }) {
   return (
     <Tabs
@@ -79,6 +92,7 @@ export function ApmeProjectTabs({
         <Tab id="history">History</Tab>
         <Tab id="dependencies">Dependencies</Tab>
         <Tab id="graph">Graph</Tab>
+        {canManageProject && project && <Tab id="settings">Settings</Tab>}
       </TabList>
       <TabPanel id="workflow">
         <Suspense fallback={<Text role="status">Loading project view…</Text>}>
@@ -131,6 +145,22 @@ export function ApmeProjectTabs({
           )}
         </Suspense>
       </TabPanel>
+      {canManageProject && project && (
+        <TabPanel id="settings">
+          <Suspense
+            fallback={<Text role="status">Loading project settings…</Text>}
+          >
+            {tab === "settings" && (
+              <ApmeProjectSettings
+                project={project}
+                adapter={adapter}
+                canManage={canManageProject}
+                onSaved={onProjectUpdated}
+              />
+            )}
+          </Suspense>
+        </TabPanel>
+      )}
     </Tabs>
   );
 }

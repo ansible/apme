@@ -28,6 +28,10 @@
       "types": "./dist/components/ApmePage.d.ts",
       "default": "./dist/components/ApmePage.js"
     },
+    "./settings": {
+      "types": "./dist/components/ApmeSettings.d.ts",
+      "default": "./dist/components/ApmeSettings.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

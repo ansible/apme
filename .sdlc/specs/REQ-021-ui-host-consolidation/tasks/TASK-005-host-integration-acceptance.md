@@ -19,6 +19,17 @@ TASK-003; consumes TASK-004 feature families incrementally.
 
 ## Implementation Notes
 
+Correct Local host composition: register a root route reference and icon so
+Projects appears in the host sidebar on every page; align the fixed sidebar with
+the pinned host's inset viewport to prevent clipping. Contribute global APME
+settings as a sub-page of the existing host Settings page and remove Local's
+duplicate global-settings control. Restore a project Settings tab backed by
+Gateway PATCH, refresh project metadata after save, and preserve credentials
+unless explicitly replaced/removed. Gate editing on a host permission/capability
+that Local enables; existing Portal composition must not gain edit authority.
+Inspect these paths in the built Local image, including navigation away/back,
+project updates and global settings independently of the selected project.
+
 Local theme acceptance must cover the workbench, direct repository dialog and
 PatternFly workflow in both host light and dark modes, including switching modes
 without a reload. Reuse the original Portal plugin's host-to-PatternFly theme
@@ -223,3 +234,42 @@ class. Type/format checks and repository lint pass. No additional test suites
 were run. The preview has no Gateway/Engine, so this is theme/rendering evidence,
 not repository mutation or scan/remediation acceptance. The broader two-host
 acceptance task remains in progress.
+
+### Local navigation and project settings correction
+
+The pinned host discovers sidebar destinations from a page's route reference,
+title and icon. Local now registers all three and a plugin root route, so
+Projects is visible from other host pages. Its fixed sidebar is aligned with
+the host's desktop page inset; the first item no longer paints above the clipped
+viewport. These layout rules are private to the Local entry point.
+
+Local contributes `sub-page:apme/settings` to `page:user-settings` at
+`/settings/apme`, preserving General, Authentication Providers and Feature Flags.
+It hides the duplicate global-settings button inside Projects and redirects old
+`?view=settings` links to the host page. Both Local page entry points share the
+same BUI/PatternFly theme wrapper, including direct settings loads.
+
+Project tabs now include an editor for name, URL, branch, SCM provider and token
+using the existing Gateway PATCH contract. A save refreshes project details;
+name-based selections become canonical IDs after a rename while retaining the
+Settings tab. Credentials are never read back, untouched tokens are omitted,
+replacement clears the local password field after success, and removal is
+explicit. Editing defaults to denied for embeds; Local opts in via its host API.
+Portal still needs resource-authorized update routing before enabling the editor.
+
+Built clean Local images through tox and inspected them in Chromium in light and
+dark modes. Projects persists in the sidebar on Settings and after reload;
+Catalog Graph and all navigation labels are fully visible. The existing host
+Settings → APME tab loads global provider/model/Galaxy controls independently of
+the selected repository, including a direct reload and the old-link redirect.
+
+An isolated, loopback-only Gateway and temporary PostgreSQL database supported
+manual browser creation and editing of a preview project. Name, URL, branch and
+provider updates persisted through the authenticated host proxy and appeared in
+both project details and the repository list. Blank-token editing retained the
+configured-token state; replacement and explicit removal succeeded, and the
+password field stayed empty after save. A rename opened through a project-name
+alias returned to the canonical ID with Settings selected. Type/format checks,
+repository lint and the image build pass. No additional test suites were run.
+Engine and Abbenay were absent from this preview; no scan/remediation, provider
+administration or Portal authorization acceptance is claimed here.

@@ -20,6 +20,8 @@ export interface ApmeHostApi {
   getAdapter(): Promise<ApmeApiAdapter>;
   /** Local single-person deployment enables this; Portal owns its RBAC decision. */
   canManageRules?: boolean;
+  /** Opt-in project metadata/credential editing; Portal must authorize it. */
+  canManageProjects?: boolean;
   canViewSettings?: boolean;
   canManageSettings?: boolean;
   supportsGalaxyCertificateSettings?: boolean;
@@ -48,6 +50,7 @@ export const apmeHostApiFactory: ApiFactory<
   },
   factory: ({ discoveryApi, fetchApi, configApi }): ApmeHostApi => ({
     canManageRules: true,
+    canManageProjects: true,
     canViewSettings: true,
     canManageSettings: true,
     supportsGalaxyCertificateSettings: true,

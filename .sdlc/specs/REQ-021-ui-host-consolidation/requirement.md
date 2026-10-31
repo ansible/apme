@@ -48,6 +48,14 @@ Preserve the native form's automatic name suggestion and optional
 SCM provider/token fields. Portal may maintain host-side repository records to
 enforce ownership and RBAC; users must not need to commit catalog metadata.
 
+Local must expose Projects as a persistent sidebar destination, including when
+another host page is open, with no clipped navigation labels. A selected project
+must have its own Settings tab for updating its name, URL, branch, SCM provider
+and credential. Unchanged credentials must be preserved and never fetched back
+into the form. Global APME settings belong under the host's existing Settings
+page, separate from project settings. Portal keeps its host-owned navigation and
+authorization; project editing must require an explicit host capability.
+
 ### AC3: Explicit host integration
 
 - **GIVEN** a Local or Portal host

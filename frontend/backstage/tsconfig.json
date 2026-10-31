@@ -26,6 +26,9 @@
       ],
       "@apme/backstage-plugin/page": [
         "./plugins/backstage-apme/src/components/ApmePage.tsx"
+      ],
+      "@apme/backstage-plugin/settings": [
+        "./plugins/backstage-apme/src/components/ApmeSettings.tsx"
       ]
     }
   },
