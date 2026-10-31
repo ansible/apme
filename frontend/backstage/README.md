@@ -34,6 +34,8 @@ Plugins are installed during the image build, so startup does not download them.
 This is a pinned community development image; host acceptance is tracked in TASK-005.
 
 The Local profile is one deployment per person and publishes the UI on loopback.
+Its RHDH template page is labeled **Projects** instead of **Self-service**.
+This label override applies only to the Local image configuration.
 It uses authenticated guest credentials, a host REST/SSE proxy to the pod-local
 Gateway, and the authenticated upload backend. RHDH uses an in-memory database
 for host metadata; APME projects and scan history remain in the Gateway database.

@@ -4,6 +4,9 @@ app:
   baseUrl: http://127.0.0.1:8081
   extensions:
     - page:home: false
+    - page:scaffolder:
+        config:
+          title: Projects
     - page:apme:
         config:
           path: /
