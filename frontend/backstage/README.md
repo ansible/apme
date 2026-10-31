@@ -140,6 +140,15 @@ Existing PatternFly workflow presentation is an explicit transitional exception
 to new BUI host controls. Measure real host startup/memory after a runnable RHDH
 installation exists; compressed bundle sizes alone cannot establish runtime cost.
 
+### Local host colors
+
+The Local wrapper follows the host's selected light/dark theme and Auto mode,
+using the same root PatternFly dark-theme class as the original Portal plugin.
+It restores that class when the page unmounts. PatternFly's base CSS is loaded
+in the CSS `base` layer so its global reset cannot override BUI component colors
+or form controls, including dialogs rendered outside the page container. The
+libraries and host supply the palettes; Local does not define custom colors.
+
 ## Project views and Portal list compatibility
 
 The workbench uses `project`, `tab` and `scan` query parameters for deep links.

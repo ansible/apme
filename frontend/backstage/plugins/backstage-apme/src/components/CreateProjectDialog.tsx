@@ -87,7 +87,7 @@ export function CreateProjectDialog({
       }}
     >
       <form onSubmit={(event) => void submit(event)}>
-        <DialogHeader title="Add repository" />
+        <DialogHeader>Add repository</DialogHeader>
         <DialogBody>
           <Flex direction="column" gap="4">
             {error && <Alert status="danger" title={error} />}

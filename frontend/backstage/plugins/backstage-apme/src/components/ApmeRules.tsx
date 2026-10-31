@@ -229,7 +229,7 @@ function RuleDetails({
         if (!open && !saving) onClose();
       }}
     >
-      <DialogHeader title={rule.rule_id} />
+      <DialogHeader>{rule.rule_id}</DialogHeader>
       <DialogBody>
         <Flex direction="column" gap="4">
           <Text>{rule.description}</Text>

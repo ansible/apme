@@ -221,9 +221,9 @@ function ProviderForm({
       }}
     >
       <form onSubmit={(event) => void submit(event)}>
-        <DialogHeader
-          title={provider ? `Edit provider ${provider.id}` : "Add AI provider"}
-        />
+        <DialogHeader>
+          {provider ? `Edit provider ${provider.id}` : "Add AI provider"}
+        </DialogHeader>
         <DialogBody>
           <Flex direction="column" gap="4">
             <DataStatus {...engines} subject="AI engines" />
@@ -316,7 +316,7 @@ function RemoveProvider({
         if (!open && !mutation.saving) onClose();
       }}
     >
-      <DialogHeader title={`Delete provider ${provider.id}?`} />
+      <DialogHeader>{`Delete provider ${provider.id}?`}</DialogHeader>
       <DialogBody>
         <Text>
           This provider will no longer be available for AI remediation.

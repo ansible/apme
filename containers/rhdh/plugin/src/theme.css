@@ -1,0 +1,2 @@
+/* Keep PatternFly's reset below BUI component styles, including portal dialogs. */
+@import "@patternfly/react-core/dist/styles/base.css" layer(base);

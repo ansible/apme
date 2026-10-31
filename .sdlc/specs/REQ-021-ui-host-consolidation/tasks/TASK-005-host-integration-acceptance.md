@@ -19,6 +19,13 @@ TASK-003; consumes TASK-004 feature families incrementally.
 
 ## Implementation Notes
 
+Local theme acceptance must cover the workbench, direct repository dialog and
+PatternFly workflow in both host light and dark modes, including switching modes
+without a reload. Reuse the original Portal plugin's host-to-PatternFly theme
+synchronization. Load PatternFly's global reset in Backstage's CSS base layer so
+it cannot override BUI component foregrounds, sizing or disabled states. Preserve
+each library's supplied semantic colors rather than defining another palette.
+
 Portal builds released artifacts into its host and keeps SDK integration at the
 host boundary. Preserve the existing catalog contributions and resource checks.
 Verify identity mapping, settings administration and operation authorization on
@@ -195,3 +202,24 @@ repository form rendered at both origins. The remotes response includes the
 APME frontend and reflects localhost in its CORS header. The preview has no
 Gateway, so no repository registration or Engine/SCM workflow was exercised.
 Package type/format checks, federation export guards and repository lint pass.
+
+### Local theme readability
+
+Reproduced dark-mode black button labels and light inputs in the clean Local
+image. The wrapper lacked the original Portal plugin's PatternFly root-theme
+sync, and PatternFly's unlayered global reset overrode BUI's layered controls.
+The Local wrapper now adapts the original root class lifecycle using Backstage's
+theme API, including explicit/custom theme IDs and Auto/system changes, without
+adding a legacy MUI dependency. Its PatternFly base stylesheet loads in the
+`base` layer, below BUI components; both libraries keep their existing palettes.
+Dialog headings also now use the pinned BUI API's children rather than the HTML
+`title` attribute, which had left their visible/accessibility headings empty.
+
+Clean image builds and manual Chromium inspection cover light/dark workbench
+controls, the direct repository dialog, SCM selector popover and mixed BUI/PF
+paste/upload advanced options. Auto follows emulated system light/dark changes
+while the page stays mounted, and leaving Projects restores the prior root
+class. Type/format checks and repository lint pass. No additional test suites
+were run. The preview has no Gateway/Engine, so this is theme/rendering evidence,
+not repository mutation or scan/remediation acceptance. The broader two-host
+acceptance task remains in progress.

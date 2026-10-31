@@ -243,9 +243,9 @@ function GalaxyServerForm({
       }}
     >
       <form onSubmit={(event) => void submit(event)}>
-        <DialogHeader
-          title={editing ? `Edit ${editing.name}` : "Add Galaxy server"}
-        />
+        <DialogHeader>
+          {editing ? `Edit ${editing.name}` : "Add Galaxy server"}
+        </DialogHeader>
         <DialogBody>
           <Flex direction="column" gap="4">
             {mutation.error && (
@@ -357,7 +357,7 @@ function DeleteGalaxyServer({
         if (!open && !mutation.saving) onClose();
       }}
     >
-      <DialogHeader title={`Delete ${server.name}?`} />
+      <DialogHeader>{`Delete ${server.name}?`}</DialogHeader>
       <DialogBody>
         <Flex direction="column" gap="4">
           <Text>
