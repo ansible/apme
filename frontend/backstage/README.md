@@ -255,3 +255,43 @@ and keeps operation writes/SSE on the existing authorized path. Passing
 the backend router. This is an explicit deployment capability, not a fallback.
 Actual artifact consumption, two-host workflows, theme and resource acceptance
 are still tracked in TASK-005; package tests do not certify running hosts.
+
+## Dependency warnings and audit
+
+The RHDH export tool brings its own Backstage CLI, ESLint, bundler and template
+packages. Several upstream dependencies are deprecated (including ESLint 8,
+older glob releases and Material UI 4). Deprecation identifies an upstream
+maintenance concern; it does not by itself establish an exploitable vulnerability.
+Those warnings remain visible during `npm ci` in the image build.
+
+The root manifest scopes temporary security overrides to build tooling:
+
+- `@module-federation/dts-plugin` uses Undici 7.30.1 instead of its pinned 7.29.1.
+- RHDH CLI uses Backstage `cli-module-auth` 0.1.5 and `cli-module-new` 0.1.8,
+  whose upstream patch releases switch internal validation to Zod 4. This removes
+  their vulnerable Zod 3 copies, using the lockfile's patched Zod 4.6.7.
+
+See the [Undici advisory](https://github.com/advisories/GHSA-9fm3-97px-rjf6),
+[Zod advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) and upstream
+[auth](https://github.com/backstage/backstage/blob/v1.56.2/packages/cli-module-auth/CHANGELOG.md)
+and [new](https://github.com/backstage/backstage/blob/v1.56.2/packages/cli-module-new/CHANGELOG.md)
+module changelogs. Remove overrides when the parent tools select patched versions.
+The host Backstage/React/Router baseline is unchanged.
+
+After `tox -e frontend-ci`, inspect current advisories through tox:
+
+```sh
+tox -e frontend-audit
+tox -e frontend-audit -- --omit=dev
+```
+
+These commands return a nonzero status while findings remain. On 2026-10-31,
+this workspace reports 32 findings (18 low, 14 moderate, zero high/critical),
+down from 41 (including five high). Excluding development dependencies reports
+seven moderate findings through the Backstage/React Router chain. Counts include
+affected parent packages and do not represent distinct exploitable issues.
+The Router fix is in a newer major than the Router 6 host baseline; do not run
+`npm audit fix --force` or force Router 7 into these hosts. Remaining findings
+need upstream/host compatibility review. This npm audit covers the checkout's
+dependency tree, not the prebuilt RHDH image, OS packages or Node's embedded
+libraries; it does not certify the complete running image.

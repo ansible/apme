@@ -48,6 +48,9 @@ directly. Every task maps to a `tox -e <env>` command.
 |-------------|-------------|-------------|
 | `tox -e lint` | `prek run --all-files` (ruff, mypy, pydoclint, uv-lock) | Before every commit. Verification step for all tasks. |
 
+`tox -e frontend-audit` reports npm workspace advisories; pass `-- --omit=dev`
+to restrict the report to production dependencies. Findings produce a nonzero exit.
+
 ### Test suites
 
 | Environment | What it runs | When to use |

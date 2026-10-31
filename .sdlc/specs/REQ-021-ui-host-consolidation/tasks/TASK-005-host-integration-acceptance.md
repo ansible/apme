@@ -106,3 +106,15 @@ served the app and exposed the frontend federation remote. Readiness and guest
 refresh returned HTTP 200. This workspace required Buildah with VFS/chroot through
 tox because nested Podman's single-UID/fuse setup cannot perform a normal build.
 Full pod startup, browser rendering and real Engine/SCM workflows are not claimed.
+
+### Build dependency security follow-up (2026-10-31)
+
+Scoped build-tool overrides patch the pinned Undici dependency and use upstream
+patch releases of Backstage CLI auth/new with Zod 4. Workspace audit findings
+fall from 41 (five high) to 32 (18 low, 14 moderate, no high/critical).
+Production-only audit remains seven moderate findings through the host-compatible
+Backstage/Router 6 dependency chain. Deprecation warnings remain visible.
+`tox -e frontend-audit` makes both full and `-- --omit=dev` reports reproducible.
+These are npm workspace findings, not an assessment of the prebuilt RHDH image.
+The shared host baseline was not changed. Remaining host/dependency findings
+still need review before claiming security acceptance.
