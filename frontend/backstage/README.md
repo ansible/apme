@@ -41,6 +41,24 @@ Portal consumes the standard versioned release packages during its own image
 build and supplies its own catalog/identity/RBAC. It does not use this personal
 profile or the Local frontend wrapper.
 
+## Add a repository without repository configuration
+
+In the Local UI, open **Repositories → Add repository**, paste the clone URL,
+choose the branch, and submit. The name is suggested from the URL and can be
+edited. Private repositories can use the optional SCM token; an optional provider
+selection supports self-hosted GitLab/Bitbucket. This uses the existing Gateway
+project API and opens the normal check/remediation workflow. No `catalog-info.yaml`,
+APME configuration file, AAP registration or repository changes are required.
+Projects and history are saved in APME even when the repository is used only once.
+
+Portal already has an **Add repository** action backed by its manual repository
+registration template. That flow also requires no `catalog-info.yaml` or repository
+pull request; it creates host-side records with ownership derived from the user
+and checks Portal permissions. The current template is GitHub.com-only. Shared
+host composition must preserve this path; extending it to the other Local SCM
+providers remains part of TASK-005. The Local form does not bypass Portal
+catalog/organization/resource authorization.
+
 ## Shared baseline
 
 | Dependency | Initial baseline | Evidence                                                    |

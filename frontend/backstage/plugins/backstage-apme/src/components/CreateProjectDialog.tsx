@@ -9,6 +9,8 @@ import {
   DialogHeader,
   Flex,
   PasswordField,
+  Select,
+  Text,
   TextField,
 } from "@backstage/ui";
 import {
@@ -28,11 +30,29 @@ export function CreateProjectDialog({
   onClose: () => void;
 }) {
   const [name, setName] = useState("");
+  const [nameEdited, setNameEdited] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
   const [token, setToken] = useState("");
+  const [provider, setProvider] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
+
+  function changeUrl(value: string) {
+    setRepoUrl(value);
+    if (!nameEdited) {
+      setName(
+        value
+          .trim()
+          .replace(/\/+$/, "")
+          .replace(/\.git$/, "")
+          .split("/")
+          .pop()
+          ?.replace(/[-_]+/g, " ")
+          .replace(/\b\w/g, (letter) => letter.toUpperCase()) ?? "",
+      );
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -45,7 +65,8 @@ export function CreateProjectDialog({
           name: name.trim(),
           repo_url: repoUrl.trim(),
           branch: branch.trim(),
-          ...(token ? { scm_token: token } : {}),
+          ...(token.trim() ? { scm_token: token.trim() } : {}),
+          ...(provider ? { scm_provider: provider } : {}),
         },
         adapter,
       );
@@ -70,18 +91,47 @@ export function CreateProjectDialog({
         <DialogBody>
           <Flex direction="column" gap="4">
             {error && <Alert status="danger" title={error} />}
+            <Text>
+              Add a repository directly for a one-off check or ongoing work. No
+              configuration file or catalog metadata is needed in the
+              repository.
+            </Text>
             <TextField
-              label="Project name"
-              value={name}
-              onChange={setName}
+              label="Repository URL"
+              value={repoUrl}
+              onChange={changeUrl}
+              description="For example, https://github.com/your-org/your-repo.git"
               isRequired
               autoFocus
             />
             <TextField
-              label="Repository URL"
-              value={repoUrl}
-              onChange={setRepoUrl}
+              label="Project name"
+              value={name}
+              onChange={(value) => {
+                setNameEdited(value.trim().length > 0);
+                setName(value);
+              }}
               isRequired
+              description="Suggested from the repository URL; you can change it."
+            />
+            <Select
+              selectionMode="single"
+              label="SCM provider (optional)"
+              value={provider}
+              options={[
+                { id: "", label: "Auto-detect from URL" },
+                { id: "github", label: "GitHub" },
+                { id: "gitlab", label: "GitLab" },
+                { id: "bitbucket", label: "Bitbucket" },
+              ]}
+              onChange={(value) => {
+                if (
+                  typeof value === "string" &&
+                  ["", "github", "gitlab", "bitbucket"].includes(value)
+                )
+                  setProvider(value);
+              }}
+              description="Choose a provider for a self-hosted Git server."
             />
             <TextField
               label="Branch"

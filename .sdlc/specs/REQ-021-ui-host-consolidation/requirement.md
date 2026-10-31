@@ -40,6 +40,12 @@ workflow rather than create another scan/remediation implementation.
 - **THEN** existing Gateway state and workflow controllers drive findings,
   proposal review, remediation, cancellation, reconnect and structured results.
 
+Direct repository entry must accept a repository URL and branch without requiring
+`catalog-info.yaml`, an APME configuration file, or other changes inside the
+repository. Preserve the native form's automatic name suggestion and optional
+SCM provider/token fields. Portal may maintain host-side repository records to
+enforce ownership and RBAC; users must not need to commit catalog metadata.
+
 ### AC3: Explicit host integration
 
 - **GIVEN** a Local or Portal host

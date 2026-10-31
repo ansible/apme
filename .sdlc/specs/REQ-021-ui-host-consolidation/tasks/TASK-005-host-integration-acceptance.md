@@ -118,3 +118,26 @@ Backstage/Router 6 dependency chain. Deprecation warnings remain visible.
 These are npm workspace findings, not an assessment of the prebuilt RHDH image.
 The shared host baseline was not changed. Remaining host/dependency findings
 still need review before claiming security acceptance.
+
+### Direct repository entry
+
+Preserve the current APME UI's URL/branch entry without any in-repository
+configuration or catalog metadata file. The shared Local page already posts
+straight to Gateway `/api/v1/projects`; restore native name suggestions and
+optional explicit SCM provider selection. This creates a Gateway project and
+selects its normal workflow, including for one-off use. It is not a new transient
+scan protocol. Portal must expose equally simple entry through authorized
+host-side repository records; its current project-operation authorizer requires
+a readable catalog repository subject. Do not bypass that check or treat an
+arbitrary project ID as owned by the current user.
+
+Portal source inspection confirms an existing GitHub.com-only no-file entry:
+`ApmeAddRepositoryHeaderAction` opens the `apme-register-git-repository` template,
+which executes the authorized `ansible:register:git-repository` action and manual
+provider. Ownership is derived from the initiating user, not a submitted owner.
+Preserve that flow during shared package adoption and track extension to other
+SCM providers; no user-authored repository descriptor is required today.
+
+Local parity changes pass package builds, RHDH federation export, TypeScript,
+format checks and repository lint. No additional test suites were run for this
+form change; real-host interaction remains in this acceptance task.
