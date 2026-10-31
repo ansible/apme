@@ -1,0 +1,36 @@
+# Maintain the v1 GitHub Action reference at the latest stable APME release.
+name: Publish GitHub Action v1 tag
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-action-v1-tag
+  cancel-in-progress: false
+
+jobs:
+  publish-v1:
+    if: >-
+      github.event_name == 'push'
+      || (github.event_name == 'release' && github.event.release.prerelease == false)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Update v1 to the latest stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_KIND: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: scripts/publish_action_major_tag.sh

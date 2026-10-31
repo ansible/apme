@@ -4,11 +4,12 @@
 # Installs the CLI, connects to the hosted Engine gRPC endpoint,
 # and uploads SARIF / posts a PR summary comment.
 #
-# Usage (pin a commit SHA until ansible/apme@v1 is published — see #501):
-#   - uses: ansible/apme@<commit-sha>
+# Usage:
+#   - uses: ansible/apme@v1
 #     with:
 #       engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
 #       target: .
+# The former `primary-address` input was renamed to `engine-address` in v1.
 ---
 name: APME Check
 description: >

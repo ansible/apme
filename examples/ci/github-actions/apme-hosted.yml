@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Run APME
-        uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
+        uses: ansible/apme@v1
         with:
           engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
           target: .
