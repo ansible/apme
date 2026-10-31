@@ -20,8 +20,39 @@ backend:
   database:
     client: better-sqlite3
     connection: ":memory:"
+  # Both loopback names are valid Local entry points. Federation assets and
+  # authenticated APIs use backend.baseUrl, even when the page uses localhost.
+  csp:
+    script-src:
+      - "'self'"
+      - "'unsafe-eval'"
+      - http://127.0.0.1:8081
+      - http://localhost:8081
+    connect-src:
+      - "'self'"
+      - http://127.0.0.1:8081
+      - http://localhost:8081
+    style-src:
+      - "'self'"
+      - "'unsafe-inline'"
+      - "https:"
+      - http://127.0.0.1:8081
+      - http://localhost:8081
+    font-src:
+      - "'self'"
+      - "https:"
+      - "data:"
+      - http://127.0.0.1:8081
+      - http://localhost:8081
+    img-src:
+      - "'self'"
+      - "data:"
+      - http://127.0.0.1:8081
+      - http://localhost:8081
   cors:
-    origin: http://127.0.0.1:8081
+    origin:
+      - http://127.0.0.1:8081
+      - http://localhost:8081
     credentials: true
 auth:
   environment: development

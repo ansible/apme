@@ -1,6 +1,12 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -22,6 +28,16 @@ execFileSync(
 // The installer must not try to resolve unpublished workspace packages at startup.
 const frontendManifest = resolve(frontend, "dist-dynamic/package.json");
 const manifest = JSON.parse(readFileSync(frontendManifest, "utf8"));
+if (manifest.backstage?.features?.["."] !== "@backstage/FrontendPlugin") {
+    throw new Error("RHDH export did not register the APME frontend feature");
+}
+for (const asset of ["mf-manifest.json", "remoteEntry.js"]) {
+    if (!existsSync(resolve(frontend, "dist-dynamic/dist", asset))) {
+        throw new Error(
+            `RHDH export is missing the APME frontend asset ${asset}`,
+        );
+    }
+}
 delete manifest.dependencies;
 delete manifest.devDependencies;
 writeFileSync(frontendManifest, `${JSON.stringify(manifest, null, 2)}\n`);

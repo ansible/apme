@@ -14,7 +14,7 @@ tox -e build
 tox -e up
 ```
 
-Open `http://127.0.0.1:8081` and choose guest sign-in. The local `apme-ui`
+Open `http://127.0.0.1:8081` (or `http://localhost:8081`) and choose guest sign-in. The local `apme-ui`
 image now contains RHDH, the shared APME page, the authenticated upload backend
 and the guest provider. `build` compiles the current checkout inside the image
 build; no host Node installation, APME release, separate RHDH checkout or manual
@@ -38,6 +38,8 @@ Plugins are installed during the image build, so startup does not download them.
 This is a pinned community development image; host acceptance is tracked in TASK-005.
 
 The Local profile is one deployment per person and publishes the UI on loopback.
+Its CSP and credentialed CORS allow both loopback names so the APME federation
+assets and API requests load from either entry point.
 Its **Projects** page is the shared APME repository workbench. The Local profile
 disables RHDH's generic catalog, catalog import and scaffolder pages so their
 repository descriptor/PR flows are not offered as APME entry points.
@@ -315,6 +317,10 @@ this workspace reports 32 findings (18 low, 14 moderate, zero high/critical),
 down from 41 (including five high). Excluding development dependencies reports
 seven moderate findings through the Backstage/React Router chain. Counts include
 affected parent packages and do not represent distinct exploitable issues.
+A subsequent audit during the Local navigation investigation reports 88 entries
+(7 low, 81 moderate, no high/critical); the production-only report remains seven
+moderate entries. The report also flags glob/minimatch build-tool dependency
+chains. The earlier count is historical; use the audit commands for current data.
 The Router fix is in a newer major than the Router 6 host baseline; do not run
 `npm audit fix --force` or force Router 7 into these hosts. Remaining findings
 need upstream/host compatibility review. This npm audit covers the checkout's

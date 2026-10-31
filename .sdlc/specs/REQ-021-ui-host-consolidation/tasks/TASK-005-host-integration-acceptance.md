@@ -167,3 +167,31 @@ React 19 runtime and failed to render in the React 18 host. The clean container
 build excludes native node_modules and rendered correctly. Host-side export
 isolation remains a development-path limitation until addressed or native
 retirement; do not infer browser acceptance from export success alone.
+
+### Local loopback origin loading
+
+The user reported only built-in navigation and ongoing audit warnings. Browser
+reproduction at `http://localhost:8081` showed CSP blocking APME federation
+scripts advertised at the configured `http://127.0.0.1:8081` backend URL. Local
+now explicitly permits these two loopback origins for federation assets,
+styles/fonts/images, API connections and credentialed CORS. It does not add
+arbitrary origins. Export packaging also fails if the frontend feature metadata,
+module federation manifest or remote entry is missing.
+
+Fresh workspace audit reports 88 package entries (7 low, 81 moderate, no high or
+critical); production-only audit remains seven moderate entries. Reports now flag
+glob/minimatch build-tool chains as well as the previously documented remaining
+issues. This supersedes the earlier 32-entry snapshot rather than claiming all
+warnings were fixed. The remaining audit proposals do not provide compatible
+non-breaking remediation for those dependency chains. Keep warnings visible and
+track dependency/host upgrades; do not force legacy glob/minimatch APIs to their
+new major versions or Router 6 to Router 7 simply to lower the count. These are
+npm workspace reports, not a scan of the prebuilt RHDH/OS image.
+
+Built the updated Local image through tox using the VFS/chroot fallback, then
+opened that image in Chromium at both `http://localhost:8081/` and
+`http://127.0.0.1:8081/`. Guest sign-in, Projects navigation and the direct Add
+repository form rendered at both origins. The remotes response includes the
+APME frontend and reflects localhost in its CORS header. The preview has no
+Gateway, so no repository registration or Engine/SCM workflow was exercised.
+Package type/format checks, federation export guards and repository lint pass.
