@@ -42,7 +42,9 @@ workflow rather than create another scan/remediation implementation.
 
 Direct repository entry must accept a repository URL and branch without requiring
 `catalog-info.yaml`, an APME configuration file, or other changes inside the
-repository. Preserve the native form's automatic name suggestion and optional
+repository. In Local, **Projects** must open the APME workbench; generic catalog
+import/template pages must not be offered as its repository entry flow.
+Preserve the native form's automatic name suggestion and optional
 SCM provider/token fields. Portal may maintain host-side repository records to
 enforce ownership and RBAC; users must not need to commit catalog metadata.
 

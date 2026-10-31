@@ -141,3 +141,29 @@ SCM providers; no user-authored repository descriptor is required today.
 Local parity changes pass package builds, RHDH federation export, TypeScript,
 format checks and repository lint. No additional test suites were run for this
 form change; real-host interaction remains in this acceptance task.
+
+### Local navigation correction
+
+The user encountered RHDH's catalog importer asking for a descriptor PR. Renaming
+`page:scaffolder` to Projects had mislabeled a template page and left the generic
+catalog importer reachable. Local now disables `page:catalog`,
+`page:catalog-import` and `page:scaffolder`; `page:apme` owns the Projects label
+and root route. Projects → Repositories → Add repository opens the shared direct
+URL form and posts to the Gateway via the authenticated proxy. No catalog import,
+descriptor generation or registration PR is part of that flow. This correction
+is scoped to the personal Local host.
+
+Built the corrected arm64 Local image from the checkout through tox (Buildah
+VFS/chroot fallback). In a headless Chromium preview of that clean image, guest
+sign-in loaded Projects as the APME workbench, and clicking Add repository opened
+the direct URL/name/provider/branch/token form with the no-repository-config
+explanation. The generic Catalog, catalog import and scaffolder navigation were
+absent. The preview has no Gateway, so repository listing showed an upstream
+connection error; no repository was submitted and no scan/remediation is claimed.
+Package/RHDH export, type/format checks and repository lint passed.
+
+The initial host-export preview resolved the transitional native workspace's
+React 19 runtime and failed to render in the React 18 host. The clean container
+build excludes native node_modules and rendered correctly. Host-side export
+isolation remains a development-path limitation until addressed or native
+retirement; do not infer browser acceptance from export success alone.

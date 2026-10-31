@@ -4,12 +4,14 @@ app:
   baseUrl: http://127.0.0.1:8081
   extensions:
     - page:home: false
-    - page:scaffolder:
-        config:
-          title: Projects
+    # Local repositories are Gateway projects, not Backstage catalog imports.
+    - page:catalog: false
+    - page:catalog-import: false
+    - page:scaffolder: false
     - page:apme:
         config:
           path: /
+          title: Projects
 backend:
   baseUrl: http://127.0.0.1:8081
   listen:

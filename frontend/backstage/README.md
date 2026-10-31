@@ -24,6 +24,10 @@ plugin installation is required. `up` also builds images, using cached layers.
 Use `tox -e build-ui` to build only this image. `tox -e frontend-rhdh-export`
 exports the dynamic plugins on the host for development (requires the Node/npm
 baseline and `tox -e frontend-ci`). Both use the same export script.
+Use the container-built image for runtime previews when the transitional native
+workspace is also installed: host-side exports can resolve its React 19 runtime
+instead of the host's React 18 runtime. Export success alone does not prove that
+such a mixed-install browser bundle is compatible.
 
 RHDH is pinned to the multi-platform community `next-2.1` manifest
 `sha256:3bd31bddec7e9b37856fa8ae375e1461076c88d287a2cb0bbda86651e4243f49`,
@@ -34,8 +38,9 @@ Plugins are installed during the image build, so startup does not download them.
 This is a pinned community development image; host acceptance is tracked in TASK-005.
 
 The Local profile is one deployment per person and publishes the UI on loopback.
-Its RHDH template page is labeled **Projects** instead of **Self-service**.
-This label override applies only to the Local image configuration.
+Its **Projects** page is the shared APME repository workbench. The Local profile
+disables RHDH's generic catalog, catalog import and scaffolder pages so their
+repository descriptor/PR flows are not offered as APME entry points.
 It uses authenticated guest credentials, a host REST/SSE proxy to the pod-local
 Gateway, and the authenticated upload backend. RHDH uses an in-memory database
 for host metadata; APME projects and scan history remain in the Gateway database.
@@ -45,7 +50,7 @@ profile or the Local frontend wrapper.
 
 ## Add a repository without repository configuration
 
-In the Local UI, open **Repositories → Add repository**, paste the clone URL,
+In the Local UI, open **Projects → Repositories → Add repository**, paste the clone URL,
 choose the branch, and submit. The name is suggested from the URL and can be
 edited. Private repositories can use the optional SCM token; an optional provider
 selection supports self-hosted GitLab/Bitbucket. This uses the existing Gateway

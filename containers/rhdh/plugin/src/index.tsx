@@ -13,7 +13,7 @@ const transport = ApiBlueprint.make({
 const page = PageBlueprint.make({
   params: {
     path: "/apme",
-    title: "APME",
+    title: "Projects",
     loader: () => import("./page").then((module) => <module.LocalApmePage />),
   },
 });
