@@ -86,8 +86,9 @@ each library's supplied semantic colors rather than defining another palette.
 Portal builds released artifacts into its host and keeps SDK integration at the
 host boundary. Preserve the existing catalog contributions and resource checks.
 Verify identity mapping, settings administration and operation authorization on
-every HTTP/SSE/upload/background path. Upload WebSockets require an authenticated
-host upgrade path before Portal exposure; no bearer tokens in query strings.
+every HTTP/SSE/upload/background path. Before Portal exposure, mount ADR-074's
+authenticated HTTP relay router (`createUploadSessionRouter`) with tenant, user,
+entitlement and scan authorization on every request. No bearer tokens in query strings.
 Measure install/start time, memory and workflow latency in actual hosts and
 optimize avoidable work. Document supported pinned runtime/image versions.
 

@@ -6,6 +6,7 @@ import express, {
   type NextFunction,
 } from "express";
 import WebSocket from "ws";
+import { MemoryStore, rateLimit } from "express-rate-limit";
 
 type Frame = {
   event: "open" | "message" | "close";
@@ -26,11 +27,23 @@ export interface UploadRouterOptions {
   /** Trusted host configuration; never take a target URL from the request. */
   gatewayBaseUrl(): Promise<string>;
   maxChannels?: number;
+  /** Per-client-IP burst limit across all upload routes; defaults to 6000/minute. */
+  maxRequestsPerMinute?: number;
 }
 
 /** Ephemeral transport only. The Gateway retains all FixSession domain behavior. */
 export function createUploadSessionRouter(options: UploadRouterOptions) {
   const router = express.Router();
+  const rateLimitStore = new MemoryStore();
+  // Run before authentication and parsing, including requests the host will deny.
+  const limiter = rateLimit({
+    windowMs: 60_000,
+    limit: options.maxRequestsPerMinute ?? 6000,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    store: rateLimitStore,
+  });
+  router.use(limiter);
   const channels = new Map<string, Channel>();
   const owners = new Map<
     string,
@@ -68,12 +81,21 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
   }
   function route(
     action: (req: Request, res: Response, owner: string) => Promise<void>,
+    parser?: express.RequestHandler,
+    requireChannel = false,
   ) {
     return (req: Request, res: Response, next: NextFunction) => {
       res.setHeader("Cache-Control", "no-store");
       void options
         .authorize(req)
-        .then((owner) => action(req, res, owner))
+        .then(async (owner) => {
+          if (requireChannel && !owned(req, res, owner)) return;
+          if (parser)
+            await new Promise<void>((resolve, reject) =>
+              parser(req, res, (error) => (error ? reject(error) : resolve())),
+            );
+          return action(req, res, owner);
+        })
         .catch(next);
     };
   }
@@ -89,10 +111,10 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
     }
     return channel;
   }
-  const parse = express.json({ limit: maxPayload });
+  const parseCreate = express.json({ limit: "8kb" });
+  const parseMessage = express.json({ limit: maxPayload });
   router.post(
     "/upload-sessions",
-    parse,
     route(async (req, res, owner) => {
       for (const [id, binding] of owners)
         if (binding.expires < Date.now()) owners.delete(id);
@@ -179,7 +201,7 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
         if (channels.get(id)?.response) dispose(id);
       });
       res.status(201).json({ id });
-    }),
+    }, parseCreate),
   );
   router.get(
     "/upload-sessions/:id/events",
@@ -210,48 +232,51 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
   );
   router.post(
     "/upload-sessions/:id/messages",
-    parse,
-    route(async (req, res, owner) => {
-      const channel = owned(req, res, owner);
-      if (!channel) return;
-      if (channel.socket.readyState !== WebSocket.OPEN) {
-        res.status(409).end();
-        return;
-      }
-      if (typeof req.body?.data !== "string") {
-        res.status(400).end();
-        return;
-      }
-      let frame: { type?: string };
-      try {
-        frame = JSON.parse(req.body.data);
-      } catch {
-        res.status(400).end();
-        return;
-      }
-      if (
-        !frame ||
-        typeof frame !== "object" ||
-        ![
-          "start",
-          "file",
-          "files_done",
-          "approve",
-          "escalate_ai",
-          "extend",
-          "close",
-        ].includes(frame.type ?? "")
-      ) {
-        res.status(400).end();
-        return;
-      }
-      await new Promise<void>((resolve, reject) =>
-        channel.socket.send(req.body.data, (error) =>
-          error ? reject(error) : resolve(),
-        ),
-      );
-      res.status(204).end();
-    }),
+    route(
+      async (req, res, owner) => {
+        const channel = owned(req, res, owner);
+        if (!channel) return;
+        if (channel.socket.readyState !== WebSocket.OPEN) {
+          res.status(409).end();
+          return;
+        }
+        if (typeof req.body?.data !== "string") {
+          res.status(400).end();
+          return;
+        }
+        let frame: { type?: string };
+        try {
+          frame = JSON.parse(req.body.data);
+        } catch {
+          res.status(400).end();
+          return;
+        }
+        if (
+          !frame ||
+          typeof frame !== "object" ||
+          ![
+            "start",
+            "file",
+            "files_done",
+            "approve",
+            "escalate_ai",
+            "extend",
+            "close",
+          ].includes(frame.type ?? "")
+        ) {
+          res.status(400).end();
+          return;
+        }
+        await new Promise<void>((resolve, reject) =>
+          channel.socket.send(req.body.data, (error) =>
+            error ? reject(error) : resolve(),
+          ),
+        );
+        res.status(204).end();
+      },
+      parseMessage,
+      true,
+    ),
   );
   router.delete(
     "/upload-sessions/:id",
@@ -266,6 +291,7 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
     close() {
       for (const id of channels.keys()) dispose(id);
       owners.clear();
+      rateLimitStore.shutdown();
     },
   };
 }

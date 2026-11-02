@@ -34,6 +34,19 @@ Local enables this through the optional APME backend plugin. Portal injects its
 own entitlement/scan authorization when mounting the same transport router. APME
 releases this backend package alongside client/workflow/frontend artifacts.
 
+This router is a host-side external client of the Gateway's existing public
+upload session endpoint (ADR-029), just as the other host adapters consume the
+Gateway's public REST/SSE contracts. It is outside the engine service boundary.
+Gateway-to-Engine and validator traffic remains gRPC (ADR-001/039); the host
+never connects directly to Engine or owns FixSession execution.
+
+Rate-limit all channel routes before host authorization or body parsing. Parse
+creation requests with an 8 KiB limit after authorization; message requests keep
+the bounded 70 MiB envelope. The default quota is 6000 requests per minute per
+client IP per backend process and can be lowered by the host. Hosts must configure
+trusted proxy handling correctly. Dispose rate-limit storage on shutdown and
+consume or cancel every HTTP response body on success, denial and cleanup paths.
+
 ## Alternatives Considered
 
 1. Direct browser WebSocket with a bearer query parameter: rejected because it
@@ -53,3 +66,9 @@ permission, reconnect and resource acceptance remain required before retirement.
 ## Related Decisions
 
 ADR-028, ADR-029, ADR-039, ADR-060 and ADR-073 remain authoritative.
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-11-02 | Codex | Clarified the external Gateway client boundary, pre-parse authorization, request rate limits and response-body cleanup; two-host runtime acceptance remains in progress |

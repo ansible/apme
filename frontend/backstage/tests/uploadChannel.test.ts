@@ -1,6 +1,6 @@
 // @vitest-environment node
 import express from "express";
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 import { createUploadSessionRouter } from "../plugins/backstage-apme-backend/src/uploadRouter";
@@ -15,9 +15,11 @@ let sockets: WebSocketServer;
 let transport: ReturnType<typeof createUploadSessionRouter>;
 let base: string;
 let targets: string[];
+let authorizations: number;
 
 beforeEach(async () => {
   targets = [];
+  authorizations = 0;
   gateway = createServer();
   sockets = new WebSocketServer({ server: gateway });
   sockets.on("connection", (socket, req) => {
@@ -34,7 +36,9 @@ beforeEach(async () => {
   });
   await new Promise<void>((resolve) => gateway.listen(0, "127.0.0.1", resolve));
   transport = createUploadSessionRouter({
+    maxRequestsPerMinute: 20,
     authorize: async (req) => {
+      authorizations++;
       if (!req.headers["x-user"]) throw new Error("Denied");
       return String(req.headers["x-user"]);
     },
@@ -45,17 +49,84 @@ beforeEach(async () => {
   app.use(transport.router);
   app.use(
     (
-      _err: unknown,
+      error: { status?: number },
       _req: express.Request,
       res: express.Response,
       _next: express.NextFunction,
     ) => {
-      res.status(403).end();
+      res.status(error.status ?? 403).end();
     },
   );
   host = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => host.once("listening", resolve));
   base = `http://127.0.0.1:${(host.address() as AddressInfo).port}/upload-sessions`;
+});
+
+it.each(["", "/unknown/messages"])(
+  "authorizes %s before waiting for the request body",
+  async (path) => {
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        base + path,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": 1024 * 1024,
+          },
+          timeout: 2000,
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode!);
+          req.destroy();
+        },
+      );
+      req.on("error", reject);
+      req.on("timeout", () =>
+        req.destroy(new Error("Host waited for an unauthorized body")),
+      );
+      req.flushHeaders();
+    });
+    expect(status).toBe(403);
+    expect(targets).toEqual([]);
+  },
+);
+
+it("forwards JSON parse errors and uses a small creation limit", async () => {
+  for (const [body, status] of [
+    ["{", 400],
+    [JSON.stringify({ resume: "x".repeat(9000) }), 413],
+  ] as const) {
+    const response = await fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-user": "alice" },
+      body,
+    });
+    expect(response.status).toBe(status);
+    await response.body?.cancel();
+  }
+  expect(targets).toEqual([]);
+});
+
+it("rate-limits all upload routes before invoking authorization", async () => {
+  for (let index = 0; index < 20; index++) {
+    const response = await fetch(base + "/missing/events");
+    expect(response.status).toBe(403);
+    await response.body?.cancel();
+  }
+  for (const [path, method] of [
+    ["", "POST"],
+    ["/missing/events", "GET"],
+    ["/missing/messages", "POST"],
+    ["/missing", "DELETE"],
+  ]) {
+    const response = await fetch(base + path, { method });
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBeTruthy();
+    await response.body?.cancel();
+  }
+  expect(authorizations).toBe(20);
 });
 afterEach(async () => {
   transport.close();

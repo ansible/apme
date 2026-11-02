@@ -1,6 +1,11 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 export { apmePlugin, ApmePage, rootRouteRef } from "./plugin";
 export {
+  apmeProjectViews,
+  allApmeProjectViews,
+  type ApmeProjectView,
+} from "./capabilities";
+export {
   apmeHostApiRef,
   apmeHostApiFactory,
   type ApmeHostApi,

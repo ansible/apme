@@ -36,6 +36,30 @@
     "./alpha": {
       "types": "./dist/alpha.d.ts",
       "default": "./dist/alpha.js"
+    },
+    "./workflow": {
+      "types": "./dist/workflow.d.ts",
+      "default": "./dist/workflow.js"
+    },
+    "./findings": {
+      "types": "./dist/findings.d.ts",
+      "default": "./dist/findings.js"
+    },
+    "./activity": {
+      "types": "./dist/activity.d.ts",
+      "default": "./dist/activity.js"
+    },
+    "./dependencies": {
+      "types": "./dist/dependencies.d.ts",
+      "default": "./dist/dependencies.js"
+    },
+    "./graph": {
+      "types": "./dist/graph.d.ts",
+      "default": "./dist/graph.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
     }
   },
   "files": [

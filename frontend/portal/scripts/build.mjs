@@ -1,13 +1,10 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { execFileSync } from "node:child_process";
 import {
-    existsSync,
     mkdirSync,
     mkdtempSync,
     readFileSync,
-    realpathSync,
     rmSync,
-    symlinkSync,
     cpSync,
     writeFileSync,
 } from "node:fs";
@@ -17,33 +14,14 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { createRequire } from "node:module";
 import { build } from "esbuild";
+import { prepareSdk } from "./sdk.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const source = join(root, "frontend/portal");
 const { values } = parseArgs({
     options: { "portal-checkout": { type: "string" } },
 });
-const portal = resolve(
-    values["portal-checkout"] ??
-        process.env.APME_PORTAL_CHECKOUT ??
-        "../ansible-backstage-plugins",
-);
-if (
-    !existsSync(
-        join(portal, "node_modules/@ansible/portal-extension-api/package.json"),
-    )
-) {
-    throw new Error(
-        "Install the pinned Portal SDK checkout first; set APME_PORTAL_CHECKOUT or --portal-checkout",
-    );
-}
-const modules = join(source, "node_modules");
-if (!existsSync(modules))
-    symlinkSync(join(portal, "node_modules"), modules, "dir");
-if (realpathSync(modules) !== realpathSync(join(portal, "node_modules")))
-    throw new Error(
-        "frontend/portal/node_modules must link to the selected Portal SDK checkout; remove the old link before rebuilding",
-    );
+const portal = prepareSdk(values["portal-checkout"]);
 const output = join(source, "dist");
 rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });

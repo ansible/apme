@@ -183,7 +183,7 @@ export function submitActivity(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<SubmitResponse> {
   return request(
-    `/projects/${projectId}/operation/submit`,
+    `/projects/${encodeURIComponent(projectId)}/operation/submit`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -15,6 +15,28 @@ catalog/SDK contribution surface.
 
 ## Standard host
 
+Compose individual views without taking the full-page shell:
+
+| Entry point      | Exports                                      | Capability                  |
+| ---------------- | -------------------------------------------- | --------------------------- |
+| `./workflow`     | `ApmeProjectWorkflow`                        | `apme.project.workflow`     |
+| `./findings`     | `ApmeProjectFindings`                        | `apme.project.findings`     |
+| `./activity`     | `ApmeProjectHistory`, `ApmeActivityDetails`  | `apme.project.activity`     |
+| `./dependencies` | `ApmeProjectDependencies`, `ApmeProjectSbom` | `apme.project.dependencies` |
+| `./graph`        | `ApmeProjectGraph`                           | `apme.project.graph`        |
+
+Each entry exports its props and a `capability` descriptor. `./capabilities`
+exports the complete `apmeProjectViews` registry and `ApmeProjectView` type.
+Hosts advertise `projectViews` through `ApmeHostApi` or workbench/tab props.
+An explicit empty array enables no read views; omitted configuration preserves
+existing views. A disabled deep-linked view falls back to the first supported
+view without loading the disabled content. Write permissions remain independently
+opt-in, including repository creation. A capability declaration never grants backend access.
+
+The same artifact supports personal and enterprise audiences. Hosts provide
+scope, catalog context, entitlements and RBAC, and choose entry points or variants
+through props; the views do not detect which host is running.
+
 Install a released plugin tarball into the host. Its manifest pins the client
 and workflow tarballs from the same APME product release. Ensure the host provides
 the peer versions in the repository compatibility table and BUI/PatternFly CSS.

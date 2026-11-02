@@ -34,3 +34,9 @@ transport keeps at most 64 live channels (4 per user), accepts payloads up to
 buffering at 256 KiB, and closes channels not attached to a reader within 30 s.
 Streaming uses backpressure. Cleanup releases sockets and timers on disconnect
 and shutdown. Resource and real-host acceptance remain required.
+
+All upload routes use a per-client-IP request limiter before authentication and
+parsing (6000 requests/minute per backend process by default;
+`maxRequestsPerMinute` can lower it). Configure trusted proxy handling in the host.
+Creation bodies are limited to 8 KiB and messages retain the 70 MiB envelope;
+both parse only after authorization. Shutdown also disposes limiter storage.

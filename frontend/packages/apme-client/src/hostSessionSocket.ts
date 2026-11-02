@@ -15,6 +15,15 @@ export function createHostSessionSocket(
   let channel: string | undefined;
   let writes: Promise<void> = Promise.resolve();
   const base = apmeApiUrl("/upload-sessions", adapter);
+  async function discard(response: Response) {
+    await response.body?.cancel().catch(() => undefined);
+  }
+  async function deleteChannel(id: string) {
+    const response = await adapter.fetch(`${base}/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    await discard(response);
+  }
   const socket: ApmeSessionSocket = {
     get readyState() {
       return state;
@@ -39,7 +48,12 @@ export function createHostSessionSocket(
               signal: controller.signal,
             },
           );
-          if (!response.ok) throw new Error("Upload message rejected by host");
+          try {
+            if (!response.ok)
+              throw new Error("Upload message rejected by host");
+          } finally {
+            await discard(response);
+          }
         })
         .catch(fail);
       return writes;
@@ -48,10 +62,7 @@ export function createHostSessionSocket(
       if (state === 3) return;
       state = 3;
       controller.abort();
-      if (channel)
-        void adapter
-          .fetch(`${base}/${encodeURIComponent(channel)}`, { method: "DELETE" })
-          .catch(() => undefined);
+      if (channel) void deleteChannel(channel).catch(() => undefined);
     },
   };
   function fail() {
@@ -70,8 +81,13 @@ export function createHostSessionSocket(
       }),
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error("Upload session denied by host");
-    const body: unknown = await response.json();
+    let body: unknown;
+    try {
+      if (!response.ok) throw new Error("Upload session denied by host");
+      body = await response.json();
+    } finally {
+      await discard(response);
+    }
     if (
       !body ||
       typeof body !== "object" ||
@@ -81,17 +97,17 @@ export function createHostSessionSocket(
       throw new Error("Invalid upload channel");
     channel = body.id;
     if (state === 3) {
-      void adapter
-        .fetch(`${base}/${encodeURIComponent(channel)}`, { method: "DELETE" })
-        .catch(() => undefined);
+      void deleteChannel(channel).catch(() => undefined);
       return;
     }
     const events = await adapter.fetch(
       `${base}/${encodeURIComponent(channel)}/events`,
       { signal: controller.signal },
     );
-    if (!events.ok || !events.body)
+    if (!events.ok || !events.body) {
+      await discard(events);
       throw new Error("Upload stream denied by host");
+    }
     const reader = events.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";

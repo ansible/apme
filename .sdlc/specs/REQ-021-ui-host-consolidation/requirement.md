@@ -50,13 +50,13 @@ enforce ownership and RBAC; users must not need to commit catalog metadata.
 
 Local must expose Projects as a persistent sidebar destination, including when
 another host page is open, with no clipped navigation labels. Local navigation
-includes only Projects and Settings; disable the unused host Catalog Graph and
-Search pages. Show the APME name and existing product icon above the navigation
-links, linking back to Projects. Keep APME's project-scoped graph available. A selected project
+groups Projects, Rules, Health, Paste / upload and Settings beneath the APME name
+and existing product icon; disable the unused host Catalog Graph and Search pages.
+Keep APME's project-scoped graph available. A selected project
 must have its own Settings tab for updating its name, URL, branch, SCM provider
 and credential. Unchanged credentials must be preserved and never fetched back
-into the form. Global APME settings belong under the host's existing Settings
-page, separate from project settings. Portal keeps its host-owned navigation and
+into the form. Global APME settings belong under APME, separate from project
+settings and the host's User settings. Portal keeps its host-owned navigation and
 authorization; project editing must require an explicit host capability.
 
 ### AC3: Explicit host integration
@@ -67,12 +67,19 @@ authorization; project editing must require an explicit host capability.
   owner with full instance access; Portal enforces its RBAC on its backend.
   Portal catalog registration and SDK composition remain host responsibilities.
 
+Expose independently reusable project workflow, findings, activity, dependency
+and graph entry points with declared capabilities. Hosts advertise supported
+views and provide scope, entitlements and write permissions through APIs/props.
+Do not infer the host from globals or URLs. One domain artifact serves personal
+projects and shared enterprise fleets, with host-selected surrounding chrome.
+
 ### AC4: Feature coverage and replacement
 
 - **GIVEN** the completed replacement
 - **WHEN** both hosts pass their agreed feature acceptance
-- **THEN** all non-fleet APME features are available in both hosts; fleet can
-  remain Portal only. Remove the native UI at that point without a required
+- **THEN** both hosts compose the same APME domain capabilities: Local targets
+  personal projects, while Portal adds fleet scope, catalog registration and
+  RBAC. Fleet requires host-provided entitlements. Remove the native UI at that point without a required
   support period, data migration, route migration or rollback window.
 
 ### AC5: Reproducible releases and efficiency

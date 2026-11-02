@@ -14,11 +14,12 @@ const project = {
   active_operation: null,
 };
 
-function open(fetch: typeof globalThis.fetch) {
+function open(fetch: typeof globalThis.fetch, canManageProjects = true) {
   render(
     <MemoryRouter>
       <BUIProvider>
         <ApmeWorkbench
+          canManageProjects={canManageProjects}
           adapter={createDefaultApmeApiAdapter({
             apiBase: "/host/apme",
             fetch,
@@ -28,6 +29,23 @@ function open(fetch: typeof globalThis.fetch) {
     </MemoryRouter>,
   );
 }
+
+it("does not offer repository creation when the host grants read-only project access", async () => {
+  const fetch = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ total: 1, items: [project] })),
+  );
+  open(fetch, false);
+  expect(
+    await screen.findByRole("button", { name: "Automation" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Add repository" })).toBeNull();
+  expect(
+    fetch.mock.calls.every(
+      ([, init]) => !init?.method || init.method === "GET",
+    ),
+  ).toBe(true);
+});
 
 it("selects a repository and starts the existing Gateway assess-pause workflow", async () => {
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

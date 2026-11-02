@@ -26,6 +26,11 @@ import { CreateProjectDialog } from "./CreateProjectDialog";
 import { ProjectDetails } from "./ProjectDetails";
 import { useLoad } from "./useLoad";
 import type { ApmeSettingsProps } from "./ApmeSettings";
+import {
+  allApmeProjectViews,
+  apmeProjectViews,
+  type ApmeProjectView,
+} from "../capabilities";
 
 const ApmeRules = lazy(() =>
   import("./ApmeRules").then((module) => ({ default: module.ApmeRules })),
@@ -66,6 +71,7 @@ export function ApmePageContent({
   return (
     <ApmeWorkbench
       adapter={adapter}
+      projectViews={hostApi.projectViews}
       canManageRules={hostApi.canManageRules === true}
       canManageProjects={hostApi.canManageProjects === true}
       showGlobalSettings={showGlobalSettings}
@@ -91,6 +97,7 @@ export interface ApmeWorkbenchProps extends ApmeSettingsProps {
   /** Hosts with separate section routes can fix the displayed section. */
   section?: ApmeSection;
   showSectionNavigation?: boolean;
+  projectViews?: readonly ApmeProjectView[];
 }
 
 export type ApmeSection = "repositories" | "rules" | "health" | "upload";
@@ -103,6 +110,7 @@ export function ApmeWorkbench({
   showGlobalSettings = true,
   section,
   showSectionNavigation = true,
+  projectViews = allApmeProjectViews,
   canUpload = false,
   canViewSettings = false,
   canManageSettings = false,
@@ -122,9 +130,17 @@ export function ApmeWorkbench({
   const requestedTab = params.get("tab");
   const tab =
     isApmeProjectTab(requestedTab) &&
-    (requestedTab !== "settings" || canManageProjects)
+    (requestedTab === "settings"
+      ? canManageProjects
+      : projectViews.some(
+          (view) => apmeProjectViews[view].tab === requestedTab,
+        ))
       ? requestedTab
-      : "workflow";
+      : projectViews[0]
+        ? apmeProjectViews[projectViews[0]].tab
+        : canManageProjects
+          ? "settings"
+          : "workflow";
   const activityId = params.get("scan") || undefined;
   const [adding, setAdding] = useState(false);
   const [offset, setOffset] = useState(0);
@@ -188,7 +204,7 @@ export function ApmeWorkbench({
               Ansible Policy &amp; Modernization
             </Text>
           )}
-          {view === "repositories" && (
+          {view === "repositories" && canManageProjects && !selected && (
             <Button onPress={() => setAdding(true)}>Add repository</Button>
           )}
         </Flex>
@@ -287,6 +303,7 @@ export function ApmeWorkbench({
                     }
                   }}
                   adapter={adapter}
+                  projectViews={projectViews}
                   tab={tab}
                   activityId={activityId}
                   onTabChange={selectTab}
@@ -371,7 +388,7 @@ export function ApmeWorkbench({
           </Flex>
         )}
       </Suspense>
-      {adding && view === "repositories" && (
+      {adding && canManageProjects && view === "repositories" && !selected && (
         <CreateProjectDialog
           adapter={adapter}
           onClose={() => setAdding(false)}

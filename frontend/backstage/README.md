@@ -1,9 +1,10 @@
 # APME Backstage hosts
 
 APME owns the Gateway client, shared workflow and standard Backstage package.
-RHDH Local is a personal deployment; Portal supplies catalog integration and
-RBAC. Both target all APME features except fleet, which can initially be Portal
-only. See [REQ-021](../../.sdlc/specs/REQ-021-ui-host-consolidation/requirement.md).
+Local targets the personal-project experience; Portal adds fleet scope, catalog
+registration and RBAC. Hosts compose the same reusable views using explicit
+capabilities and permissions. Fleet is available when the host provides fleet
+entitlements. See [REQ-021](../../.sdlc/specs/REQ-021-ui-host-consolidation/requirement.md).
 
 ## Run the personal RHDH UI
 

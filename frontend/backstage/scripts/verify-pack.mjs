@@ -49,6 +49,24 @@ try {
         "import {ApmeProjectWorkflow,ApmeProjectFindings,ApmeProjectHistory,ApmeActivityDetails,ApmeProjectDependencies,ApmeAiProviders,ApmeUploadWorkbench,ApmeProjectGraph,ApmeProjectSbom,createPortalProjectApiAdapter,createPortalApmeApiAdapter,apmePlugin,type ApmeProjectWorkflowProps} from '@apme/backstage-plugin'; import {useProjectWorkflow} from '@apme/ui-workflow/headless'; import {createDefaultApmeApiAdapter} from '@apme/client'; const props: ApmeProjectWorkflowProps = {projectId:'repo',adapter:createDefaultApmeApiAdapter()}; Object.assign(window,{apme:{ApmeProjectWorkflow,ApmeProjectFindings,ApmeProjectHistory,ApmeActivityDetails,ApmeProjectDependencies,ApmeAiProviders,ApmeUploadWorkbench,ApmeProjectGraph,ApmeProjectSbom,createPortalProjectApiAdapter,createPortalApmeApiAdapter,apmePlugin,useProjectWorkflow,props}});",
     );
     // Type-check only the installed public declarations, without source aliases.
+    const views = [
+        ["workflow", "ApmeProjectWorkflow"],
+        ["findings", "ApmeProjectFindings"],
+        ["activity", "ApmeActivityDetails"],
+        ["dependencies", "ApmeProjectDependencies"],
+        ["graph", "ApmeProjectGraph"],
+    ];
+    writeFileSync(
+        join(temp, "main.ts"),
+        readFileSync(join(temp, "main.ts"), "utf8") +
+            views
+                .map(
+                    ([name, component]) =>
+                        `\nimport {${component} as ${name}View, capability as ${name}Capability} from '@apme/backstage-plugin/${name}'; Object.assign(window,{${name}View,${name}Capability});`,
+                )
+                .join("") +
+            "\nimport {apmeProjectViews,type ApmeProjectView} from '@apme/backstage-plugin/capabilities'; const selectedViews: readonly ApmeProjectView[] = ['activity','findings']; Object.assign(window,{apmeProjectViews,selectedViews});",
+    );
     execFileSync(
         process.execPath,
         [

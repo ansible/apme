@@ -3,6 +3,11 @@ import { lazy, Suspense } from "react";
 import { Text, Tab, TabList, TabPanel, Tabs } from "@backstage/ui";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import type { ProjectDetail } from "@apme/client";
+import {
+  allApmeProjectViews,
+  apmeProjectViews,
+  type ApmeProjectView,
+} from "../capabilities";
 const ApmeProjectWorkflow = lazy(() =>
   import("./ApmeProjectWorkflow").then((module) => ({
     default: module.ApmeProjectWorkflow,
@@ -66,6 +71,7 @@ export function ApmeProjectTabs({
   project,
   canManageProject = false,
   onProjectUpdated,
+  projectViews = allApmeProjectViews,
 }: {
   projectId: string;
   adapter: ApmeApiAdapter;
@@ -77,80 +83,103 @@ export function ApmeProjectTabs({
   project?: ProjectDetail;
   canManageProject?: boolean;
   onProjectUpdated?: () => void;
+  projectViews?: readonly ApmeProjectView[];
 }) {
+  const tabs = projectViews.map((view) => apmeProjectViews[view]);
+  const canEdit = canManageProject && project !== undefined;
+  const visible = (view: ApmeProjectView) => projectViews.includes(view);
+  const activeTab =
+    tabs.some((item) => item.tab === tab) || (tab === "settings" && canEdit)
+      ? tab
+      : (tabs[0]?.tab ?? (canEdit ? "settings" : undefined));
+  if (!activeTab)
+    return <Text>No project views are enabled by this host.</Text>;
   return (
     <Tabs
-      selectedKey={tab}
+      selectedKey={activeTab}
       onSelectionChange={(key) => {
         if (isApmeProjectTab(String(key)))
           onTabChange(String(key) as ApmeProjectTab);
       }}
     >
       <TabList aria-label="Project views">
-        <Tab id="workflow">Workflow</Tab>
-        <Tab id="findings">Findings</Tab>
-        <Tab id="history">History</Tab>
-        <Tab id="dependencies">Dependencies</Tab>
-        <Tab id="graph">Graph</Tab>
+        {tabs.map((item) => (
+          <Tab key={item.id} id={item.tab}>
+            {item.label}
+          </Tab>
+        ))}
         {canManageProject && project && <Tab id="settings">Settings</Tab>}
       </TabList>
-      <TabPanel id="workflow">
-        <Suspense fallback={<Text role="status">Loading project view…</Text>}>
-          {tab === "workflow" && (
-            <ApmeProjectWorkflow
-              projectId={projectId}
-              adapter={adapter}
-              onViewDetails={onOpenActivity}
-            />
-          )}
-        </Suspense>
-      </TabPanel>
-      <TabPanel id="findings">
-        <Suspense fallback={<Text role="status">Loading project view…</Text>}>
-          {tab === "findings" && (
-            <ApmeProjectFindings projectId={projectId} adapter={adapter} />
-          )}
-        </Suspense>
-      </TabPanel>
-      <TabPanel id="history">
-        <Suspense fallback={<Text role="status">Loading project view…</Text>}>
-          {tab === "history" &&
-            (activityId ? (
-              <ApmeActivityDetails
-                projectId={projectId}
-                activityId={activityId}
-                adapter={adapter}
-                onClose={onCloseActivity}
-              />
-            ) : (
-              <ApmeProjectHistory
+      {visible("workflow") && (
+        <TabPanel id="workflow">
+          <Suspense fallback={<Text role="status">Loading project view…</Text>}>
+            {activeTab === "workflow" && (
+              <ApmeProjectWorkflow
                 projectId={projectId}
                 adapter={adapter}
-                onOpenActivity={onOpenActivity}
+                onViewDetails={onOpenActivity}
               />
-            ))}
-        </Suspense>
-      </TabPanel>
-      <TabPanel id="dependencies">
-        <Suspense fallback={<Text role="status">Loading project view…</Text>}>
-          {tab === "dependencies" && (
-            <ApmeProjectDependencies projectId={projectId} adapter={adapter} />
-          )}
-        </Suspense>
-      </TabPanel>
-      <TabPanel id="graph">
-        <Suspense fallback={<Text role="status">Loading graph view…</Text>}>
-          {tab === "graph" && (
-            <ApmeProjectGraph projectId={projectId} adapter={adapter} />
-          )}
-        </Suspense>
-      </TabPanel>
+            )}
+          </Suspense>
+        </TabPanel>
+      )}
+      {visible("findings") && (
+        <TabPanel id="findings">
+          <Suspense fallback={<Text role="status">Loading project view…</Text>}>
+            {activeTab === "findings" && (
+              <ApmeProjectFindings projectId={projectId} adapter={adapter} />
+            )}
+          </Suspense>
+        </TabPanel>
+      )}
+      {visible("activity") && (
+        <TabPanel id="history">
+          <Suspense fallback={<Text role="status">Loading project view…</Text>}>
+            {activeTab === "history" &&
+              (activityId ? (
+                <ApmeActivityDetails
+                  projectId={projectId}
+                  activityId={activityId}
+                  adapter={adapter}
+                  onClose={onCloseActivity}
+                />
+              ) : (
+                <ApmeProjectHistory
+                  projectId={projectId}
+                  adapter={adapter}
+                  onOpenActivity={onOpenActivity}
+                />
+              ))}
+          </Suspense>
+        </TabPanel>
+      )}
+      {visible("dependencies") && (
+        <TabPanel id="dependencies">
+          <Suspense fallback={<Text role="status">Loading project view…</Text>}>
+            {activeTab === "dependencies" && (
+              <ApmeProjectDependencies
+                projectId={projectId}
+                adapter={adapter}
+              />
+            )}
+          </Suspense>
+        </TabPanel>
+      )}
+      {visible("graph") && (
+        <TabPanel id="graph">
+          <Suspense fallback={<Text role="status">Loading graph view…</Text>}>
+            {activeTab === "graph" && (
+              <ApmeProjectGraph projectId={projectId} adapter={adapter} />
+            )}
+          </Suspense>
+        </TabPanel>
+      )}
       {canManageProject && project && (
         <TabPanel id="settings">
           <Suspense
             fallback={<Text role="status">Loading project settings…</Text>}
           >
-            {tab === "settings" && (
+            {activeTab === "settings" && (
               <ApmeProjectSettings
                 project={project}
                 adapter={adapter}

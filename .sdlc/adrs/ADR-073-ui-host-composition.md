@@ -36,6 +36,20 @@ authentication, resource permissions and shared-setting RBAC. Host backend URLs
 and authenticated fetch are injected explicitly, including SSE; never infer
 authorization policy from a URL or fall back around a denied request.
 
+The same domain artifact serves two audiences: a developer working on personal
+projects and enterprise users working on a shared fleet. Local targets the
+personal-project experience; Portal adds fleet scope, catalog registration and
+RBAC. This describes audience and host scope, not a capability waiver or a smaller
+product. Fleet is available when the host provides fleet entitlements.
+
+Export independently composable project views at `./workflow`, `./findings`,
+`./activity`, `./dependencies` and `./graph`, with capability descriptors at
+`./capabilities`. Hosts explicitly advertise `projectViews` through the host API
+or embedding props and independently evaluate write permissions. Host-specific
+chrome, fleet/catalog scope and genuine experience variants are separate entry
+points or props. Domain components must not detect a host through globals,
+URL sniffing or `isPortal` branches. The full-page entry remains a convenience.
+
 Use BUI for new ordinary host layout and controls. Keep the existing specialist
 PatternFly workflow during the incremental port, with its dependency explicit.
 Use one current Gateway client and one workflow source. Preserve Gateway state,
@@ -107,7 +121,8 @@ developers and does not meet the approved two-host requirement.
 
 ### Neutral
 
-- Fleet can initially be Portal only. All other agreed features target both hosts.
+- Local targets personal projects; Portal adds fleet scope, catalog registration
+  and RBAC. Capabilities are selected by the host; fleet requires host entitlements.
 - No numeric resource budget has been requested; measure and optimize resources.
 
 ## Implementation Notes
@@ -136,3 +151,4 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-10-30 | Codex | Recorded user-approved direction and implementation authorization |
+| 2026-11-02 | Codex | Accepted cidrblock's audience and composition guidance; added public view subpaths and host-declared project view capabilities; runtime acceptance remains in progress |

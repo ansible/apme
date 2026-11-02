@@ -5,11 +5,13 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    existsSync,
+    realpathSync,
     rmSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
@@ -26,7 +28,21 @@ const version = values.version;
 if (!/^\d+\.\d+\.\d+(?:-[\da-z.-]+)?$/i.test(version))
     throw new Error("Expected a semver product version");
 const output = resolve(root, values.output);
+function contained(path) {
+    const rel = relative(realpathSync(root), path);
+    return rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
+}
+if (output === root || !contained(output))
+    throw new Error("Package output must be a subdirectory of the checkout");
+let parent = output;
+while (!existsSync(parent)) parent = dirname(parent);
+if (!contained(realpathSync(parent)))
+    throw new Error(
+        "Package output must not follow a symlink outside the checkout",
+    );
 mkdirSync(output, { recursive: true });
+if (!contained(realpathSync(output)))
+    throw new Error("Package output escaped the checkout");
 const packages = [
     ["@apme/client", "frontend/packages/apme-client"],
     ["@apme/ui-workflow", "frontend/packages/ui-workflow"],

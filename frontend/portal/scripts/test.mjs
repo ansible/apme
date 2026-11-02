@@ -5,11 +5,10 @@ import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { prepareSdk } from "./sdk.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const portal = resolve(
-    process.env.APME_PORTAL_CHECKOUT ?? "../ansible-backstage-plugins",
-);
+const portal = prepareSdk();
 const staging = mkdtempSync(join(tmpdir(), "apme-portal-jest-"));
 const frontend = process.argv.includes("--frontend");
 const hostRequire = createRequire(join(portal, "package.json"));

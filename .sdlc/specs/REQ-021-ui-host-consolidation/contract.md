@@ -7,6 +7,14 @@ workflow, API ref/factory and the original `createApmeUiWorkflowAdapter` Portal
 transport helper. New package names do not replace the existing Portal plugin
 ID. Its `./alpha` export declares the standard NFS API and Projects page.
 
+`./workflow`, `./findings`, `./activity`, `./dependencies` and `./graph` export
+reusable views, their props and capability descriptors. `./capabilities` publishes
+the host-neutral registry. Hosts can explicitly advertise `projectViews` through
+the host API or embedding props; an empty list enables none, while omission keeps
+the existing view set. Disabled deep links do not load hidden panels. Write
+permissions are independent, default to denied for embeds, and gate both project
+creation and editing. Hosts choose variants and scope without host-detection code.
+
 An `ApmeApiAdapter` supplies `fetch`, `apiBase` and `origin`. Hosts provide an
 authenticated fetch and an explicit backend path. Requests must not retry at a
 direct Gateway origin after permission denial. Gateway operation state remains

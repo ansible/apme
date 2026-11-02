@@ -15,9 +15,12 @@ import {
   type ApmeApiAdapter,
 } from "@apme/client/transport";
 import { createHostSessionSocket } from "@apme/client";
+import { allApmeProjectViews, type ApmeProjectView } from "../capabilities";
 
 export interface ApmeHostApi {
   getAdapter(): Promise<ApmeApiAdapter>;
+  /** Supported read views, selected explicitly by the host; omission preserves existing views. */
+  projectViews?: readonly ApmeProjectView[];
   /** Local single-person deployment enables this; Portal owns its RBAC decision. */
   canManageRules?: boolean;
   /** Opt-in project metadata/credential editing; Portal must authorize it. */
@@ -49,6 +52,7 @@ export const apmeHostApiFactory: ApiFactory<
     configApi: configApiRef,
   },
   factory: ({ discoveryApi, fetchApi, configApi }): ApmeHostApi => ({
+    projectViews: allApmeProjectViews,
     canManageRules: true,
     canManageProjects: true,
     canViewSettings: true,

@@ -1,5 +1,9 @@
 import { ConfigReader } from "@backstage/config";
-import { createDefaultApmeApiAdapter, getHealth } from "@apme/client";
+import {
+  createDefaultApmeApiAdapter,
+  getHealth,
+  submitActivity,
+} from "@apme/client";
 import { apmeHostApiFactory } from "../plugins/backstage-apme/src/api/apmeApi";
 import { createApmeUiWorkflowAdapter } from "../plugins/backstage-apme/src/api/createApmeUiWorkflowAdapter";
 import { renderHook, act, waitFor } from "@testing-library/react";
@@ -11,6 +15,21 @@ import {
 import { createElement, type ReactNode } from "react";
 
 describe("host transports", () => {
+  it("keeps project identifiers in a single path segment when submitting activity", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("{}"));
+    const adapter = createDefaultApmeApiAdapter({
+      apiBase: "/host/apme",
+      fetch,
+    });
+    await submitActivity("team/repo?ref=main", "scan", adapter);
+    expect(fetch).toHaveBeenCalledWith(
+      "/host/apme/projects/team%2Frepo%3Fref%3Dmain/operation/submit",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ activity_id: "scan" }),
+      }),
+    );
+  });
   it("discovers the Local host proxy and preserves authenticated fetch for REST", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response('{"status":"ok"}'));
     const discoveryApi = {
