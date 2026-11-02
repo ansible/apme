@@ -15,7 +15,6 @@ import {
   Select,
   TableBody,
   TableHeader,
-  TableRoot,
   Text,
 } from "@backstage/ui";
 import {
@@ -27,6 +26,7 @@ import {
 } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { DataStatus, PageControls } from "./DataStatus";
+import { ApmeTable, SectionHeader } from "./layout";
 import { useLoad } from "./useLoad";
 import { useMutation } from "./useMutation";
 
@@ -61,32 +61,34 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
     Math.max(0, Math.ceil(rules.length / 25) - 1) * 25,
   );
   return (
-    <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
-        <Text as="h2" variant="title-medium">
-          Rule catalog
-        </Text>
-        <Button
-          variant="secondary"
-          onPress={state.reload}
-          isDisabled={state.loading}
-        >
-          Refresh rules
-        </Button>
-      </Flex>
+    <Flex className="apme-ui" direction="column" gap="4">
+      <SectionHeader
+        title="Rule catalog"
+        description="Browse checks and manage rule overrides."
+        actions={
+          <Button
+            variant="secondary"
+            onPress={state.reload}
+            isDisabled={state.loading}
+          >
+            Refresh rules
+          </Button>
+        }
+      />
       <DataStatus {...state} subject="rules" />
       {state.value && (
         <>
-          <SearchField
-            label="Search rules"
-            description="Search ID, description, category, source or severity"
-            value={search}
-            onChange={(value) => {
-              setSearch(value);
-              setOffset(0);
-            }}
-          />
-          <Flex gap="4" style={{ flexWrap: "wrap" }}>
+          <div className="apme-filters">
+            <SearchField
+              label="Search rules"
+              placeholder="Search by ID, description or severity"
+              value={search}
+              onChange={(value) => {
+                setSearch(value);
+                setOffset(0);
+              }}
+            />
+
             <Select
               selectionMode="single"
               label="Category"
@@ -125,15 +127,15 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
                 setOffset(0);
               }}
             />
-          </Flex>
-          <Text>
+          </div>
+          <Text color="secondary">
             {rules.length} matching rules ·{" "}
             {state.value.filter((rule) => rule.has_override).length} overrides
           </Text>
-          <TableRoot aria-label="APME rule catalog">
+          <ApmeTable aria-label="APME rule catalog">
             <TableHeader>
               <Column isRowHeader>Rule</Column>
-              <Column>Description</Column>
+              <Column style={{ width: "38%" }}>Description</Column>
               <Column>Category</Column>
               <Column>Source</Column>
               <Column>Severity</Column>
@@ -151,6 +153,7 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
                   <Cell>
                     <Button
                       variant="tertiary"
+                      className="apme-table-link"
                       onPress={() => setSelectedId(rule.rule_id)}
                     >
                       {rule.rule_id}
@@ -168,7 +171,7 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
                 </Row>
               )}
             </TableBody>
-          </TableRoot>
+          </ApmeTable>
           <PageControls
             offset={page}
             size={25}

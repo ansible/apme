@@ -209,3 +209,11 @@ routes. It preserves full rule metadata and project history pagination, checks
 project ownership for activity, and routes AI discovery through settings RBAC.
 `enableUploads` must remain false until Portal mounts the shared backend router
 with its tenant/user/entitlement/scan authorization and shutdown hook.
+
+### Shared presentation
+
+The page and reusable views load their packaged layout stylesheet automatically.
+APME uses host-provided BUI color tokens, compact tables with contained horizontal
+scrolling, bounded forms and responsive filter/upload layouts. These rules apply
+to APME components; host navigation and the surrounding application keep their own
+styles.

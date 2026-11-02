@@ -69,7 +69,7 @@
   ],
   "configSchema": "config.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json && cp src/components/layout.css dist/components/layout.css"
   },
   "dependencies": {
     "@apme/client": "*",

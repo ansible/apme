@@ -1,4 +1,5 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import "./layout.css";
 import { useState } from "react";
 import { Alert, Box, Button, Flex, Text } from "@backstage/ui";
 import type { ApmeApiAdapter } from "@apme/client/transport";
@@ -60,7 +61,7 @@ function ProjectWorkflow({
   }
 
   return (
-    <Box>
+    <Box className="apme-ui">
       {error && <Alert status="danger" title={error} />}
       {workflow.sessionTabVisible ? (
         <ProjectWorkflowPanel
@@ -70,7 +71,7 @@ function ProjectWorkflow({
           onViewDetails={onViewDetails}
         />
       ) : (
-        <Flex direction="column" gap="4">
+        <Flex className="apme-form apme-panel" direction="column" gap="4">
           <Text>
             Check this repository, then review findings and proposed fixes.
           </Text>

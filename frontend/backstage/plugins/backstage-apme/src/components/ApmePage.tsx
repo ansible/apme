@@ -25,6 +25,7 @@ import {
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import { ProjectDetails } from "./ProjectDetails";
 import { useLoad } from "./useLoad";
+import { SectionHeader } from "./layout";
 import type { ApmeSettingsProps } from "./ApmeSettings";
 import {
   allApmeProjectViews,
@@ -196,22 +197,35 @@ export function ApmeWorkbench({
   }
 
   return (
-    <Box p="6">
-      {(!section || view === "repositories") && (
-        <Flex justify={section ? "end" : "between"} align="center" mb="6">
-          {!section && (
-            <Text as="h1" variant="title-large">
-              Ansible Policy &amp; Modernization
-            </Text>
-          )}
-          {view === "repositories" && canManageProjects && !selected && (
-            <Button onPress={() => setAdding(true)}>Add repository</Button>
-          )}
-        </Flex>
+    <Box className="apme-ui apme-page apme-stack">
+      {view === "repositories" && !selected && (
+        <SectionHeader
+          title={section ? undefined : "Projects"}
+          description={
+            loading
+              ? "Loading repositories…"
+              : error
+                ? "Repositories unavailable"
+                : `${projects?.total ?? 0} ${projects?.total_is_exact === false ? "available repositories" : "repositories"}`
+          }
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                onPress={() => setRevision((n) => n + 1)}
+              >
+                Refresh
+              </Button>
+              {canManageProjects && (
+                <Button onPress={() => setAdding(true)}>Add repository</Button>
+              )}
+            </>
+          }
+        />
       )}
       {showSectionNavigation && (
         <nav aria-label="APME sections">
-          <Flex gap="2" mb="6">
+          <Flex gap="2" style={{ flexWrap: "wrap" }}>
             <Button
               variant="secondary"
               aria-current={view === "repositories" ? "page" : undefined}
@@ -271,8 +285,12 @@ export function ApmeWorkbench({
             }
           />
         ) : selected ? (
-          <Flex direction="column" gap="6">
-            <Button variant="secondary" onPress={() => select(null)}>
+          <Flex direction="column" gap="4">
+            <Button
+              variant="tertiary"
+              onPress={() => select(null)}
+              style={{ alignSelf: "flex-start" }}
+            >
               All repositories
             </Button>
             <ProjectDetails
@@ -322,50 +340,42 @@ export function ApmeWorkbench({
                 description={error}
               />
             )}
-            <Flex justify="between">
-              <Text>
-                {loading
-                  ? "Loading repositories…"
-                  : error
-                    ? "Repositories unavailable"
-                    : `${projects?.total ?? 0} ${projects?.total_is_exact === false ? "available repositories" : "repositories"}`}
-              </Text>
-              <Button
-                variant="secondary"
-                onPress={() => setRevision((n) => n + 1)}
-              >
-                Refresh
-              </Button>
-            </Flex>
             {!error && (
-              <TableRoot aria-label="APME repositories" isPending={loading}>
-                <TableHeader>
-                  <Column isRowHeader>Repository</Column>
-                  <Column>Branch</Column>
-                  <Column>Findings</Column>
-                  <Column>Operation</Column>
-                </TableHeader>
-                <TableBody
-                  items={projects?.items ?? []}
-                  renderEmptyState={() => "Add a repository to start a check."}
-                >
-                  {(project) => (
-                    <Row id={project.id}>
-                      <Cell>
-                        <Button
-                          variant="tertiary"
-                          onPress={() => select(project.id)}
-                        >
-                          {project.name}
-                        </Button>
-                      </Cell>
-                      <Cell>{project.branch}</Cell>
-                      <Cell>{project.total_violations}</Cell>
-                      <Cell>{project.active_operation?.status ?? "Idle"}</Cell>
-                    </Row>
-                  )}
-                </TableBody>
-              </TableRoot>
+              <div className="apme-table-scroll">
+                <TableRoot aria-label="APME repositories" isPending={loading}>
+                  <TableHeader>
+                    <Column isRowHeader>Repository</Column>
+                    <Column>Branch</Column>
+                    <Column>Findings</Column>
+                    <Column>Operation</Column>
+                  </TableHeader>
+                  <TableBody
+                    items={projects?.items ?? []}
+                    renderEmptyState={() =>
+                      "Add a repository to start a check."
+                    }
+                  >
+                    {(project) => (
+                      <Row id={project.id}>
+                        <Cell>
+                          <Button
+                            variant="tertiary"
+                            className="apme-table-link"
+                            onPress={() => select(project.id)}
+                          >
+                            {project.name}
+                          </Button>
+                        </Cell>
+                        <Cell>{project.branch}</Cell>
+                        <Cell>{project.total_violations}</Cell>
+                        <Cell>
+                          {project.active_operation?.status ?? "Idle"}
+                        </Cell>
+                      </Row>
+                    )}
+                  </TableBody>
+                </TableRoot>
+              </div>
             )}
             <Flex gap="2" justify="end">
               <Button

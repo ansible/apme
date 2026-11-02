@@ -1,4 +1,5 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeTable } from "./layout";
 import { useCallback, useState } from "react";
 import {
   Button,
@@ -9,7 +10,6 @@ import {
   SearchField,
   TableBody,
   TableHeader,
-  TableRoot,
   Text,
 } from "@backstage/ui";
 import { getProjectDependencies } from "@apme/client";
@@ -87,7 +87,7 @@ function ApmeProjectDependenciesContent({
           <Text as="h4" variant="title-x-small">
             Collections ({collections.length})
           </Text>
-          <TableRoot aria-label="Project collections">
+          <ApmeTable aria-label="Project collections">
             <TableHeader>
               <Column isRowHeader>Collection</Column>
               <Column>Version</Column>
@@ -118,7 +118,7 @@ function ApmeProjectDependenciesContent({
                 </Row>
               )}
             </TableBody>
-          </TableRoot>
+          </ApmeTable>
           <PageControls
             offset={collectionOffset}
             size={25}
@@ -130,7 +130,7 @@ function ApmeProjectDependenciesContent({
           <Text as="h4" variant="title-x-small">
             Python packages ({packages.length})
           </Text>
-          <TableRoot aria-label="Project Python packages">
+          <ApmeTable aria-label="Project Python packages">
             <TableHeader>
               <Column isRowHeader>Package</Column>
               <Column>Version</Column>
@@ -159,7 +159,7 @@ function ApmeProjectDependenciesContent({
                 </Row>
               )}
             </TableBody>
-          </TableRoot>
+          </ApmeTable>
           <PageControls
             offset={pythonOffset}
             size={25}

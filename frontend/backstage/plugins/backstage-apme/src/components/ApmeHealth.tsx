@@ -8,12 +8,11 @@ import {
   Row,
   TableBody,
   TableHeader,
-  TableRoot,
-  Text,
 } from "@backstage/ui";
 import { getHealth } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { DataStatus } from "./DataStatus";
+import { ApmeTable, SectionHeader } from "./layout";
 import { useLoad } from "./useLoad";
 
 export interface ApmeHealthProps {
@@ -37,22 +36,23 @@ export function ApmeHealth({ adapter }: ApmeHealthProps) {
       ].map((row, id) => ({ ...row, id }))
     : [];
   return (
-    <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
-        <Text as="h2" variant="title-medium">
-          System health
-        </Text>
-        <Button
-          variant="secondary"
-          onPress={state.reload}
-          isDisabled={state.loading}
-        >
-          Refresh health
-        </Button>
-      </Flex>
+    <Flex className="apme-ui" direction="column" gap="4">
+      <SectionHeader
+        title="System health"
+        description="Current status of the services that power APME."
+        actions={
+          <Button
+            variant="secondary"
+            onPress={state.reload}
+            isDisabled={state.loading}
+          >
+            Refresh health
+          </Button>
+        }
+      />
       <DataStatus {...state} subject="system health" />
       {health && (
-        <TableRoot aria-label="APME system health">
+        <ApmeTable aria-label="APME system health">
           <TableHeader>
             <Column isRowHeader>Component</Column>
             <Column>Address</Column>
@@ -67,7 +67,7 @@ export function ApmeHealth({ adapter }: ApmeHealthProps) {
               </Row>
             )}
           </TableBody>
-        </TableRoot>
+        </ApmeTable>
       )}
     </Flex>
   );

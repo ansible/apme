@@ -1,4 +1,5 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeTable } from "./layout";
 import { useCallback, useState } from "react";
 import {
   Button,
@@ -8,7 +9,6 @@ import {
   Row,
   TableBody,
   TableHeader,
-  TableRoot,
   Text,
 } from "@backstage/ui";
 import { listProjectActivity } from "@apme/client";
@@ -60,7 +60,7 @@ function ApmeProjectHistoryContent({
             {state.value.total}{" "}
             {state.value.total_is_exact === false ? "available runs" : "runs"}
           </Text>
-          <TableRoot aria-label="Project history">
+          <ApmeTable aria-label="Project history">
             <TableHeader>
               <Column isRowHeader>Run</Column>
               <Column>Started</Column>
@@ -96,7 +96,7 @@ function ApmeProjectHistoryContent({
                 </Row>
               )}
             </TableBody>
-          </TableRoot>
+          </ApmeTable>
         </>
       )}
       <PageControls

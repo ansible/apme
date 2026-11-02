@@ -7,9 +7,10 @@ import { ApmeGalaxySettings } from "./ApmeGalaxySettings";
 import { ApmeModelSettings } from "./ApmeModelSettings";
 import { ApmeAiProviders } from "./ApmeAiProviders";
 import { apmeHostApiRef } from "../api/apmeApi";
+import { SectionHeader } from "./layout";
 import { useLoad } from "./useLoad";
 
-/** Global APME settings, mounted in the host's existing Settings page. */
+/** Global APME settings for a host-provided settings route or section. */
 export function ApmeSettingsPageContent() {
   const hostApi = useApi(apmeHostApiRef);
   const load = useCallback(() => hostApi.getAdapter(), [hostApi]);
@@ -24,7 +25,7 @@ export function ApmeSettingsPageContent() {
     );
   if (!adapter) return <Text role="status">Connecting to APME…</Text>;
   return (
-    <Box p="6">
+    <Box className="apme-ui apme-page">
       <ApmeSettings
         adapter={adapter}
         canViewSettings={hostApi.canViewSettings === true}
@@ -52,23 +53,30 @@ export function ApmeSettings({
 }: ApmeSettingsProps) {
   const [modelsRevision, setModelsRevision] = useState(0);
   return (
-    <Flex direction="column" gap="6">
-      <Text as="h2" variant="title-medium">
-        Settings
-      </Text>
-      <ApmeAiProviders
-        adapter={adapter}
-        canView={canViewSettings}
-        canManage={canManageSettings}
-        onChanged={() => setModelsRevision((value) => value + 1)}
+    <Flex className="apme-ui apme-form" direction="column" gap="4">
+      <SectionHeader
+        title="Settings"
+        description="Manage AI providers, model preferences and Galaxy access."
       />
-      <ApmeModelSettings key={modelsRevision} adapter={adapter} />
-      <ApmeGalaxySettings
-        adapter={adapter}
-        canView={canViewSettings}
-        canManage={canManageSettings}
-        supportsCertificateSettings={supportsGalaxyCertificateSettings}
-      />
+      <div className="apme-panel">
+        <ApmeAiProviders
+          adapter={adapter}
+          canView={canViewSettings}
+          canManage={canManageSettings}
+          onChanged={() => setModelsRevision((value) => value + 1)}
+        />
+      </div>
+      <div className="apme-panel">
+        <ApmeModelSettings key={modelsRevision} adapter={adapter} />
+      </div>
+      <div className="apme-panel">
+        <ApmeGalaxySettings
+          adapter={adapter}
+          canView={canViewSettings}
+          canManage={canManageSettings}
+          supportsCertificateSettings={supportsGalaxyCertificateSettings}
+        />
+      </div>
     </Flex>
   );
 }

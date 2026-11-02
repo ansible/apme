@@ -3,6 +3,7 @@ import { useCallback, type ReactNode } from "react";
 import { Alert, Flex, Text } from "@backstage/ui";
 import { getProject, type ProjectDetail } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
+import "./layout.css";
 import { useLoad } from "./useLoad";
 
 export function ProjectDetails({
@@ -30,16 +31,19 @@ export function ProjectDetails({
     );
   if (!project) return <Text role="status">Loading project…</Text>;
   return (
-    <Flex direction="column" gap="2">
-      <Text as="h2" variant="title-medium">
-        {project.name}
-      </Text>
-      <Text>
-        {project.repo_url} · {project.branch}
-      </Text>
-      <Text>
-        {project.total_violations} findings · {project.scan_count} checks
-      </Text>
+    <Flex className="apme-ui" direction="column" gap="4">
+      <div className="apme-stack apme-project-heading" style={{ gap: 6 }}>
+        <Text as="h2" variant="title-medium">
+          {project.name}
+        </Text>
+        <div className="apme-project-meta">
+          <Text color="secondary">{project.repo_url}</Text>
+          <Text color="secondary">Branch: {project.branch}</Text>
+          <Text color="secondary">
+            {project.total_violations} findings · {project.scan_count} checks
+          </Text>
+        </div>
+      </div>
       {typeof children === "function" ? children(project, reload) : children}
     </Flex>
   );

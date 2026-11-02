@@ -1,4 +1,5 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeTable } from "./layout";
 import { lazy, Suspense, useCallback, useState } from "react";
 import {
   Button,
@@ -9,7 +10,6 @@ import {
   SearchField,
   TableBody,
   TableHeader,
-  TableRoot,
   Text,
 } from "@backstage/ui";
 import { getProjectGraph } from "@apme/client";
@@ -106,7 +106,7 @@ function ProjectGraphContent({ projectId, adapter }: ApmeProjectGraphProps) {
                   }}
                 />
                 <Text>{nodes.length} matching nodes</Text>
-                <TableRoot aria-label="Content graph nodes">
+                <ApmeTable aria-label="Content graph nodes">
                   <TableHeader>
                     <Column isRowHeader>Node</Column>
                     <Column>Type</Column>
@@ -138,7 +138,7 @@ function ProjectGraphContent({ projectId, adapter }: ApmeProjectGraphProps) {
                       </Row>
                     )}
                   </TableBody>
-                </TableRoot>
+                </ApmeTable>
                 <PageControls
                   offset={page}
                   size={50}

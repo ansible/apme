@@ -1,4 +1,5 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import "./layout.css";
 import { useState, type FormEvent } from "react";
 import {
   Alert,
@@ -91,6 +92,7 @@ function ProjectSettingsForm({
 
   return (
     <form
+      className="apme-ui apme-form apme-panel"
       aria-label="Project settings"
       onSubmit={(event) => void submit(event)}
     >

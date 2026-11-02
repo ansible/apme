@@ -1,4 +1,5 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeTable } from "./layout";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Alert,
@@ -16,7 +17,6 @@ import {
   Select,
   TableBody,
   TableHeader,
-  TableRoot,
   Text,
   TextField,
 } from "@backstage/ui";
@@ -96,7 +96,7 @@ function GalaxySettingsContent({
       <DataStatus {...state} subject="Galaxy servers" />
       {state.value && (
         <>
-          <TableRoot aria-label="Galaxy servers">
+          <ApmeTable aria-label="Galaxy servers">
             <TableHeader>
               <Column isRowHeader>Name</Column>
               <Column>URL</Column>
@@ -145,7 +145,7 @@ function GalaxySettingsContent({
                 </Row>
               )}
             </TableBody>
-          </TableRoot>
+          </ApmeTable>
           <PageControls
             offset={page}
             size={25}

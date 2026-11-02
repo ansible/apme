@@ -25,6 +25,7 @@ import {
   type Patch,
 } from "@apme/ui-workflow";
 import { DisclosureSection } from "./DisclosureSection";
+import { SectionHeader } from "./layout";
 import { useMutation } from "./useMutation";
 
 export interface ApmeUploadWorkbenchProps {
@@ -119,14 +120,11 @@ function UploadContent() {
     ...(session.result?.patches ?? []),
   ];
   return (
-    <Flex direction="column" gap="4">
-      <Text as="h2" variant="title-medium">
-        Paste or upload Ansible content
-      </Text>
-      <Text>
-        Check uploaded content and review fixes without registering a
-        repository.
-      </Text>
+    <Flex className="apme-ui" direction="column" gap="4">
+      <SectionHeader
+        title="Paste or upload Ansible content"
+        description="Check content and review fixes without registering a repository."
+      />
       {inputError && <Alert status="danger" title={inputError} />}
       {session.error && (
         <Alert
@@ -137,73 +135,89 @@ function UploadContent() {
       )}
       {session.status === "idle" && (
         <>
-          <TextField
-            label="Pasted file name"
-            value={filename}
-            onChange={setFilename}
-          />
-          <TextAreaField
-            label="Paste Ansible content"
-            value={paste}
-            onChange={setPaste}
-          />
-          <label>
-            Select files
-            <input
-              type="file"
-              multiple
-              onChange={(event) => {
-                setFiles((previous) => [
-                  ...previous,
-                  ...Array.from(event.target.files ?? []),
-                ]);
-                event.target.value = "";
-              }}
+          <div className="apme-upload-inputs">
+            <div className="apme-panel apme-upload-source">
+              <TextField
+                label="Pasted file name"
+                value={filename}
+                onChange={setFilename}
+              />
+              <TextAreaField
+                label="Paste Ansible content"
+                value={paste}
+                onChange={setPaste}
+              />
+            </div>
+            <div className="apme-panel apme-upload-source">
+              <Text as="h3" variant="body-medium" weight="bold">
+                Upload files
+              </Text>
+              <Text color="secondary">
+                Choose individual files or an entire directory.
+              </Text>
+              <label className="apme-file-picker">
+                Select files
+                <input
+                  type="file"
+                  multiple
+                  onChange={(event) => {
+                    setFiles((previous) => [
+                      ...previous,
+                      ...Array.from(event.target.files ?? []),
+                    ]);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+              <label className="apme-file-picker">
+                Select directory
+                <input
+                  ref={directory}
+                  type="file"
+                  multiple
+                  onChange={(event) => {
+                    setFiles((previous) => [
+                      ...previous,
+                      ...Array.from(event.target.files ?? []),
+                    ]);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+              {files.length > 0 && (
+                <ul>
+                  {files.map((file, index) => (
+                    <li key={`${file.name}-${index}`}>
+                      {file.webkitRelativePath || file.name}{" "}
+                      <Button
+                        variant="tertiary"
+                        onPress={() =>
+                          setFiles((previous) =>
+                            previous.filter((_, n) => n !== index),
+                          )
+                        }
+                      >
+                        Remove {file.name}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+          <div className="apme-form apme-panel">
+            <CheckOptionsForm
+              ansibleVersion={ansibleVersion}
+              onAnsibleVersionChange={setAnsibleVersion}
+              collections={collections}
+              onCollectionsChange={setCollections}
+              enableAi={enableAi}
+              onEnableAiChange={setEnableAi}
+              autoApplyTier1={autoApplyTier1}
+              onAutoApplyTier1Change={setAutoApplyTier1}
+              idPrefix="upload"
             />
-          </label>
-          <label>
-            Select directory
-            <input
-              ref={directory}
-              type="file"
-              multiple
-              onChange={(event) => {
-                setFiles((previous) => [
-                  ...previous,
-                  ...Array.from(event.target.files ?? []),
-                ]);
-                event.target.value = "";
-              }}
-            />
-          </label>
-          <ul>
-            {files.map((file, index) => (
-              <li key={`${file.name}-${index}`}>
-                {file.webkitRelativePath || file.name}{" "}
-                <Button
-                  variant="tertiary"
-                  onPress={() =>
-                    setFiles((previous) =>
-                      previous.filter((_, n) => n !== index),
-                    )
-                  }
-                >
-                  Remove {file.name}
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <CheckOptionsForm
-            ansibleVersion={ansibleVersion}
-            onAnsibleVersionChange={setAnsibleVersion}
-            collections={collections}
-            onCollectionsChange={setCollections}
-            enableAi={enableAi}
-            onEnableAiChange={setEnableAi}
-            autoApplyTier1={autoApplyTier1}
-            onAutoApplyTier1Change={setAutoApplyTier1}
-            idPrefix="upload"
-          />
+          </div>
           <Button
             isDisabled={!files.length && !paste.trim()}
             onPress={() => void start()}
@@ -246,7 +260,7 @@ function UploadContent() {
       )}
       {session.result && (
         <>
-          <Text as="h3" variant="title-small">
+          <Text as="h3" variant="body-medium" weight="bold">
             Check complete
           </Text>
           <Text>
