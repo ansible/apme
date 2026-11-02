@@ -2,7 +2,6 @@
 import {
   createFrontendPlugin,
   PageBlueprint,
-  SubPageBlueprint,
 } from "@backstage/frontend-plugin-api";
 import {
   apmeApi,
@@ -10,25 +9,35 @@ import {
   projectsIcon,
 } from "@apme/backstage-plugin/alpha";
 import "./host.css";
+import { Navigate } from "react-router-dom";
+import { sections } from "./sections";
 
-const page = PageBlueprint.make({
-  params: {
-    path: "/apme",
-    title: "Projects",
-    routeRef: projectsRouteRef,
-    icon: projectsIcon,
-    loader: () => import("./page").then((module) => <module.LocalApmePage />),
-  },
-});
+const pages = sections.map(({ name, section, title, path, routeRef, icon }) =>
+  PageBlueprint.make({
+    ...(name ? { name } : {}),
+    params: {
+      path,
+      title,
+      routeRef,
+      icon,
+      loader: async () => {
+        if (section === "settings") {
+          const { LocalApmeSettings } = await import("./settings");
+          return <LocalApmeSettings />;
+        }
+        const { LocalApmePage } = await import("./page");
+        return <LocalApmePage section={section} />;
+      },
+    },
+  }),
+);
 
-const settings = SubPageBlueprint.make({
-  name: "settings",
-  attachTo: { id: "page:user-settings", input: "pages" },
+// Preserve direct bookmarks without adding another Settings navigation entry.
+const legacySettings = PageBlueprint.make({
+  name: "legacy-settings",
   params: {
-    path: "apme",
-    title: "APME",
-    loader: () =>
-      import("./settings").then((module) => <module.LocalApmeSettings />),
+    path: "/settings/apme",
+    loader: async () => <Navigate to="/apme/settings" replace />,
   },
 });
 
@@ -38,5 +47,5 @@ export default createFrontendPlugin({
   title: "Projects",
   icon: projectsIcon,
   routes: { root: projectsRouteRef },
-  extensions: [apmeApi, page, settings],
+  extensions: [apmeApi, ...pages, legacySettings],
 });

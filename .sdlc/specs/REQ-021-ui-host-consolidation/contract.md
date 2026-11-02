@@ -19,7 +19,10 @@ enables it. The editor calls the existing authenticated Gateway PATCH contract
 through the supplied adapter; Portal must authorize the selected resource and
 expose an update route before enabling it. Blank, untouched tokens are omitted;
 explicit removal sends an empty token. Global settings remain independently
-gated and Local mounts them at the host Settings page via the `./settings` export.
+gated and Local mounts them at `/apme/settings` via the `./settings` export.
+Local groups Projects, Rules, Health, Paste / upload and Settings under APME.
+The workbench accepts an explicit `section` and `showSectionNavigation={false}`
+for host-owned routes; its embedded defaults remain unchanged.
 
 Product release tarballs use the product version and immutable GitHub Release
 URLs for package-to-package dependencies. Local verification can pack the same

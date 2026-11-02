@@ -43,6 +43,12 @@ TASK-003; consumes TASK-004 feature families incrementally.
 
 ## Implementation Notes
 
+Local section navigation is complete in [TASK-014](TASK-014-local-section-navigation.md).
+This supersedes the earlier Local settings placement: Projects, Rules, Health,
+Paste / upload and global Settings now have separate routes grouped under APME.
+Host appearance/account preferences remain under User settings. Old global
+settings links redirect, and per-project settings remain inside project details.
+
 Portal artifact implementation is complete in [TASK-013](TASK-013-portal-artifact-integration.md).
 The original guest frontend/common/catalog/scaffolder sources now live in APME's
 Portal-only adapters, with explicit SDK peers and preserved host API/settings

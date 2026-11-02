@@ -2,15 +2,30 @@
 import { Navigate, useSearchParams } from "react-router-dom";
 import { ApmePageContent } from "@apme/backstage-plugin/page";
 import { LocalThemeProvider } from "./LocalThemeProvider";
+import { sectionPath } from "./sections";
 
-export function LocalApmePage() {
+export function LocalApmePage({
+  section,
+}: {
+  section: "repositories" | "rules" | "health" | "upload";
+}) {
   const [params] = useSearchParams();
-  if (params.get("view") === "settings") {
-    return <Navigate to="/settings/apme" replace />;
+  const legacyView = params.get("view");
+  const path = legacyView && sectionPath(legacyView);
+  if (path) {
+    const next = new URLSearchParams(params);
+    next.delete("view");
+    return (
+      <Navigate to={{ pathname: path, search: next.toString() }} replace />
+    );
   }
   return (
     <LocalThemeProvider>
-      <ApmePageContent showGlobalSettings={false} />
+      <ApmePageContent
+        section={section}
+        showSectionNavigation={false}
+        showGlobalSettings={false}
+      />
     </LocalThemeProvider>
   );
 }

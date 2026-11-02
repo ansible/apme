@@ -151,25 +151,28 @@ libraries and host supply the palettes; Local does not define custom colors.
 
 ### Local navigation and settings
 
-Local's sidebar contains Projects and Settings; unused host Catalog Graph and
-Search pages are disabled. The APME project Graph tab remains available.
-The existing APME product icon and name appear above the links; selecting the
-brand returns to Projects. A collapsed sidebar shows the icon alone.
-Projects is the default page and a persistent sidebar link. Select a repository,
+Local's sidebar groups five destinations beneath a collapsible APME heading:
+Projects (`/`), Rules (`/apme/rules`), Health (`/apme/health`), Paste / upload
+(`/apme/upload`) and Settings (`/apme/settings`). Each has a dedicated page;
+the workbench's duplicate section buttons are hidden. The heading uses the
+existing product icon, which remains visible when the sidebar is collapsed.
+Unused host Catalog Graph and Search pages are disabled; the APME project Graph
+tab remains available. Projects is the default page. Select a repository,
 then its **Settings** tab to edit its name, URL, branch, SCM provider or token.
 Blank tokens preserve the existing credential; token removal is explicit. Saving
 refreshes the project header and returning to the list shows the updated metadata.
 
 Instance-wide AI providers, model preferences and Galaxy servers are under the
-existing host **Settings → APME** tab (`/settings/apme`). Local no longer has a
-duplicate global Settings button inside Projects. Old `?view=settings` links
-redirect to the host settings page.
+**APME → Settings** page. The host's appearance and account preferences remain
+available under **User settings** (`/settings`). Old `?view=rules`, `?view=health`,
+`?view=upload`, `?view=settings` and `/settings/apme` bookmarks redirect to the
+corresponding new pages.
 
 The shared components expose project editing only with an explicit
 `canManageProjects` / `canManageProject` host capability. Local enables it for its
 single owner. Portal must supply resource authorization and an authorized update
 route before enabling the shared editor. Local sidebar/layout overrides and the
-host settings contribution are kept in the private Local wrapper.
+section routes are kept in the private Local wrapper.
 
 ## Project views and Portal list compatibility
 

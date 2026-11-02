@@ -113,10 +113,14 @@ read-only. Real-host RBAC/theme acceptance remains in TASK-005.
 
 ## Model and Galaxy settings
 
-Local contributes global APME settings under the host's existing **Settings →
-APME** tab using `ApmeSettingsPageContent` from the `./settings` entry point.
+Local mounts global APME settings at **APME → Settings** (`/apme/settings`)
+using `ApmeSettingsPageContent` from the `./settings` entry point.
 The shared workbench can hide its global settings control with
 `showGlobalSettings={false}` when its host supplies that navigation.
+Hosts with dedicated section routes can supply `section="repositories"`,
+`"rules"`, `"health"` or `"upload"` and `showSectionNavigation={false}` to
+`ApmePageContent`/`ApmeWorkbench`. The host supplies page titles; embedded hosts
+that omit these props retain the workbench's section buttons and heading.
 
 Embed `ApmeSettings` or its `ApmeModelSettings` / `ApmeGalaxySettings` children.
 The model selector uses the existing workflow's browser preference and model API.
