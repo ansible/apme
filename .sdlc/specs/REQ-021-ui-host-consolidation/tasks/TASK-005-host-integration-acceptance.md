@@ -19,6 +19,13 @@ TASK-003; consumes TASK-004 feature families incrementally.
 
 ## Implementation Notes
 
+Local branding uses the existing `frontend/public/apme.svg` product asset and
+an APME label above the sidebar links, with a home link to Projects. Use the
+host's navigation-content extension and Sidebar components so pinning, hover,
+collapsed icons and mobile navigation retain host behavior. Export the app
+navigation module as a separate frontend feature and validate its metadata during
+dynamic packaging. Portal navigation remains host-owned.
+
 Correct Local host composition: register a root route reference and icon so
 Projects appears in the host sidebar on every page; align the fixed sidebar with
 the pinned host's inset viewport to prevent clipping. Contribute global APME
@@ -285,3 +292,22 @@ Frontend checks, repository lint and the clean Local image build pass. Manual
 Chromium inspection confirms only Projects and Settings in the sidebar, with
 both `/catalog-graph` and `/search` rendering the host's page-not-found view.
 The preview has no Gateway, so no backend workflow acceptance is claimed.
+
+### Local sidebar branding (2026-11-02)
+
+The Local app navigation module adds the existing product icon and APME name
+above Projects and Settings using the host's navigation-content blueprint and
+Sidebar components. The icon is bundled from the original product asset, and
+the brand links to Projects. The host continues to control pinning/collapse;
+collapsed navigation shows the icon with an accessible home-link label.
+Packaging now checks that both the frontend plugin and app navigation module
+are declared in dynamic feature metadata.
+
+The wrapper declares the pinned host core-components and app-react APIs directly.
+Dependency installation reports 95 npm findings (7 low, 88 moderate, no
+high/critical); existing dependency warnings remain visible. This is not a
+security scan of the host image. Clean container build, type/format checks and
+repository lint pass. Chromium inspection confirms the icon loads from the
+federated plugin asset, branding sits above both links, unpinning shows the
+icon-only header, and selecting the brand from Settings returns to Projects.
+The preview has no Gateway and does not establish workflow acceptance.

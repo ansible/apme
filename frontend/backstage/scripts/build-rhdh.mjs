@@ -31,6 +31,12 @@ const manifest = JSON.parse(readFileSync(frontendManifest, "utf8"));
 if (manifest.backstage?.features?.["."] !== "@backstage/FrontendPlugin") {
     throw new Error("RHDH export did not register the APME frontend feature");
 }
+if (
+    manifest.backstage?.features?.["./navigation"] !==
+    "@backstage/FrontendModule"
+) {
+    throw new Error("RHDH export did not register the Local navigation module");
+}
 for (const asset of ["mf-manifest.json", "remoteEntry.js"]) {
     if (!existsSync(resolve(frontend, "dist-dynamic/dist", asset))) {
         throw new Error(

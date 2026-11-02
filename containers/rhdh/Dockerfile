@@ -15,6 +15,7 @@ COPY containers/rhdh/plugin/package.json containers/rhdh/plugin/
 RUN npm ci
 COPY frontend/packages frontend/packages
 COPY frontend/backstage frontend/backstage
+COPY frontend/public/apme.svg frontend/public/apme.svg
 COPY containers/rhdh/plugin containers/rhdh/plugin
 RUN npm run build && node frontend/backstage/scripts/build-rhdh.mjs
 
