@@ -8,6 +8,30 @@
 
 In Progress
 
+## Implementation Approval
+
+**Approved** — explicit maintainer authorization for the Portal integration
+scope supplied in the conversation on 2026-11-02:
+
+- Add the standard frontend `./alpha` NFS entry point, injected host API,
+  Projects page, Portal surface descriptors, owner-prefixed manifest IDs,
+  entitlement/config/content-type gates and the `ansible.apme.*` config schema.
+- Port the Portal backend operations, input/output schemas, REST exposure and
+  audit metadata; catalog-to-Gateway synchronization and authorized routers;
+  repository registration/deregistration and scaffolder template/action.
+- Package the client, workflow, frontend and backend release artifacts. Keep
+  standalone packages free of Portal/AAP dependencies and declare Portal
+  integration dependencies as peers rather than workspace references. Prepare
+  Portal to consume pinned release artifacts before deleting `workspaces/apme`
+  in a follow-up PR.
+
+This approves implementation; it does not mark these deliverables complete.
+Use static NFS declarations while runtime manifest discovery only validates and
+logs. Account for the host's missing native settings/navigation surfaces and
+experimental manifest compatibility behavior. Resolve ownership of `/apme/*`
+OpenAPI paths and the `apme` settings capability during integration. A release
+is still a prerequisite for Portal's artifact switch and workspace removal.
+
 ## Description
 
 Consume APME artifacts in both actual hosts, finish Portal composition/RBAC
