@@ -7,6 +7,8 @@ app:
     # Local repositories are Gateway projects, not Backstage catalog imports.
     - page:catalog: false
     - page:catalog-import: false
+    - page:catalog-graph: false
+    - page:search: false
     - page:scaffolder: false
     - page:apme:
         config:

@@ -273,3 +273,15 @@ alias returned to the canonical ID with Settings selected. Type/format checks,
 repository lint and the image build pass. No additional test suites were run.
 Engine and Abbenay were absent from this preview; no scan/remediation, provider
 administration or Portal authorization acceptance is claimed here.
+
+### Remove unused Local host pages (2026-11-02)
+
+Disable `page:catalog-graph` and `page:search` in the personal Local profile.
+The sidebar now contains Projects and Settings. This does not disable the APME
+project Graph tab or change Portal configuration. The pinned base image still
+contains its built-in packages; this change disables the unused frontend pages.
+
+Frontend checks, repository lint and the clean Local image build pass. Manual
+Chromium inspection confirms only Projects and Settings in the sidebar, with
+both `/catalog-graph` and `/search` rendering the host's page-not-found view.
+The preview has no Gateway, so no backend workflow acceptance is claimed.

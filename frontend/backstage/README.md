@@ -151,6 +151,8 @@ libraries and host supply the palettes; Local does not define custom colors.
 
 ### Local navigation and settings
 
+Local's sidebar contains Projects and Settings; unused host Catalog Graph and
+Search pages are disabled. The APME project Graph tab remains available.
 Projects is the default page and a persistent sidebar link. Select a repository,
 then its **Settings** tab to edit its name, URL, branch, SCM provider or token.
 Blank tokens preserve the existing credential; token removal is explicit. Saving

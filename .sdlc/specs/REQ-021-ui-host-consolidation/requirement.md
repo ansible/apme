@@ -49,7 +49,9 @@ SCM provider/token fields. Portal may maintain host-side repository records to
 enforce ownership and RBAC; users must not need to commit catalog metadata.
 
 Local must expose Projects as a persistent sidebar destination, including when
-another host page is open, with no clipped navigation labels. A selected project
+another host page is open, with no clipped navigation labels. Local navigation
+includes only Projects and Settings; disable the unused host Catalog Graph and
+Search pages. Keep APME's project-scoped graph available. A selected project
 must have its own Settings tab for updating its name, URL, branch, SCM provider
 and credential. Unchanged credentials must be preserved and never fetched back
 into the form. Global APME settings belong under the host's existing Settings
