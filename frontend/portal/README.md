@@ -38,6 +38,11 @@ tox -e frontend-ci,portal-sdk-install,portal-build
 tox -e portal-pack -- --version X.Y.Z --output dist/ui-packages
 ```
 
+`portal-sdk-install` disables bulk SDK lifecycle scripts, then explicitly rebuilds
+`better-sqlite3` for the catalog integration tests. This needs the native compiler
+toolchain when a prebuilt binary is unavailable. Tests and builds prepare the same
+SDK module link, so running tests first works on a fresh checkout.
+
 The four standalone artifacts are built first. Two Portal-only tarballs are added
 to the same release manifest/checksums. Adapter dependencies on APME artifacts
 use immutable URLs for that release. SDK/AAP packages are host-provided peer

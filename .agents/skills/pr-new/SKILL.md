@@ -170,8 +170,10 @@ artifact type, translate it:
    `persist-credentials: false` set so `GITHUB_TOKEN` is not left
    in local Git config? Match sibling jobs in the same workflow.
    Reproduce build/test commands from a fresh checkout in CI order; verify their
-   dependency setup does not rely on outputs, symlinks or caches from an earlier
-   local build. For published immutable assets, retries must verify existing bytes
+   dependency setup does not rely on outputs, symlinks, native addon binaries or
+   caches from an earlier local build. If lifecycle scripts are disabled, verify
+   runtime-required native dependencies have an explicit preparation step.
+   For published immutable assets, retries must verify existing bytes
    and complete missing uploads without overwriting different published content.
 
 6. **Is there dead weight?** Check for unused imports, unreachable

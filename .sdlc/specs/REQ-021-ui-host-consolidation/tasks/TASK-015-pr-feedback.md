@@ -12,7 +12,8 @@ Complete — implementation and local regression coverage; remote results are re
 
 Address PR #832 review feedback, accepting cidrblock's requested reusable view
 exports, explicit host capability selection and audience-oriented documentation.
-Fix fresh-checkout Portal test setup and upload security/resource findings,
+Fix fresh-checkout Portal test setup (SDK module resolution and an explicit
+SQLite native driver build) and upload security/resource findings,
 read-only project controls, package output containment and CI configuration.
 Live two-host runtime acceptance and native retirement are tracked in
 [issue #833](https://github.com/ansible/apme/issues/833).
