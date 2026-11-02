@@ -70,6 +70,7 @@ export function ApmeProjectTabs({
   onCloseActivity,
   project,
   canManageProject = false,
+  canAcknowledgeFindings = false,
   onProjectUpdated,
   projectViews = allApmeProjectViews,
 }: {
@@ -82,6 +83,7 @@ export function ApmeProjectTabs({
   onCloseActivity: () => void;
   project?: ProjectDetail;
   canManageProject?: boolean;
+  canAcknowledgeFindings?: boolean;
   onProjectUpdated?: () => void;
   projectViews?: readonly ApmeProjectView[];
 }) {
@@ -160,6 +162,7 @@ export function ApmeProjectTabs({
               <ApmeProjectDependencies
                 projectId={projectId}
                 adapter={adapter}
+                canAcknowledge={canAcknowledgeFindings}
               />
             )}
           </Suspense>

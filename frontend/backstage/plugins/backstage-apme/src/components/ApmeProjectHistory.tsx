@@ -40,7 +40,7 @@ function ApmeProjectHistoryContent({
   );
   const state = useLoad(load);
   return (
-    <Flex direction="column" gap="4">
+    <Flex className="apme-ui" direction="column" gap="4">
       <Flex justify="between" align="center">
         <Text as="h3" variant="title-small">
           Project history
@@ -78,12 +78,19 @@ function ApmeProjectHistoryContent({
                   <Cell>
                     <Button
                       variant="tertiary"
+                      className="apme-table-link apme-run-link"
+                      aria-label={`${run.scan_type === "fix" || run.scan_type === "remediate" ? "Remediate" : "Check"} · ${run.scan_id}`}
                       onPress={() => onOpenActivity(run.scan_id)}
                     >
                       {run.scan_type === "fix" || run.scan_type === "remediate"
                         ? "Remediate"
                         : "Check"}{" "}
-                      · {run.scan_id}
+                      <span className="apme-run-id" title={run.scan_id}>
+                        ·{" "}
+                        {run.scan_id.length > 16
+                          ? `${run.scan_id.slice(0, 12)}…`
+                          : run.scan_id}
+                      </span>
                     </Button>
                   </Cell>
                   <Cell>

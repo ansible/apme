@@ -282,15 +282,17 @@ it("does not show a late activity response after the selected activity changes",
 });
 
 it("pages dependency tables locally and searches without repeating the Gateway request", async () => {
-  const fetch = vi.fn(async () =>
-    json({
-      ...deps,
-      collections: Array.from({ length: 30 }, (_, index) => ({
-        fqcn: `test.collection${index}`,
-        version: "1",
-        source: "galaxy",
-      })),
-    }),
+  const fetch = vi.fn(async (input: RequestInfo | URL) =>
+    String(input).includes("/violations?")
+      ? json([])
+      : json({
+          ...deps,
+          collections: Array.from({ length: 30 }, (_, index) => ({
+            fqcn: `test.collection${index}`,
+            version: "1",
+            source: "galaxy",
+          })),
+        }),
   );
   render(
     <MemoryRouter>
@@ -312,7 +314,13 @@ it("pages dependency tables locally and searches without repeating the Gateway r
   });
   expect(within(table).getByText("test.collection2")).toBeTruthy();
   expect(within(table).queryByText("test.collection1")).toBeNull();
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(
+    fetch.mock.calls.filter(([url]) => String(url).endsWith("/dependencies")),
+  ).toHaveLength(1);
+  expect(
+    fetch.mock.calls.filter(([url]) => String(url).includes("/violations?")),
+  ).toHaveLength(1);
 });
 
 it("keeps acknowledged findings opt-in and requests a sentinel row for finding pagination", async () => {

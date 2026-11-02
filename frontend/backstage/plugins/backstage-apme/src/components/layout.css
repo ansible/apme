@@ -161,9 +161,136 @@
   border: 0;
   border-radius: 2px;
   background: transparent;
-  color: var(--bui-fg-info);
+  color: var(--apme-link);
   font-weight: 500;
 }
 .apme-ui table.bui-Table button.bui-Button.apme-table-link:hover {
   text-decoration: underline;
+}
+
+/* Match the original APME outlined table surfaces and PatternFly link palette. */
+.apme-ui {
+  --apme-surface: #fff;
+  --apme-table-heading: #f5f5f5;
+  --apme-text: #151515;
+  --apme-muted: #6a6e73;
+  --apme-line: rgba(0, 0, 0, 0.12);
+  --apme-link: #0066cc;
+  --apme-hover: #f5f5f5;
+}
+:where([data-theme-mode="dark"], .pf-v6-theme-dark) .apme-ui {
+  --apme-surface: #212121;
+  --apme-table-heading: #2a2a2a;
+  --apme-text: #e0e0e0;
+  --apme-muted: #a8a8a8;
+  --apme-line: rgba(255, 255, 255, 0.12);
+  --apme-link: #73bcf7;
+  --apme-hover: #2e2e2e;
+}
+.apme-ui .apme-table-scroll,
+.apme-ui .apme-panel,
+.apme-ui .apme-settings-item {
+  background: var(--apme-surface);
+  border-color: var(--apme-line);
+}
+.apme-ui div.apme-table-scroll table.bui-Table,
+.apme-ui table.bui-Table tbody td.bui-TableCell {
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  border-color: var(--apme-line);
+}
+.apme-ui table.bui-Table thead th.bui-TableColumn {
+  background: var(--apme-table-heading);
+  color: var(--apme-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.apme-ui table.bui-Table tbody tr:hover td.bui-TableCell {
+  background: var(--apme-hover);
+}
+.apme-ui table.bui-Table tbody tr:last-child td.bui-TableCell {
+  border-bottom: 0;
+}
+.apme-ui .apme-actions button.bui-Button,
+.apme-ui .apme-panel button.bui-Button {
+  border-radius: 4px;
+}
+.apme-ui .bui-Flex,
+.apme-ui .apme-panel,
+.apme-ui section {
+  min-width: 0;
+}
+.apme-settings {
+  width: 100%;
+  min-width: 0;
+  max-width: 72rem;
+}
+.apme-settings-header {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.apme-settings-header > .bui-Flex {
+  flex-wrap: wrap;
+}
+.apme-settings-list {
+  display: grid;
+  gap: 12px;
+}
+.apme-settings-item {
+  border: 1px solid var(--apme-line);
+  border-radius: 6px;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.apme-settings-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin: 12px 0 0;
+}
+.apme-settings-details dt {
+  font-size: 12px;
+  color: var(--apme-muted);
+  margin-bottom: 4px;
+}
+.apme-settings-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.apme-setting-url {
+  grid-column: 1 / -1;
+}
+.apme-ui table.bui-Table button.apme-run-link {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: normal;
+  text-align: left;
+}
+.apme-run-id {
+  font-family: monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.apme-issue-count {
+  font-variant-numeric: tabular-nums;
+}
+.apme-ui table.bui-Table button.apme-issue-count[data-has-issues="true"] {
+  color: var(--pf-t--global--color--status--danger--default, #c9190b);
+}
+.apme-ui .apme-findings-dialog {
+  max-width: min(70rem, calc(100vw - 32px));
+}
+.apme-dependency-summary {
+  display: flex;
+  gap: 8px 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+@media (max-width: 600px) {
+  .apme-settings-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

@@ -5,6 +5,7 @@ import {
   useSidebarOpenState,
 } from "@backstage/core-components";
 import type { NavContentComponentProps } from "@backstage/plugin-app-react";
+import { LocalThemeControl } from "./LocalThemeControl";
 import { useState, type MouseEvent } from "react";
 
 const productIcon = new URL(
@@ -92,6 +93,7 @@ function ApmeNavigation({ navItems }: NavContentComponentProps) {
             icon={() => item.icon}
           />
         ))}
+      {isOpen && <LocalThemeControl />}
     </>
   );
 }

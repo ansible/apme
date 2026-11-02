@@ -79,6 +79,7 @@ export function ApmePageContent({
       section={section}
       showSectionNavigation={showSectionNavigation}
       canUpload={hostApi.canUpload === true}
+      canAcknowledgeFindings={hostApi.canAcknowledgeFindings === true}
       canViewSettings={hostApi.canViewSettings === true}
       canManageSettings={hostApi.canManageSettings === true}
       supportsGalaxyCertificateSettings={
@@ -93,6 +94,7 @@ export interface ApmeWorkbenchProps extends ApmeSettingsProps {
   canManageRules?: boolean;
   canManageProjects?: boolean;
   canUpload?: boolean;
+  canAcknowledgeFindings?: boolean;
   /** Hosts can place global settings on their own route. */
   showGlobalSettings?: boolean;
   /** Hosts with separate section routes can fix the displayed section. */
@@ -113,6 +115,7 @@ export function ApmeWorkbench({
   showSectionNavigation = true,
   projectViews = allApmeProjectViews,
   canUpload = false,
+  canAcknowledgeFindings = false,
   canViewSettings = false,
   canManageSettings = false,
   supportsGalaxyCertificateSettings = false,
@@ -322,6 +325,7 @@ export function ApmeWorkbench({
                   }}
                   adapter={adapter}
                   projectViews={projectViews}
+                  canAcknowledgeFindings={canAcknowledgeFindings}
                   tab={tab}
                   activityId={activityId}
                   onTabChange={selectTab}

@@ -64,3 +64,12 @@ mounting, settings/nav blueprints and installed-plugin discovery remain host wor
 `tox -e portal-adoption -- --version X.Y.Z` generates a reviewable downstream
 patch. APME must release those artifacts before Portal can pin their immutable
 URLs and delete its old APME workspace after workflow acceptance.
+
+### Dependency triage capability
+
+Hosts explicitly opt into `canAcknowledgeFindings`; omission is read-only. The
+Local host enables this in its personal profile. The shared dependency view uses
+project-scoped suppressions with a visible confirmation of content or rule-wide
+scope, preserving ADR-055's existing fingerprint behavior. Finding requests are
+paginated and aborted when the view or authenticated adapter changes; failed
+finding requests never become zero/healthy counts.

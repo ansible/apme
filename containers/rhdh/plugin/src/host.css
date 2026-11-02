@@ -13,3 +13,27 @@
     bottom: 1.5rem;
   }
 }
+
+.apme-local-theme-control {
+  display: grid;
+  gap: 6px;
+  padding: 20px 24px;
+  font-size: 12px;
+}
+.apme-local-theme-control select {
+  min-height: 32px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  background: inherit;
+  font: inherit;
+  color-scheme: light dark;
+}
+body[data-theme-mode="light"] .apme-local-theme-control select {
+  color-scheme: light;
+}
+body[data-theme-mode="dark"] .apme-local-theme-control select {
+  color-scheme: dark;
+}

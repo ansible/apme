@@ -29,6 +29,8 @@ export interface ApmeHostApi {
   canManageSettings?: boolean;
   supportsGalaxyCertificateSettings?: boolean;
   canUpload?: boolean;
+  /** Host-authorized project-scoped dependency triage; defaults to read-only. */
+  canAcknowledgeFindings?: boolean;
 }
 
 export const apmeHostApiRef = createApiRef<ApmeHostApi>({
@@ -59,6 +61,7 @@ export const apmeHostApiFactory: ApiFactory<
     canManageSettings: true,
     supportsGalaxyCertificateSettings: true,
     canUpload: true,
+    canAcknowledgeFindings: true,
     async getAdapter() {
       const configured = configApi.getOptionalString("apme.apiBase");
       const apiBase =

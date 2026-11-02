@@ -152,3 +152,4 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 |------|--------|--------|
 | 2026-10-30 | Codex | Recorded user-approved direction and implementation authorization |
 | 2026-11-02 | Codex | Accepted cidrblock's audience and composition guidance; added public view subpaths and host-declared project view capabilities; runtime acceptance remains in progress |
+| 2026-11-02 | Codex | Added explicit host opt-in for project-scoped dependency acknowledgment; Local exposes the host's persisted theme preference; shared dependency views retain existing suppression semantics |

@@ -1,22 +1,17 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
-import { ApmeTable } from "./layout";
+
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Alert,
   Button,
-  Cell,
   Checkbox,
-  Column,
   Dialog,
   DialogBody,
   DialogFooter,
   DialogHeader,
   Flex,
   PasswordField,
-  Row,
   Select,
-  TableBody,
-  TableHeader,
   Text,
   TextField,
 } from "@backstage/ui";
@@ -71,11 +66,11 @@ function GalaxySettingsContent({
   );
   return (
     <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
+      <Flex className="apme-settings-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           Galaxy servers
         </Text>
-        <Flex gap="2">
+        <Flex gap="2" style={{ flexWrap: "wrap" }}>
           <Button
             variant="secondary"
             onPress={state.reload}
@@ -96,56 +91,68 @@ function GalaxySettingsContent({
       <DataStatus {...state} subject="Galaxy servers" />
       {state.value && (
         <>
-          <ApmeTable aria-label="Galaxy servers">
-            <TableHeader>
-              <Column isRowHeader>Name</Column>
-              <Column>URL</Column>
-              <Column>Authentication URL</Column>
-              <Column>Token</Column>
-              <Column>Certificates</Column>
-              <Column>Actions</Column>
-            </TableHeader>
-            <TableBody
-              items={state.value.slice(page, page + 25)}
-              renderEmptyState={() => "No Galaxy servers configured."}
-            >
-              {(server) => (
-                <Row id={server.id}>
-                  <Cell>{server.name}</Cell>
-                  <Cell>{server.url}</Cell>
-                  <Cell>{server.auth_url || "None"}</Cell>
-                  <Cell>{server.has_token ? "Configured" : "None"}</Cell>
-                  <Cell>
-                    {server.validate_certs == null
-                      ? "Deployment default"
-                      : server.validate_certs
-                        ? "Verify"
-                        : "Skip verification"}
-                  </Cell>
-                  <Cell>
-                    {canManage ? (
-                      <Flex gap="2">
-                        <Button
-                          variant="secondary"
-                          onPress={() => setEditingId(server.id)}
-                        >
-                          Edit {server.name}
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onPress={() => setDeletingId(server.id)}
-                        >
-                          Delete {server.name}
-                        </Button>
-                      </Flex>
-                    ) : (
-                      "Read only"
-                    )}
-                  </Cell>
-                </Row>
-              )}
-            </TableBody>
-          </ApmeTable>
+          <div className="apme-settings-list" aria-label="Galaxy servers">
+            {state.value.length === 0 && (
+              <Text>No Galaxy servers configured.</Text>
+            )}
+            {state.value.slice(page, page + 25).map((server) => (
+              <section
+                className="apme-settings-item"
+                key={server.id}
+                aria-label={`Galaxy server ${server.name}`}
+              >
+                <div className="apme-section-header">
+                  <Text as="h4" variant="body-medium" weight="bold">
+                    {server.name}
+                  </Text>
+                  {canManage && (
+                    <div className="apme-actions">
+                      <Button
+                        variant="secondary"
+                        aria-label={`Edit ${server.name}`}
+                        onPress={() => setEditingId(server.id)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        aria-label={`Delete ${server.name}`}
+                        onPress={() => setDeletingId(server.id)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <dl className="apme-settings-details">
+                  <div className="apme-setting-url">
+                    <dt>URL</dt>
+                    <dd>{server.url}</dd>
+                  </div>
+                  {server.auth_url && (
+                    <div className="apme-setting-url">
+                      <dt>Authentication URL</dt>
+                      <dd>{server.auth_url}</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt>Token</dt>
+                    <dd>{server.has_token ? "Configured" : "None"}</dd>
+                  </div>
+                  <div>
+                    <dt>Certificates</dt>
+                    <dd>
+                      {server.validate_certs == null
+                        ? "Deployment default"
+                        : server.validate_certs
+                          ? "Verify"
+                          : "Skip verification"}
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+            ))}
+          </div>
           <PageControls
             offset={page}
             size={25}

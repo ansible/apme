@@ -217,3 +217,10 @@ APME uses host-provided BUI color tokens, compact tables with contained horizont
 scrolling, bounded forms and responsive filter/upload layouts. These rules apply
 to APME components; host navigation and the surrounding application keep their own
 styles.
+
+Dependency views show open and acknowledged finding counts and load all findings
+pages before displaying complete counts. Hosts opt into project-scoped triage
+with `canAcknowledgeFindings`; read-only hosts still expose finding details.
+Acknowledgment uses the existing suppression API. The confirmation describes
+whether the scope is matching task content or every finding of that rule within
+the project, including future checks.

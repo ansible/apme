@@ -361,3 +361,7 @@ The Router fix is in a newer major than the Router 6 host baseline; do not run
 need upstream/host compatibility review. This npm audit covers the checkout's
 dependency tree, not the prebuilt RHDH image, OS packages or Node's embedded
 libraries; it does not certify the complete running image.
+
+RHDH Local exposes a **Color theme** selector in the expanded APME sidebar. Light,
+Dark and System use the host's persisted appearance preference; the existing
+**User settings → Appearance** controls remain available too.

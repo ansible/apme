@@ -64,11 +64,11 @@ function ProvidersContent({
   }
   return (
     <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
+      <Flex className="apme-settings-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           AI providers
         </Text>
-        <Flex gap="2">
+        <Flex gap="2" style={{ flexWrap: "wrap" }}>
           <Button
             variant="secondary"
             onPress={state.reload}
@@ -91,7 +91,11 @@ function ProvidersContent({
         <>
           {state.value.length === 0 && <Text>No AI providers configured.</Text>}
           {state.value.slice(page, page + 25).map((provider) => (
-            <section key={provider.id} aria-label={`Provider ${provider.id}`}>
+            <section
+              className="apme-settings-item"
+              key={provider.id}
+              aria-label={`Provider ${provider.id}`}
+            >
               <Flex direction="column" gap="2">
                 <Text as="h4" variant="title-x-small">
                   {provider.id} · {provider.engine}
@@ -105,7 +109,7 @@ function ProvidersContent({
                   Models: {provider.models.join(", ") || "None configured"}
                 </Text>
                 {canManage && provider.source !== "config" && (
-                  <Flex gap="2">
+                  <Flex gap="2" style={{ flexWrap: "wrap" }}>
                     <Button
                       variant="secondary"
                       onPress={() => setEditingId(provider.id)}

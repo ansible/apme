@@ -17,11 +17,13 @@ import type { ApmeApiAdapter } from "@apme/client/transport";
 import { DataStatus, PageControls } from "./DataStatus";
 import { DisclosureSection } from "./DisclosureSection";
 import { useLoad } from "./useLoad";
+import { DependencyFindings } from "./DependencyFindings";
 import { ApmeProjectSbom } from "./ApmeProjectSbom";
 
 export interface ApmeProjectDependenciesProps {
   projectId: string;
   adapter: ApmeApiAdapter;
+  canAcknowledge?: boolean;
 }
 
 export function ApmeProjectDependencies(props: ApmeProjectDependenciesProps) {
@@ -31,6 +33,7 @@ export function ApmeProjectDependencies(props: ApmeProjectDependenciesProps) {
 function ApmeProjectDependenciesContent({
   projectId,
   adapter,
+  canAcknowledge = false,
 }: ApmeProjectDependenciesProps) {
   const [search, setSearch] = useState("");
   const [collectionOffset, setCollectionOffset] = useState(0);
@@ -55,7 +58,7 @@ function ApmeProjectDependenciesContent({
         .includes(query),
     ) ?? [];
   return (
-    <Flex direction="column" gap="4">
+    <Flex className="apme-ui" direction="column" gap="4">
       <Flex justify="between" align="center">
         <Text as="h3" variant="title-small">
           Project dependencies
@@ -84,115 +87,129 @@ function ApmeProjectDependenciesContent({
               setPythonOffset(0);
             }}
           />
-          <Text as="h4" variant="title-x-small">
-            Collections ({collections.length})
-          </Text>
-          <ApmeTable aria-label="Project collections">
-            <TableHeader>
-              <Column isRowHeader>Collection</Column>
-              <Column>Version</Column>
-              <Column>Source</Column>
-              <Column>License</Column>
-              <Column>Supplier</Column>
-            </TableHeader>
-            <TableBody
-              items={collections
-                .slice(collectionOffset, collectionOffset + 25)
-                .map((item, id) => ({
-                  ...item,
-                  id,
-                }))}
-              renderEmptyState={() =>
-                search
-                  ? "No matching collections."
-                  : "No collections recorded. Run a check to discover dependencies."
-              }
-            >
-              {(item) => (
-                <Row id={item.id}>
-                  <Cell>{item.fqcn}</Cell>
-                  <Cell>{item.version}</Cell>
-                  <Cell>{item.source}</Cell>
-                  <Cell>{item.license || "Not recorded"}</Cell>
-                  <Cell>{item.supplier || "Not recorded"}</Cell>
-                </Row>
-              )}
-            </TableBody>
-          </ApmeTable>
-          <PageControls
-            offset={collectionOffset}
-            size={25}
-            busy={false}
-            hasNext={collectionOffset + 25 < collections.length}
-            onChange={setCollectionOffset}
-            subject="collections"
-          />
-          <Text as="h4" variant="title-x-small">
-            Python packages ({packages.length})
-          </Text>
-          <ApmeTable aria-label="Project Python packages">
-            <TableHeader>
-              <Column isRowHeader>Package</Column>
-              <Column>Version</Column>
-              <Column>License</Column>
-              <Column>Supplier</Column>
-            </TableHeader>
-            <TableBody
-              items={packages
-                .slice(pythonOffset, pythonOffset + 25)
-                .map((item, id) => ({
-                  ...item,
-                  id,
-                }))}
-              renderEmptyState={() =>
-                search
-                  ? "No matching Python packages."
-                  : "No Python packages recorded."
-              }
-            >
-              {(item) => (
-                <Row id={item.id}>
-                  <Cell>{item.name}</Cell>
-                  <Cell>{item.version}</Cell>
-                  <Cell>{item.license || "Not recorded"}</Cell>
-                  <Cell>{item.supplier || "Not recorded"}</Cell>
-                </Row>
-              )}
-            </TableBody>
-          </ApmeTable>
-          <PageControls
-            offset={pythonOffset}
-            size={25}
-            busy={false}
-            hasNext={pythonOffset + 25 < packages.length}
-            onChange={setPythonOffset}
-            subject="Python packages"
-          />
-          {dependencies.requirements_files.length > 0 && (
-            <section aria-label="Requirements files">
-              <Text as="h4" variant="title-x-small">
-                Requirements files
-              </Text>
-              <ul>
-                {dependencies.requirements_files.map((file) => (
-                  <li key={file}>{file}</li>
-                ))}
-              </ul>
-            </section>
-          )}
-          {dependencies.dependency_tree && (
-            <DisclosureSection title="Dependency tree">
-              <pre
-                style={{
-                  maxHeight: 360,
-                  overflow: "auto",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {dependencies.dependency_tree}
-              </pre>
-            </DisclosureSection>
-          )}
+          <DependencyFindings
+            projectId={projectId}
+            adapter={adapter}
+            canAcknowledge={canAcknowledge}
+          >
+            {(renderIssues) => (
+              <>
+                <Text as="h4" variant="title-x-small">
+                  Collections ({collections.length})
+                </Text>
+                <ApmeTable aria-label="Project collections">
+                  <TableHeader>
+                    <Column isRowHeader>Collection</Column>
+                    <Column>Version</Column>
+                    <Column>Source</Column>
+                    <Column>License</Column>
+                    <Column>Supplier</Column>
+                    <Column>Issues</Column>
+                  </TableHeader>
+                  <TableBody
+                    items={collections
+                      .slice(collectionOffset, collectionOffset + 25)
+                      .map((item, id) => ({
+                        ...item,
+                        id,
+                      }))}
+                    renderEmptyState={() =>
+                      search
+                        ? "No matching collections."
+                        : "No collections recorded. Run a check to discover dependencies."
+                    }
+                  >
+                    {(item) => (
+                      <Row id={item.id}>
+                        <Cell>{item.fqcn}</Cell>
+                        <Cell>{item.version}</Cell>
+                        <Cell>{item.source}</Cell>
+                        <Cell>{item.license || "Not recorded"}</Cell>
+                        <Cell>{item.supplier || "Not recorded"}</Cell>
+                        <Cell>{renderIssues("collection", item.fqcn)}</Cell>
+                      </Row>
+                    )}
+                  </TableBody>
+                </ApmeTable>
+                <PageControls
+                  offset={collectionOffset}
+                  size={25}
+                  busy={false}
+                  hasNext={collectionOffset + 25 < collections.length}
+                  onChange={setCollectionOffset}
+                  subject="collections"
+                />
+                <Text as="h4" variant="title-x-small">
+                  Python packages ({packages.length})
+                </Text>
+                <ApmeTable aria-label="Project Python packages">
+                  <TableHeader>
+                    <Column isRowHeader>Package</Column>
+                    <Column>Version</Column>
+                    <Column>License</Column>
+                    <Column>Supplier</Column>
+                    <Column>Issues</Column>
+                  </TableHeader>
+                  <TableBody
+                    items={packages
+                      .slice(pythonOffset, pythonOffset + 25)
+                      .map((item, id) => ({
+                        ...item,
+                        id,
+                      }))}
+                    renderEmptyState={() =>
+                      search
+                        ? "No matching Python packages."
+                        : "No Python packages recorded."
+                    }
+                  >
+                    {(item) => (
+                      <Row id={item.id}>
+                        <Cell>{item.name}</Cell>
+                        <Cell>{item.version}</Cell>
+                        <Cell>{item.license || "Not recorded"}</Cell>
+                        <Cell>{item.supplier || "Not recorded"}</Cell>
+                        <Cell>{renderIssues("python", item.name)}</Cell>
+                      </Row>
+                    )}
+                  </TableBody>
+                </ApmeTable>
+                <PageControls
+                  offset={pythonOffset}
+                  size={25}
+                  busy={false}
+                  hasNext={pythonOffset + 25 < packages.length}
+                  onChange={setPythonOffset}
+                  subject="Python packages"
+                />
+                {dependencies.requirements_files.length > 0 && (
+                  <section aria-label="Requirements files">
+                    <Text as="h4" variant="title-x-small">
+                      Requirements files
+                    </Text>
+                    <ul>
+                      {dependencies.requirements_files.map((file) => (
+                        <li key={file}>{file}</li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+                {dependencies.dependency_tree && (
+                  <DisclosureSection title="Dependency tree">
+                    <pre
+                      style={{
+                        maxHeight: 360,
+                        overflow: "auto",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {dependencies.dependency_tree}
+                    </pre>
+                  </DisclosureSection>
+                )}
+              </>
+            )}
+          </DependencyFindings>
         </>
       )}
     </Flex>

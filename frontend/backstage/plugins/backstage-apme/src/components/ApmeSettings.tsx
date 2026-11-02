@@ -53,7 +53,7 @@ export function ApmeSettings({
 }: ApmeSettingsProps) {
   const [modelsRevision, setModelsRevision] = useState(0);
   return (
-    <Flex className="apme-ui apme-form" direction="column" gap="4">
+    <Flex className="apme-ui apme-settings" direction="column" gap="4">
       <SectionHeader
         title="Settings"
         description="Manage AI providers, model preferences and Galaxy access."

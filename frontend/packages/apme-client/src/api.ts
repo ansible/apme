@@ -446,6 +446,7 @@ export function listProjectViolations(
   severity?: string,
   ruleId?: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
+  signal?: AbortSignal,
 ): Promise<ViolationDetail[]> {
   const query = new URLSearchParams({
     limit: String(limit),
@@ -455,7 +456,7 @@ export function listProjectViolations(
   if (ruleId) query.set("rule_id", ruleId);
   return request(
     `/projects/${encodeURIComponent(projectId)}/violations?${query}`,
-    undefined,
+    signal ? { signal } : undefined,
     adapter,
   );
 }
