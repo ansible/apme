@@ -273,10 +273,10 @@ directories, preserves relative paths, rejects duplicates/traversal paths, and
 produces a ZIP of remediated files. HTTP uploads wait for each send to complete;
 ZIP code loads only on download preparation.
 
-Install `@apme/backstage-backend` alongside the frontend plugin in Local:
+Install `@apme/backstage-plugin-backend` alongside the frontend plugin in Local:
 
 ```ts
-backend.add(import("@apme/backstage-backend"));
+backend.add(import("@apme/backstage-plugin-backend"));
 ```
 
 Configure server-only `apme.gatewayBaseUrl` to the private Gateway origin. The
@@ -295,7 +295,7 @@ Embedded upload views default to denied and require `canUpload` plus an injected
 Portal must mount `createUploadSessionRouter` with its own authorization callback
 (user, organization, entitlement and scan permission) and shutdown hook. Bind the
 returned owner to both tenant and user. Do not register the personal Local policy
-in Portal. The released backend artifact is `apme-backstage-backend-VERSION.tgz`;
+in Portal. The released backend artifact is `apme-backstage-plugin-backend-VERSION.tgz`;
 release packaging now includes four packages.
 
 ## Portal lossless project integration

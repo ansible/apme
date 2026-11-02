@@ -43,6 +43,15 @@ TASK-003; consumes TASK-004 feature families incrementally.
 
 ## Implementation Notes
 
+Portal artifact implementation is complete in [TASK-013](TASK-013-portal-artifact-integration.md).
+The original guest frontend/common/catalog/scaffolder sources now live in APME's
+Portal-only adapters, with explicit SDK peers and preserved host API/settings
+identifiers. A clean packed-artifact install, host type check and frontend
+production build pass in an isolated Portal worktree without its old APME
+workspace. The Local image also builds and renders with the shared public alpha
+API declaration. The release-dependent Portal switch and real two-host workflow,
+authorization and resource acceptance below remain outstanding.
+
 Local branding uses the existing `frontend/public/apme.svg` product asset and
 an APME label above the sidebar links, with a home link to Projects. Use the
 host's navigation-content extension and Sidebar components so pinning, hover,

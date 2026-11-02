@@ -47,10 +47,24 @@ jobs:
       - name: Verify standard packages
         run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-build,frontend-lint,frontend-unit
 
+      - name: Check out the pinned Portal SDK build fixture
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ansible/ansible-backstage-plugins
+          ref: 6ab7fce5a37406c8958d1dc0291a4bc96eb1d3f5
+          path: .portal-sdk
+          persist-credentials: false
+
+      - name: Install the host SDK fixture
+        env:
+          APME_PORTAL_CHECKOUT: ${{ github.workspace }}/.portal-sdk
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e portal-sdk-install
+
       - name: Pack immutable release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-pack -- --version "${VERSION}"
+          APME_PORTAL_CHECKOUT: ${{ github.workspace }}/.portal-sdk
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e portal-pack -- --version "${VERSION}"
 
       - name: Upload packages and checksums to release
         env:

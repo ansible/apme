@@ -193,3 +193,24 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-lint,frontend-unit,frontend-pack-smoke,frontend-dev-build
+
+  portal-packages:
+    runs-on: ubuntu-24.04
+    env:
+      APME_PORTAL_CHECKOUT: ${{ github.workspace }}/.portal-sdk
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ansible/ansible-backstage-plugins
+          ref: 6ab7fce5a37406c8958d1dc0291a4bc96eb1d3f5
+          path: .portal-sdk
+          persist-credentials: false
+      - run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,portal-sdk-install,portal-unit,portal-pack-smoke
+      - run: uvx --with-requirements ci/tox-requirements.txt tox -e portal-unit -- --frontend

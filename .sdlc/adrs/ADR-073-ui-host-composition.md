@@ -56,6 +56,29 @@ for Local. Portal continues to pin standard package artifacts from an APME
 release and compose them with its catalog/RBAC during its own image build.
 The development harness is not the Local runtime.
 
+### Portal integration artifacts
+
+The four standalone artifacts remain independent of private Portal packages.
+The standard frontend gains a Backstage NFS `./alpha` export; the standard
+backend's release name is `@apme/backstage-plugin-backend`.
+
+Two additional, explicitly Portal-only adapters preserve the existing guest
+integration: `@apme/portal-plugin` (manifest and static NFS surfaces) and
+`@apme/portal-plugin-backend` (catalog module and scaffolder sub-entry). Their
+shared integration contracts are internal source, bundled into the adapters;
+they are not a new public common package. Portal SDK/AAP packages are host-provided
+peers, never workspace dependencies in release artifacts. The adapters build in
+an isolated tree against a pinned Portal SDK checkout; Local installation and
+its image build do not load that tree. This avoids adding private dependencies
+to the four standard packages while transferring APME source ownership.
+
+Keep `/api/catalog/apme/*` and the `apme` settings resource identifier compatible.
+The APME adapter owns route handlers and operation descriptors; Portal retains
+generic transport, permission-resource infrastructure and compatibility OpenAPI
+documentation. Static descriptors provide activation until the host implements
+runtime manifest mounting. A release precedes the Portal dependency switch and
+workspace deletion; those changes must not reference nonexistent release assets.
+
 ## Alternatives Considered
 
 ### Keep separate UI ownership

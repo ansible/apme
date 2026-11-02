@@ -1,4 +1,4 @@
-# @apme/backstage-backend
+# @apme/backstage-plugin-backend
 
 Optional authenticated upload transport for RHDH Local and Portal (ADR-074).
 Relays the existing Gateway FixSession WebSocket frames; does not own workflow
@@ -7,7 +7,7 @@ state or duplicate Engine behavior.
 For a personal Local deployment register the backend plugin:
 
 ```ts
-backend.add(import("@apme/backstage-backend"));
+backend.add(import("@apme/backstage-plugin-backend"));
 ```
 
 Configure the server-only Gateway origin:

@@ -1,0 +1,48 @@
+{
+  "name": "@apme/portal-plugin-backend",
+  "version": "0.0.0-dev",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/catalog/index.js",
+  "types": "./dist/catalog/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/catalog/index.d.ts",
+      "default": "./dist/catalog/index.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog/index.d.ts",
+      "default": "./dist/catalog/index.js"
+    },
+    "./scaffolder": {
+      "types": "./dist/scaffolder/index.d.ts",
+      "default": "./dist/scaffolder/index.js"
+    }
+  },
+  "files": ["dist", "config.d.ts", "README.md", "LICENSE"],
+  "configSchema": "config.d.ts",
+  "dependencies": {
+    "@backstage/backend-plugin-api": "1.10.0",
+    "@backstage/catalog-client": "1.16.1",
+    "@backstage/catalog-model": "1.10.0",
+    "@backstage/config": "1.3.8",
+    "@backstage/errors": "1.3.1",
+    "@backstage/integration": "2.1.1",
+    "@backstage/plugin-catalog-common": "1.1.10",
+    "@backstage/plugin-catalog-node": "2.2.4",
+    "@backstage/plugin-permission-common": "0.9.10",
+    "@backstage/plugin-permission-node": "0.11.3",
+    "express": "^4.18.2",
+    "express-promise-router": "^4.1.1",
+    "@backstage/plugin-scaffolder-node": "0.13.6",
+    "undici": "^6.26.0"
+  },
+  "peerDependencies": {
+    "@ansible/backstage-rhaap-common": "^2.2.10",
+    "@ansible/portal-plugin-node": "^0.1.0"
+  },
+  "backstage": {
+    "role": "backend-plugin-module",
+    "pluginId": "catalog"
+  }
+}

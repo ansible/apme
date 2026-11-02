@@ -1,5 +1,5 @@
 {
-  "name": "@apme/backstage-backend",
+  "name": "@apme/backstage-plugin-backend",
   "version": "0.0.0-dev",
   "type": "module",
   "license": "Apache-2.0",

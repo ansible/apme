@@ -39,7 +39,7 @@ try {
         [
             "--input-type=module",
             "-e",
-            "import {createDefaultApmeApiAdapter} from '@apme/client'; import {createUploadSessionRouter} from '@apme/backstage-backend'; if(typeof createUploadSessionRouter !== 'function') process.exit(1); if(createDefaultApmeApiAdapter().apiBase !== '/api/v1') process.exit(1)",
+            "import {createDefaultApmeApiAdapter} from '@apme/client'; import {createUploadSessionRouter} from '@apme/backstage-plugin-backend'; if(typeof createUploadSessionRouter !== 'function') process.exit(1); if(createDefaultApmeApiAdapter().apiBase !== '/api/v1') process.exit(1)",
         ],
         { cwd: temp, stdio: "inherit" },
     );

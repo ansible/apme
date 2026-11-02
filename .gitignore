@@ -78,6 +78,9 @@ Thumbs.db
 dependencies-output.json
 # JavaScript workspace dependencies and generated host assets
 node_modules/
+frontend/portal/dist/
+frontend/portal/node_modules
+.portal-sdk/
 frontend/backstage/dist-dev/
 *.tgz
 

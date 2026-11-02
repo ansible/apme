@@ -175,7 +175,7 @@ storage. Model-save failures after credential persistence are reported explicitl
 `ApmeUploadWorkbench` accepts `adapter` and `canUpload` (default false), supports
 paste/files/directories, reconnect, proposal approval and remediated ZIP download.
 It requires `adapter.openSessionSocket`. Local gets this from the separately
-registered `@apme/backstage-backend` plugin, configured with server-only
+registered `@apme/backstage-plugin-backend` plugin, configured with server-only
 `apme.gatewayBaseUrl`. See the workspace README and ADR-074 for installation.
 
 Use `createPortalProjectApiAdapter` after deploying the companion shared-data

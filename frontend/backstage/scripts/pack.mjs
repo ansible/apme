@@ -19,6 +19,7 @@ const { values } = parseArgs({
         version: { type: "string", default: "0.0.0-dev" },
         output: { type: "string", default: "dist/ui-packages" },
         local: { type: "boolean", default: false },
+        "with-portal": { type: "boolean", default: false },
     },
 });
 const version = values.version;
@@ -31,10 +32,26 @@ const packages = [
     ["@apme/ui-workflow", "frontend/packages/ui-workflow"],
     ["@apme/backstage-plugin", "frontend/backstage/plugins/backstage-apme"],
     [
-        "@apme/backstage-backend",
+        "@apme/backstage-plugin-backend",
         "frontend/backstage/plugins/backstage-apme-backend",
     ],
 ];
+if (values["with-portal"]) {
+    packages.push(
+        [
+            "@apme/portal-plugin",
+            "frontend/portal",
+            "manifests/frontend.json",
+            ["frontend", "common"],
+        ],
+        [
+            "@apme/portal-plugin-backend",
+            "frontend/portal",
+            "manifests/backend.json",
+            ["catalog", "scaffolder", "common"],
+        ],
+    );
+}
 const filenames = Object.fromEntries(
     packages.map(([name]) => [
         name,
@@ -42,12 +59,17 @@ const filenames = Object.fromEntries(
     ]),
 );
 const artifacts = [];
-for (const [name, directory] of packages) {
+for (const [
+    name,
+    directory,
+    manifestPath = "package.json",
+    distFolders,
+] of packages) {
     const source = join(root, directory);
     const stage = mkdtempSync(join(tmpdir(), "apme-pack-"));
     try {
         const manifest = JSON.parse(
-            readFileSync(join(source, "package.json"), "utf8"),
+            readFileSync(join(source, manifestPath), "utf8"),
         );
         manifest.version = version;
         // Release packages must not contain local workspace paths or build scripts.
@@ -60,11 +82,45 @@ for (const [name, directory] of packages) {
                     : `https://github.com/ansible/apme/releases/download/v${version}/${filenames[dependency]}`;
         }
         manifest.files = [...new Set([...(manifest.files ?? []), "LICENSE"])];
+        for (const section of [
+            "dependencies",
+            "peerDependencies",
+            "optionalDependencies",
+        ]) {
+            if (
+                Object.values(manifest[section] ?? {}).some(
+                    (value) =>
+                        /^(workspace:|file:)/.test(value) && !values.local,
+                )
+            ) {
+                throw new Error(
+                    `${name} contains a non-portable ${section} reference`,
+                );
+            }
+        }
         writeFileSync(
             join(stage, "package.json"),
             `${JSON.stringify(manifest, null, 2)}\n`,
         );
-        cpSync(join(source, "dist"), join(stage, "dist"), { recursive: true });
+        if (distFolders) {
+            for (const folder of distFolders)
+                cpSync(
+                    join(source, "dist", folder),
+                    join(stage, "dist", folder),
+                    { recursive: true },
+                );
+            cpSync(
+                join(source, "dist/build.json"),
+                join(stage, "dist/build.json"),
+            );
+        } else
+            cpSync(join(source, "dist"), join(stage, "dist"), {
+                recursive: true,
+            });
+        if (manifest.files.includes("templates"))
+            cpSync(join(source, "templates"), join(stage, "templates"), {
+                recursive: true,
+            });
         cpSync(join(source, "README.md"), join(stage, "README.md"));
         cpSync(join(root, "LICENSE"), join(stage, "LICENSE"));
         if (manifest.configSchema)

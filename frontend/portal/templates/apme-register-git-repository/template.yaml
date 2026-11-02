@@ -1,0 +1,70 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: apme-register-git-repository
+  title: Register repo for Ansible content modernization
+  description: >-
+    Registers your playbook or automation repository in the automation
+    portal catalog so it appears in Git Repos and you can run Ansible content
+    modernization from the Quality tab (scan, fix, open a PR). Registers
+    directly — no catalog-info.yaml or pull request required.
+    GitHub (github.com) only.
+  tags:
+    - apme
+    - quality
+    - git-repository
+spec:
+  owner: user:guest
+  type: service
+
+  parameters:
+    - title: Repository
+      description: >-
+        Paste a **github.com** repository URL. Organization and repository
+        name are detected automatically. Other hosts are not supported yet.
+      required:
+        - repoUrl
+        - defaultBranch
+      properties:
+        repoUrl:
+          title: GitHub repository URL
+          type: string
+          description: >-
+            Example: https://github.com/my-org/my-playbooks
+          ui:field: GitHubRepoUrlField
+        defaultBranch:
+          title: Default branch
+          type: string
+          default: main
+          description: >-
+            Branch used for modernization scans. Confirm on GitHub (Code →
+            branch dropdown) if unsure — many repos use `main`, but older
+            repos may use `master`. If your URL included `/tree/…` or
+            `/blob/…`, use that branch name here. The Quality tab validates
+            this branch before scanning.
+
+  steps:
+    - id: register-direct
+      name: Register in catalog
+      action: ansible:register:git-repository
+      input:
+        sourceControlProvider: github
+        repositoryOwner: ${{ (parameters.repoUrl | parseRepoUrl).owner }}
+        repositoryName: ${{ (parameters.repoUrl | parseRepoUrl).repo }}
+        repositoryUrl: https://github.com/${{ (parameters.repoUrl | parseRepoUrl).owner }}/${{ (parameters.repoUrl | parseRepoUrl).repo }}
+        defaultBranch: ${{ parameters.defaultBranch }}
+
+  output:
+    links:
+      - title: Go to Git Repositories
+        icon: catalog
+        url: /self-service/repositories/catalog?refresh=true
+      - title: Open repository
+        icon: catalog
+        url: /self-service/repositories/${{ steps['register-direct'].output.entityName or (parameters.repoUrl | parseRepoUrl).repo }}
+    text:
+      - title: Next steps
+        content: |
+          Your repository is now visible in **Git Repos**. Open it and go to
+          **Quality → Register and scan** to run Ansible content modernization
+          (Select issues → Create pull request).

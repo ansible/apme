@@ -12,14 +12,14 @@
     "containers/rhdh/plugin"
   ],
   "scripts": {
-    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin && npm run build -w @apme/backstage-backend",
+    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin && npm run build -w @apme/backstage-plugin-backend",
     "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json && tsc --noEmit -p tsconfig.json",
     "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",
     "dev": "vite --config frontend/backstage/vite.config.ts --host 127.0.0.1",
     "build:dev": "vite build --config frontend/backstage/vite.config.ts",
     "pack": "node frontend/backstage/scripts/pack.mjs",
-    "format": "prettier --write frontend/backstage frontend/packages/apme-client containers/rhdh tsconfig.json",
-    "format:check": "prettier --check frontend/backstage frontend/packages/apme-client containers/rhdh tsconfig.json",
+    "format": "prettier --write frontend/backstage frontend/portal frontend/packages/apme-client containers/rhdh tsconfig.json",
+    "format:check": "prettier --check frontend/backstage frontend/portal frontend/packages/apme-client containers/rhdh tsconfig.json",
     "pack:verify": "node frontend/backstage/scripts/verify-pack.mjs"
   },
   "dependencies": {

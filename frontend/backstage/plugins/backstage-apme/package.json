@@ -32,7 +32,11 @@
       "types": "./dist/components/ApmeSettings.d.ts",
       "default": "./dist/components/ApmeSettings.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./alpha": {
+      "types": "./dist/alpha.d.ts",
+      "default": "./dist/alpha.js"
+    }
   },
   "files": [
     "dist",
@@ -55,6 +59,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.6",
     "@patternfly/react-core": "^6.3.1",
-    "@patternfly/react-icons": "^6.3.1"
+    "@patternfly/react-icons": "^6.3.1",
+    "@backstage/frontend-plugin-api": "^0.18.0"
   }
 }

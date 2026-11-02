@@ -24,6 +24,9 @@
       "@apme/backstage-plugin/host-api": [
         "./plugins/backstage-apme/src/api/apmeApi.ts"
       ],
+      "@apme/backstage-plugin/alpha": [
+        "./plugins/backstage-apme/src/alpha.tsx"
+      ],
       "@apme/backstage-plugin/page": [
         "./plugins/backstage-apme/src/components/ApmePage.tsx"
       ],
