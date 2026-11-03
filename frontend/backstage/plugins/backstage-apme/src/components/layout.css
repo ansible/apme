@@ -450,7 +450,8 @@
 .apme-ui table.apme-rules-table .bui-SwitchIndicator {
   flex-shrink: 0;
 }
-.apme-ui .apme-controls button[aria-pressed="true"] {
+.apme-ui .apme-controls button.bui-Button.apme-button[aria-pressed="true"],
+.apme-ui button.bui-Button.apme-button[aria-current="page"] {
   border-color: var(--apme-link);
   color: var(--apme-link);
   background: var(--apme-hover);
