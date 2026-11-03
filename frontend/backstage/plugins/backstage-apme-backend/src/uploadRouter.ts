@@ -118,14 +118,6 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
     route(async (req, res, owner) => {
       for (const [id, binding] of owners)
         if (binding.expires < Date.now()) owners.delete(id);
-      if (
-        channels.size >= maxChannels ||
-        [...channels.values()].filter((channel) => channel.owner === owner)
-          .length >= 4
-      ) {
-        res.status(429).json({ error: "Too many upload sessions" });
-        return;
-      }
       const resume: unknown = req.body?.resume;
       if (
         resume != null &&
@@ -146,6 +138,16 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
       if (typeof resume === "string") {
         target.searchParams.set("resume", resume);
         target.searchParams.set("scan_id", owners.get(resume)!.scanId);
+      }
+      // Resolve host settings before checking capacity; no await may separate
+      // this check from channel registration or concurrent creates can overbook.
+      if (
+        channels.size >= maxChannels ||
+        [...channels.values()].filter((channel) => channel.owner === owner)
+          .length >= 4
+      ) {
+        res.status(429).json({ error: "Too many upload sessions" });
+        return;
       }
       const id = randomUUID();
       const socket = new WebSocket(target, { maxPayload });

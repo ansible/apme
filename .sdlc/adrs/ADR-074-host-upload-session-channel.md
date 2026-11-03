@@ -72,3 +72,10 @@ ADR-028, ADR-029, ADR-039, ADR-060 and ADR-073 remain authoritative.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-11-02 | Codex | Clarified the external Gateway client boundary, pre-parse authorization, request rate limits and response-body cleanup; two-host runtime acceptance remains in progress |
+
+## Concurrent channel creation
+
+Channel capacity is checked after the asynchronous host Gateway lookup and
+immediately before synchronous socket creation and registration. No await may
+separate that check from registration: concurrent requests must not exceed the
+per-owner or global channel limits while host settings resolve.

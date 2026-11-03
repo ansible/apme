@@ -16,6 +16,7 @@ let transport: ReturnType<typeof createUploadSessionRouter>;
 let base: string;
 let targets: string[];
 let authorizations: number;
+let gatewayBaseUrl: () => Promise<string>;
 
 beforeEach(async () => {
   targets = [];
@@ -35,6 +36,8 @@ beforeEach(async () => {
     socket.on("message", (data) => socket.send(data));
   });
   await new Promise<void>((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+  gatewayBaseUrl = async () =>
+    `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
   transport = createUploadSessionRouter({
     maxRequestsPerMinute: 20,
     authorize: async (req) => {
@@ -42,8 +45,7 @@ beforeEach(async () => {
       if (!req.headers["x-user"]) throw new Error("Denied");
       return String(req.headers["x-user"]);
     },
-    gatewayBaseUrl: async () =>
-      `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`,
+    gatewayBaseUrl: () => gatewayBaseUrl(),
   });
   const app = express();
   app.use(transport.router);
@@ -253,5 +255,38 @@ it("carries the existing session protocol through authenticated fetch in both di
     expect(socket.readyState).toBe(1);
   } finally {
     socket.close();
+  }
+});
+
+it("enforces channel quotas when concurrent creates await host settings", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let lookups = 0;
+  gatewayBaseUrl = async () => {
+    lookups++;
+    await pending;
+    return `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
+  };
+  const requests = Array.from({ length: 6 }, () => create("alice"));
+  try {
+    await vi.waitFor(() => expect(lookups).toBe(6));
+    release();
+    const results = await Promise.all(requests);
+    expect(
+      results.filter(({ response }) => response.status === 201),
+    ).toHaveLength(4);
+    expect(
+      results.filter(({ response }) => response.status === 429),
+    ).toHaveLength(2);
+    await Promise.all(
+      results
+        .filter(({ response }) => !response.bodyUsed)
+        .map(({ response }) => response.body?.cancel()),
+    );
+    await vi.waitFor(() => expect(targets).toHaveLength(4));
+  } finally {
+    release();
   }
 });
