@@ -15,6 +15,14 @@ export { createPortalApmeApiAdapter } from "./api/createPortalApmeApiAdapter";
 export { createPortalProjectApiAdapter } from "./api/createPortalProjectApiAdapter";
 export { ApmeWorkbench, type ApmeWorkbenchProps } from "./components/ApmePage";
 export {
+  ApmeUploadWorkbench,
+  type ApmeUploadWorkbenchProps,
+} from "./components/ApmeUploadWorkbench";
+export {
+  ApmeAiProviders,
+  type ApmeAiProvidersProps,
+} from "./components/ApmeAiProviders";
+export {
   ApmeProjectGraph,
   type ApmeProjectGraphProps,
 } from "./components/ApmeProjectGraph";

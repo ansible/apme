@@ -169,3 +169,6 @@ Implementation is split from #832 under [TASK-022](../specs/REQ-021-ui-host-cons
 
 Stage 2 adds host-composable project/data/settings views and the development
 harness. Upload administration, Portal adapters and Local activation follow.
+
+Stage 3 adds the host-authorized upload channel and AI provider administration.
+ADR-074 defines the security boundary; Local activation still follows later.

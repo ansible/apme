@@ -55,3 +55,7 @@ replay an old parent's commits after squash; do not use it for that transition.
 - Stage 2: fresh install, builds/types, 116 frontend tests, 270 native/workflow
   tests, packed-consumer checks, development harness build, repository lint and
   4,976 Python tests passed (50 skipped). No default Local deployment change.
+- Stage 3: fresh install, builds/types, 128 frontend tests (including upload
+  authorization/lifecycle), 270 native/workflow tests, four-artifact consumer
+  checks, harness build, repository lint and 4,976 Python tests passed
+  (50 skipped). Upload UI and backend authorization ship together.
