@@ -1,15 +1,17 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import { lazy, Suspense, useCallback, useState } from "react";
 import { useApi } from "@backstage/core-plugin-api";
 import { useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
-  Button,
   Cell,
   Column,
   Flex,
   Row,
+  SearchField,
+  Select,
   TableBody,
   TableHeader,
   TableRoot,
@@ -24,6 +26,7 @@ import {
 } from "./ApmeProjectTabs";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import { ProjectDetails } from "./ProjectDetails";
+import { PageControls } from "./DataStatus";
 import { useLoad } from "./useLoad";
 import { SectionHeader } from "./layout";
 import type { ApmeSettingsProps } from "./ApmeSettings";
@@ -75,6 +78,7 @@ export function ApmePageContent({
       projectViews={hostApi.projectViews}
       canManageRules={hostApi.canManageRules === true}
       canManageProjects={hostApi.canManageProjects === true}
+      canDeleteProjects={hostApi.canDeleteProjects === true}
       showGlobalSettings={showGlobalSettings}
       section={section}
       showSectionNavigation={showSectionNavigation}
@@ -93,6 +97,7 @@ export interface ApmeWorkbenchProps extends ApmeSettingsProps {
   /** Host-evaluated permission; defaults to read-only for embedded hosts. */
   canManageRules?: boolean;
   canManageProjects?: boolean;
+  canDeleteProjects?: boolean;
   canUpload?: boolean;
   canAcknowledgeFindings?: boolean;
   /** Hosts can place global settings on their own route. */
@@ -110,6 +115,7 @@ export function ApmeWorkbench({
   adapter,
   canManageRules = false,
   canManageProjects = false,
+  canDeleteProjects = false,
   showGlobalSettings = true,
   section,
   showSectionNavigation = true,
@@ -148,10 +154,13 @@ export function ApmeWorkbench({
   const activityId = params.get("scan") || undefined;
   const [adding, setAdding] = useState(false);
   const [offset, setOffset] = useState(0);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("created_at:desc");
   const [revision, setRevision] = useState(0);
   const load = useCallback(
-    () => listProjects(25, offset, "created_at", "desc", adapter),
-    [adapter, offset, revision],
+    () =>
+      listProjects(25, offset, sort.split(":")[0], sort.split(":")[1], adapter),
+    [adapter, offset, revision, sort],
   );
   const {
     value: projects,
@@ -307,6 +316,11 @@ export function ApmeWorkbench({
                   projectId={project.id}
                   project={project}
                   canManageProject={canManageProjects}
+                  canDeleteProject={canDeleteProjects}
+                  onProjectDeleted={() => {
+                    select(null);
+                    setRevision((value) => value + 1);
+                  }}
                   onProjectUpdated={() => {
                     // A name alias stops resolving after a rename. Keep the
                     // selected tab, but refresh via the canonical project ID.
@@ -337,6 +351,33 @@ export function ApmeWorkbench({
           </Flex>
         ) : (
           <Flex direction="column" gap="4">
+            <div className="apme-project-list-filters">
+              <SearchField
+                label="Filter this page"
+                placeholder="Project name, URL or branch"
+                value={search}
+                onChange={setSearch}
+              />
+              <Select
+                selectionMode="single"
+                label="Sort projects"
+                value={sort}
+                options={[
+                  { id: "created_at:desc", label: "Newest first" },
+                  { id: "created_at:asc", label: "Oldest first" },
+                  { id: "name:asc", label: "Name (A–Z)" },
+                  { id: "name:desc", label: "Name (Z–A)" },
+                  { id: "health_score:asc", label: "Lowest health first" },
+                  { id: "health_score:desc", label: "Highest health first" },
+                ]}
+                onChange={(value) => {
+                  if (typeof value === "string") {
+                    setSort(value);
+                    setOffset(0);
+                  }
+                }}
+              />
+            </div>
             {error && (
               <Alert
                 status="danger"
@@ -351,12 +392,21 @@ export function ApmeWorkbench({
                     <Column isRowHeader>Repository</Column>
                     <Column>Branch</Column>
                     <Column>Findings</Column>
+                    <Column>Health</Column>
+                    <Column>Checks</Column>
+                    <Column>Last checked</Column>
                     <Column>Operation</Column>
                   </TableHeader>
                   <TableBody
-                    items={projects?.items ?? []}
+                    items={(projects?.items ?? []).filter((project) =>
+                      `${project.name} ${project.repo_url} ${project.branch}`
+                        .toLowerCase()
+                        .includes(search.trim().toLowerCase()),
+                    )}
                     renderEmptyState={() =>
-                      "Add a repository to start a check."
+                      search.trim()
+                        ? "No matching repositories on this page."
+                        : "Add a repository to start a check."
                     }
                   >
                     {(project) => (
@@ -373,6 +423,19 @@ export function ApmeWorkbench({
                         <Cell>{project.branch}</Cell>
                         <Cell>{project.total_violations}</Cell>
                         <Cell>
+                          {typeof project.health_score === "number"
+                            ? `${Math.round(project.health_score)}%`
+                            : "Not recorded"}
+                        </Cell>
+                        <Cell>{project.scan_count}</Cell>
+                        <Cell>
+                          {project.last_scanned_at
+                            ? new Date(
+                                project.last_scanned_at,
+                              ).toLocaleDateString()
+                            : "Never"}
+                        </Cell>
+                        <Cell>
                           {project.active_operation?.status ?? "Idle"}
                         </Cell>
                       </Row>
@@ -381,24 +444,14 @@ export function ApmeWorkbench({
                 </TableRoot>
               </div>
             )}
-            <Flex gap="2" justify="end">
-              <Button
-                variant="secondary"
-                isDisabled={offset === 0 || loading}
-                onPress={() => setOffset((n) => Math.max(0, n - 25))}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="secondary"
-                isDisabled={
-                  loading || !projects || offset + 25 >= projects.total
-                }
-                onPress={() => setOffset((n) => n + 25)}
-              >
-                Next
-              </Button>
-            </Flex>
+            <PageControls
+              offset={offset}
+              size={25}
+              busy={loading}
+              hasNext={!!projects && offset + 25 < projects.total}
+              onChange={setOffset}
+              subject="repositories"
+            />
           </Flex>
         )}
       </Suspense>

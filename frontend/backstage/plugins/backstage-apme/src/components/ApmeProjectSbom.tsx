@@ -1,6 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Flex, Text } from "@backstage/ui";
+import { Alert, Flex, Text } from "@backstage/ui";
 import { getProjectSbom } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { useMutation } from "./useMutation";
@@ -49,7 +50,7 @@ function ProjectSbomContent({ projectId, adapter }: ApmeProjectSbomProps) {
     );
   }
   return (
-    <Flex direction="column" gap="2">
+    <Flex className="apme-ui" direction="column" gap="2">
       <Button
         variant="secondary"
         isDisabled={mutation.saving}

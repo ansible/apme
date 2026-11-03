@@ -82,6 +82,12 @@
   gap: 12px;
   align-items: start;
 }
+.apme-project-list-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(200px, 1fr);
+  align-items: end;
+  gap: 12px;
+}
 
 .apme-form {
   width: 100%;
@@ -143,12 +149,23 @@
   width: 100%;
   min-width: 0;
 }
+.apme-file-picker input::file-selector-button {
+  border: 1px solid var(--apme-line);
+  border-radius: 4px;
+  padding: 5px 10px;
+  margin-inline-end: 8px;
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  font: inherit;
+  cursor: pointer;
+}
 
 @media (max-width: 900px) {
   .apme-page {
     padding: 16px;
   }
   .apme-filters,
+  .apme-project-list-filters,
   .apme-upload-inputs {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -293,4 +310,148 @@
   .apme-settings-details {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* Only these opted-in controls change; the remediation workflow keeps its UI. */
+.apme-ui button.bui-Button.apme-button[data-variant] {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  height: auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 12px;
+  border: 1px solid var(--apme-line);
+  border-radius: 4px;
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: normal;
+  box-shadow: none;
+}
+.apme-ui button.bui-Button.apme-button[data-variant]:hover {
+  background: var(--apme-hover);
+  border-color: var(--apme-muted);
+}
+.apme-ui button.bui-Button.apme-button[data-variant][data-variant="primary"] {
+  background: var(--apme-link);
+  border-color: var(--apme-link);
+  color: var(--apme-surface);
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant][data-variant="primary"]:hover {
+  filter: brightness(0.9);
+}
+.apme-ui button.bui-Button.apme-button[data-variant][data-variant="tertiary"] {
+  background: transparent;
+  border-color: transparent;
+  color: var(--apme-link);
+  padding-inline: 4px;
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant][data-variant="tertiary"]:hover {
+  text-decoration: underline;
+}
+.apme-ui button.bui-Button.apme-button[data-variant][data-destructive="true"] {
+  color: var(--pf-t--global--color--status--danger--default, #c9190b);
+  border-color: currentColor;
+  background: transparent;
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant]:is(
+    [disabled],
+    [data-disabled="true"],
+    [data-ispending="true"]
+  ) {
+  color: var(--apme-muted);
+  background: transparent;
+  border-color: var(--apme-line);
+  filter: none;
+  cursor: not-allowed;
+  opacity: 0.7;
+  text-decoration: none;
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant]:is(
+    :focus-visible,
+    [data-focus-visible]
+  ) {
+  outline: 2px solid var(--apme-link);
+  outline-offset: 3px;
+}
+.apme-ui table.bui-Table button.bui-Button.apme-table-link {
+  padding: 0;
+  min-height: 28px;
+}
+.apme-ui .apme-pagination {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--apme-muted);
+}
+
+.apme-ui.apme-dialog,
+.apme-dialog .bui-DialogContent {
+  border-radius: 8px;
+}
+.apme-dialog .bui-DialogHeader button[name="close"] {
+  border: 0;
+  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  color: var(--apme-muted);
+  background: transparent;
+}
+.apme-tree-output {
+  max-height: 32rem;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre;
+  margin: 0;
+  padding: 16px;
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  border: 1px solid var(--apme-line);
+  border-radius: 4px;
+  font:
+    13px/1.7 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+.apme-ui .apme-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.apme-ui .apme-rule-severity {
+  min-width: 125px;
+}
+.apme-ui table.apme-rules-table {
+  min-width: 1080px;
+}
+.apme-ui table.apme-rules-table td:nth-child(2) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.apme-ui table.apme-rules-table .bui-Switch {
+  white-space: nowrap;
+  min-width: 95px;
+}
+.apme-ui table.apme-rules-table .bui-SwitchIndicator {
+  flex-shrink: 0;
+}
+.apme-ui .apme-controls button[aria-pressed="true"] {
+  border-color: var(--apme-link);
+  color: var(--apme-link);
+  background: var(--apme-hover);
 }

@@ -1,8 +1,8 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import { ApmeTable } from "./layout";
 import { useCallback, useState } from "react";
 import {
-  Button,
   Cell,
   Column,
   Flex,

@@ -1,18 +1,18 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeDialogFooter as DialogFooter } from "./layout";
+import { ApmeButton as Button, ApmeDialog as Dialog } from "./layout";
 import { useCallback, useState } from "react";
 import {
   Alert,
-  Button,
   Cell,
   Column,
-  Dialog,
   DialogBody,
-  DialogFooter,
   DialogHeader,
   Flex,
   Row,
   SearchField,
   Select,
+  Switch,
   TableBody,
   TableHeader,
   Text,
@@ -29,6 +29,7 @@ import { DataStatus, PageControls } from "./DataStatus";
 import { ApmeTable, SectionHeader } from "./layout";
 import { useLoad } from "./useLoad";
 import { useMutation } from "./useMutation";
+import { SEVERITY_INT_OPTIONS } from "@apme/ui-workflow/headless";
 
 export interface ApmeRulesProps {
   adapter: ApmeApiAdapter;
@@ -39,6 +40,17 @@ export interface ApmeRulesProps {
 export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
   const load = useCallback(() => listRules(undefined, adapter), [adapter]);
   const state = useLoad(load);
+  const mutation = useMutation(adapter);
+  async function configure(rule: RuleDetail, patch?: RuleOverrideRequest) {
+    if (!canManage) return;
+    await mutation.run(
+      () =>
+        patch
+          ? updateRuleConfig(rule.rule_id, patch, adapter)
+          : deleteRuleConfig(rule.rule_id, adapter),
+      state.reload,
+    );
+  }
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [category, setCategory] = useState("all");
@@ -76,6 +88,18 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
         }
       />
       <DataStatus {...state} subject="rules" />
+      {mutation.error && (
+        <Alert
+          status="danger"
+          title="Could not update rule"
+          description={mutation.error}
+        />
+      )}
+      <Text color="secondary">
+        {canManage
+          ? "Rule changes save immediately and apply to future checks in all projects."
+          : "Rule configuration is read-only for this account."}
+      </Text>
       {state.value && (
         <>
           <div className="apme-filters">
@@ -132,15 +156,21 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
             {rules.length} matching rules ·{" "}
             {state.value.filter((rule) => rule.has_override).length} overrides
           </Text>
-          <ApmeTable aria-label="APME rule catalog">
+          <ApmeTable
+            className="apme-rules-table"
+            aria-label="APME rule catalog"
+          >
             <TableHeader>
-              <Column isRowHeader>Rule</Column>
-              <Column style={{ width: "38%" }}>Description</Column>
-              <Column>Category</Column>
-              <Column>Source</Column>
-              <Column>Severity</Column>
-              <Column>Status</Column>
-              <Column>Override</Column>
+              <Column isRowHeader style={{ width: 80 }}>
+                Rule
+              </Column>
+              <Column>Description</Column>
+              <Column style={{ width: 85 }}>Category</Column>
+              <Column style={{ width: 85 }}>Source</Column>
+              <Column style={{ width: 160 }}>Severity</Column>
+              <Column style={{ width: 135 }}>Status</Column>
+              <Column style={{ width: 130 }}>Enforced</Column>
+              <Column style={{ width: 110 }}>Overrides</Column>
             </TableHeader>
             <TableBody
               items={rules.slice(page, page + 25)}
@@ -162,12 +192,71 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
                   <Cell>{rule.description}</Cell>
                   <Cell>{rule.category}</Cell>
                   <Cell>{rule.source || "Not reported"}</Cell>
-                  <Cell>{rule.effective_severity}</Cell>
                   <Cell>
-                    {rule.enabled ? "Enabled" : "Disabled"}
-                    {rule.enforced ? ", enforced" : ""}
+                    {canManage ? (
+                      <RuleSeverity
+                        rule={rule}
+                        saving={mutation.saving}
+                        onChange={(value) =>
+                          void configure(rule, { severity_override: value })
+                        }
+                      />
+                    ) : (
+                      rule.effective_severity
+                    )}
                   </Cell>
-                  <Cell>{rule.has_override ? "Yes" : "No"}</Cell>
+                  <Cell>
+                    {canManage ? (
+                      <Switch
+                        label={rule.enabled ? "Enabled" : "Disabled"}
+                        aria-label={`Enable ${rule.rule_id}`}
+                        isSelected={rule.enabled}
+                        isDisabled={mutation.saving}
+                        onChange={(enabled) =>
+                          void configure(rule, { enabled_override: enabled })
+                        }
+                      />
+                    ) : rule.enabled ? (
+                      "Enabled"
+                    ) : (
+                      "Disabled"
+                    )}
+                  </Cell>
+                  <Cell>
+                    {canManage ? (
+                      <Switch
+                        label={rule.enforced ? "Enforced" : "Off"}
+                        aria-label={`Enforce ${rule.rule_id} despite inline ignores`}
+                        isSelected={rule.enforced}
+                        isDisabled={mutation.saving}
+                        onChange={(enforced) =>
+                          void configure(rule, { enforced })
+                        }
+                      />
+                    ) : rule.enforced ? (
+                      "Yes"
+                    ) : (
+                      "No"
+                    )}
+                  </Cell>
+                  <Cell>
+                    {rule.has_override ? (
+                      canManage ? (
+                        <Button
+                          variant="tertiary"
+                          aria-label={`Reset overrides for ${rule.rule_id}`}
+                          isDisabled={mutation.saving}
+                          onPress={() => void configure(rule)}
+                        >
+                          Reset
+                        </Button>
+                      ) : (
+                        "Yes"
+                      )
+                    ) : (
+                      "Default"
+                    )}
+                  </Cell>
                 </Row>
               )}
             </TableBody>
@@ -199,7 +288,37 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
   );
 }
 
-const severities = ["Info", "Low", "Medium", "High", "Error", "Critical"];
+function RuleSeverity({
+  rule,
+  saving,
+  onChange,
+}: {
+  rule: RuleDetail;
+  saving: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <Select
+      className="apme-rule-severity"
+      selectionMode="single"
+      aria-label={`Severity for ${rule.rule_id}`}
+      value={String(rule.effective_severity_int)}
+      options={SEVERITY_INT_OPTIONS.map(({ value, label }) => ({
+        id: String(value),
+        label,
+      }))}
+      isDisabled={saving}
+      onChange={(value) => {
+        const severity = Number(value);
+        if (
+          SEVERITY_INT_OPTIONS.some((option) => option.value === severity) &&
+          severity !== rule.effective_severity_int
+        )
+          onChange(severity);
+      }}
+    />
+  );
+}
 
 function RuleDetails({
   rule,
@@ -287,19 +406,12 @@ function RuleDetails({
                   Reset all overrides
                 </Button>
               </Flex>
-              <Text>Set severity</Text>
-              <Flex gap="2" style={{ flexWrap: "wrap" }}>
-                {severities.map((label, index) => (
-                  <Button
-                    key={label}
-                    variant="secondary"
-                    isDisabled={saving}
-                    onPress={() => void save({ severity_override: index + 1 })}
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </Flex>
+              <Text>Severity override</Text>
+              <RuleSeverity
+                rule={rule}
+                saving={saving}
+                onChange={(value) => void save({ severity_override: value })}
+              />
             </>
           )}
         </Flex>

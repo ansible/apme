@@ -1,6 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import { useCallback, useState } from "react";
-import { Button, Checkbox, Flex, Link, Text } from "@backstage/ui";
+import { Checkbox, Flex, Link, Text } from "@backstage/ui";
 import { getActivity } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import {
@@ -60,8 +61,8 @@ function ApmeActivityDetailsContent({
     .map(violationToFinding);
   const prUrl = externalUrl(detail?.pr_url);
   return (
-    <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
+    <Flex className="apme-ui" direction="column" gap="4">
+      <Flex className="apme-section-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           Run {activityId}
         </Text>

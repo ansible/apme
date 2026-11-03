@@ -1,6 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import { useCallback, useState } from "react";
-import { Button, Checkbox, Flex, Text } from "@backstage/ui";
+import { Checkbox, Flex, Text } from "@backstage/ui";
 import { listProjectViolations } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { AssessFindingsPanel, violationToFinding } from "@apme/ui-workflow";
@@ -52,8 +53,8 @@ function ApmeProjectFindingsContent({
     .filter((row) => includeAcknowledged || !row.suppressed)
     .map(violationToFinding);
   return (
-    <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
+    <Flex className="apme-ui" direction="column" gap="4">
+      <Flex className="apme-section-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           Latest findings
         </Text>

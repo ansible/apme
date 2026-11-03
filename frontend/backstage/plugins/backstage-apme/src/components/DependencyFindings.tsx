@@ -1,14 +1,13 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeDialogFooter as DialogFooter } from "./layout";
+import { ApmeButton as Button, ApmeDialog as Dialog } from "./layout";
 import { useCallback, useState, type ReactNode } from "react";
 import {
   Alert,
-  Button,
   Cell,
   Checkbox,
   Column,
-  Dialog,
   DialogBody,
-  DialogFooter,
   DialogHeader,
   Row,
   TableBody,

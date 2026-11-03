@@ -6,11 +6,13 @@ import { Accordion, AccordionPanel, AccordionTrigger } from "@backstage/ui";
 export function DisclosureSection({
   title,
   children,
+  defaultExpanded = false,
 }: {
   title: string;
   children: ReactNode;
+  defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   return (
     <Accordion isExpanded={expanded} onExpandedChange={setExpanded}>
       <AccordionTrigger title={title} />

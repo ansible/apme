@@ -423,7 +423,8 @@ export async function deleteProject(
     { method: "DELETE" },
     adapter,
   );
-  if (!res.ok) throw new Error(`${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  await res.text();
 }
 
 export function listProjectActivity(
@@ -829,8 +830,9 @@ export async function updateRuleConfig(
   );
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status}: ${text}`);
+    throw new ApiError(res.status, text);
   }
+  await res.text();
 }
 
 export async function deleteRuleConfig(
@@ -844,8 +846,9 @@ export async function deleteRuleConfig(
   );
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status}: ${text}`);
+    throw new ApiError(res.status, text);
   }
+  await res.text();
 }
 
 export function getRuleStats(

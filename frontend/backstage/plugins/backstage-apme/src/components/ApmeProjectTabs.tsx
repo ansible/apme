@@ -70,6 +70,8 @@ export function ApmeProjectTabs({
   onCloseActivity,
   project,
   canManageProject = false,
+  canDeleteProject = false,
+  onProjectDeleted,
   canAcknowledgeFindings = false,
   onProjectUpdated,
   projectViews = allApmeProjectViews,
@@ -83,6 +85,8 @@ export function ApmeProjectTabs({
   onCloseActivity: () => void;
   project?: ProjectDetail;
   canManageProject?: boolean;
+  canDeleteProject?: boolean;
+  onProjectDeleted?: () => void;
   canAcknowledgeFindings?: boolean;
   onProjectUpdated?: () => void;
   projectViews?: readonly ApmeProjectView[];
@@ -187,6 +191,8 @@ export function ApmeProjectTabs({
                 project={project}
                 adapter={adapter}
                 canManage={canManageProject}
+                canDelete={canDeleteProject}
+                onDeleted={onProjectDeleted}
                 onSaved={onProjectUpdated}
               />
             )}

@@ -1,8 +1,8 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
-import { ApmeTable } from "./layout";
+import { ApmeButton as Button } from "./layout";
+import { ApmeTable, TreeOutput } from "./layout";
 import { useCallback, useState } from "react";
 import {
-  Button,
   Cell,
   Column,
   Flex,
@@ -195,16 +195,11 @@ function ApmeProjectDependenciesContent({
                   </section>
                 )}
                 {dependencies.dependency_tree && (
-                  <DisclosureSection title="Dependency tree">
-                    <pre
-                      style={{
-                        maxHeight: 360,
-                        overflow: "auto",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {dependencies.dependency_tree}
-                    </pre>
+                  <DisclosureSection title="Dependency tree" defaultExpanded>
+                    <TreeOutput
+                      text={dependencies.dependency_tree}
+                      label="Dependency tree"
+                    />
                   </DisclosureSection>
                 )}
               </>

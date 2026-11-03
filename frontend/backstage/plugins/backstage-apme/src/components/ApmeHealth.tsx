@@ -1,14 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import { useCallback } from "react";
-import {
-  Button,
-  Cell,
-  Column,
-  Flex,
-  Row,
-  TableBody,
-  TableHeader,
-} from "@backstage/ui";
+import { Cell, Column, Flex, Row, TableBody, TableHeader } from "@backstage/ui";
 import { getHealth } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { DataStatus } from "./DataStatus";

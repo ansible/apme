@@ -1,11 +1,10 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeDialogFooter as DialogFooter } from "./layout";
+import { ApmeButton as Button, ApmeDialog as Dialog } from "./layout";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Alert,
-  Button,
-  Dialog,
   DialogBody,
-  DialogFooter,
   DialogHeader,
   Flex,
   PasswordField,
@@ -63,7 +62,7 @@ function ProvidersContent({
     onChanged?.();
   }
   return (
-    <Flex direction="column" gap="4">
+    <Flex className="apme-ui" direction="column" gap="4">
       <Flex className="apme-settings-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           AI providers
@@ -118,6 +117,7 @@ function ProvidersContent({
                     </Button>
                     <Button
                       variant="secondary"
+                      destructive
                       onPress={() => setDeletingId(provider.id)}
                     >
                       Delete {provider.id}
@@ -342,6 +342,7 @@ function RemoveProvider({
           Cancel
         </Button>
         <Button
+          destructive
           isDisabled={mutation.saving}
           onPress={() =>
             void mutation.run(

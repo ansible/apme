@@ -25,6 +25,8 @@ export interface ApmeHostApi {
   canManageRules?: boolean;
   /** Opt-in project metadata/credential editing; Portal must authorize it. */
   canManageProjects?: boolean;
+  /** Independent destructive permission; embedded hosts default to denied. */
+  canDeleteProjects?: boolean;
   canViewSettings?: boolean;
   canManageSettings?: boolean;
   supportsGalaxyCertificateSettings?: boolean;
@@ -57,6 +59,7 @@ export const apmeHostApiFactory: ApiFactory<
     projectViews: allApmeProjectViews,
     canManageRules: true,
     canManageProjects: true,
+    canDeleteProjects: true,
     canViewSettings: true,
     canManageSettings: true,
     supportsGalaxyCertificateSettings: true,

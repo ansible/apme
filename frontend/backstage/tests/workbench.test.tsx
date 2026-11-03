@@ -47,6 +47,31 @@ it("does not offer repository creation when the host grants read-only project ac
   ).toBe(true);
 });
 
+it("filters only the labeled current page without refetching and uses Gateway-supported sorting", async () => {
+  const fetch = vi.fn(
+    async () => new Response(JSON.stringify({ total: 1, items: [project] })),
+  );
+  open(fetch);
+  await screen.findByRole("button", { name: "Automation" });
+  const count = fetch.mock.calls.length;
+  fireEvent.change(screen.getByLabelText("Filter this page"), {
+    target: { value: "does-not-match" },
+  });
+  expect(screen.queryByRole("button", { name: "Automation" })).toBeNull();
+  expect(
+    screen.getByText("No matching repositories on this page."),
+  ).toBeTruthy();
+  expect(fetch).toHaveBeenCalledTimes(count);
+  fireEvent.click(screen.getByRole("button", { name: /Sort projects/ }));
+  fireEvent.click(await screen.findByRole("option", { name: "Name (A–Z)" }));
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("sort_by=name&order=asc"),
+      expect.anything(),
+    ),
+  );
+});
+
 it("selects a repository and starts the existing Gateway assess-pause workflow", async () => {
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);

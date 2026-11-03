@@ -577,13 +577,16 @@ export function GraphVisualization({ data }: Props) {
         .graph-container .graph-tooltip .v.mod { color: #d2a8ff; }
         .graph-container .graph-tooltip pre { margin-top: 6px; padding: 8px; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 10px; color: #c9d1d9; white-space: pre; overflow-x: auto; max-height: 300px; line-height: 1.4; }
 
-        .graph-container .graph-controls { position: absolute; top: 12px; left: 12px; padding: 8px 12px; font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; }
-        .graph-container .graph-controls button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
+        .graph-container .graph-controls { position: absolute; top: 12px; left: 12px; max-width: calc(100% - 24px); box-sizing: border-box; padding: 8px; font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; }
+        .graph-container .graph-controls button { min-width: 28px; min-height: 28px; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
         .graph-container .graph-controls button:hover { background: #30363d; }
+        .graph-container .graph-controls button:focus-visible, .graph-container .graph-legend summary:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
         .graph-container .graph-controls .sep { width: 1px; background: #30363d; margin: 0 2px; }
         .graph-container .graph-controls button.tog-on { border-color: currentColor; background: #30363d; }
 
-        .graph-container .graph-legend { position: absolute; top: 12px; right: 12px; padding: 12px 16px; font-size: 11px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; color: #c9d1d9; user-select: none; }
+        .graph-container .graph-legend { position: absolute; bottom: 12px; right: 12px; max-width: calc(100% - 24px); max-height: calc(100% - 100px); overflow: auto; box-sizing: border-box; padding: 8px 12px; font-size: 11px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; color: #c9d1d9; user-select: none; }
+        .graph-container .graph-legend summary { cursor: pointer; min-height: 20px; line-height: 20px; font-size: 12px; }
+        .graph-container .graph-legend[open] summary { margin-bottom: 8px; }
         .graph-container .graph-legend h3 { margin-bottom: 6px; font-size: 12px; color: #f0f6fc; }
         .graph-container .graph-legend .li { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
         .graph-container .graph-legend .sw { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
@@ -637,7 +640,8 @@ export function GraphVisualization({ data }: Props) {
         </button>
       </div>
 
-      <div className="graph-legend">
+      <details className="graph-legend">
+        <summary>Legend</summary>
         <h3>Nodes</h3>
         <div className="li"><div className="sw" style={{ background: '#f85149' }} />Playbook</div>
         <div className="li"><div className="sw" style={{ background: '#f0883e' }} />Play</div>
@@ -664,7 +668,7 @@ export function GraphVisualization({ data }: Props) {
           <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#3fb950" strokeWidth="1.2" strokeDasharray="2 4" /></svg>
           notify
         </div>
-      </div>
+      </details>
 
       <div className="graph-stats">
         {nodeCount} nodes &middot; {edgeCount} edges

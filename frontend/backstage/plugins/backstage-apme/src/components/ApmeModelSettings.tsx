@@ -1,6 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Flex, Select, Text } from "@backstage/ui";
+import { Alert, Flex, Select, Text } from "@backstage/ui";
 import { listAiModels } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { AI_MODEL_STORAGE_KEY } from "@apme/ui-workflow/headless";
@@ -46,8 +47,8 @@ export function ApmeModelSettings({ adapter }: ApmeModelSettingsProps) {
     }
   }
   return (
-    <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
+    <Flex className="apme-ui" direction="column" gap="4">
+      <Flex className="apme-section-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           AI model preference
         </Text>

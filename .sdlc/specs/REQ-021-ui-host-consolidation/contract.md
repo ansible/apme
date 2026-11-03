@@ -73,3 +73,13 @@ project-scoped suppressions with a visible confirmation of content or rule-wide
 scope, preserving ADR-055's existing fingerprint behavior. Finding requests are
 paginated and aborted when the view or authenticated adapter changes; failed
 finding requests never become zero/healthy counts.
+
+### Ordinary controls and project deletion
+
+Ordinary BUI actions explicitly opt into shared button/dialog presentation; the
+remediation workflow keeps its existing controls. Rule severity, enablement and
+enforcement remain Gateway-owned global overrides (ADR-041/043). Project deletion
+requires `canDeleteProjects` in addition to project management, defaults to denied
+in embedding hosts, and confirms the project name. Local enables it for its sole
+owner. Content/dependency text trees share a presentation; the graph also retains
+its lazy D3/Dagre diagram and complete paginated node inspector.

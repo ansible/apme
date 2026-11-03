@@ -224,3 +224,17 @@ with `canAcknowledgeFindings`; read-only hosts still expose finding details.
 Acknowledgment uses the existing suppression API. The confirmation describes
 whether the scope is matching task content or every finding of that rule within
 the project, including future checks.
+
+Ordinary actions and dialogs use scoped compact controls, independently of the
+specialist remediation UI. Rule enablement, severity and enforcement are directly
+editable in the catalog when the host grants `canManageRules`. Changes affect
+future checks across projects. Project deletion requires both management and
+`canDeleteProjects`; embedding hosts default to denied. Local enables deletion
+with name confirmation and prevents it while an operation is active.
+
+Dependency trees open by default. Content graphs use the same selectable text
+presentation, with Diagram and Node list alternatives. Containment forms the
+hierarchy; other relationships remain explicit, and shared/cyclic nodes are
+references. Trees are limited to 5,000 lines, with full node access through the
+paginated inspector. See the [functionality audit](../../../../.sdlc/research/apme-local-controls-and-parity-audit.md)
+for the replacement gaps that remain before native UI retirement.

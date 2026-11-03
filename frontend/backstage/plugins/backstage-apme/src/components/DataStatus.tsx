@@ -1,5 +1,6 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
-import { Alert, Button, Flex, Text } from "@backstage/ui";
+import { ApmeButton as Button } from "./layout";
+import { Alert, Flex, Text } from "@backstage/ui";
 
 export function DataStatus({
   loading,
@@ -15,6 +16,7 @@ export function DataStatus({
   if (error)
     return (
       <Alert
+        className="apme-ui"
         status="danger"
         title={`Could not load ${subject}`}
         description={error}
@@ -44,21 +46,27 @@ export function PageControls({
   subject: string;
 }) {
   return (
-    <Flex gap="2" justify="end">
+    <nav
+      className="apme-ui apme-pagination"
+      aria-label={`${subject} pagination`}
+    >
+      <span>Page {Math.floor(offset / size) + 1}</span>
       <Button
         variant="secondary"
+        aria-label={`Previous ${subject} page`}
         isDisabled={busy || offset === 0}
         onPress={() => onChange(Math.max(0, offset - size))}
       >
-        Previous {subject} page
+        Previous
       </Button>
       <Button
         variant="secondary"
+        aria-label={`Next ${subject} page`}
         isDisabled={busy || !hasNext}
         onPress={() => onChange(offset + size)}
       >
-        Next {subject} page
+        Next
       </Button>
-    </Flex>
+    </nav>
   );
 }

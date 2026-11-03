@@ -25,7 +25,7 @@ import {
   type Patch,
 } from "@apme/ui-workflow";
 import { DisclosureSection } from "./DisclosureSection";
-import { SectionHeader } from "./layout";
+import { ApmeButton, SectionHeader } from "./layout";
 import { useMutation } from "./useMutation";
 
 export interface ApmeUploadWorkbenchProps {
@@ -189,7 +189,7 @@ function UploadContent() {
                   {files.map((file, index) => (
                     <li key={`${file.name}-${index}`}>
                       {file.webkitRelativePath || file.name}{" "}
-                      <Button
+                      <ApmeButton
                         variant="tertiary"
                         onPress={() =>
                           setFiles((previous) =>
@@ -198,7 +198,7 @@ function UploadContent() {
                         }
                       >
                         Remove {file.name}
-                      </Button>
+                      </ApmeButton>
                     </li>
                   ))}
                 </ul>

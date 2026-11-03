@@ -1,8 +1,8 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
-import { ApmeTable } from "./layout";
-import { lazy, Suspense, useCallback, useState } from "react";
+import { ApmeButton as Button } from "./layout";
+import { ApmeTable, TreeOutput } from "./layout";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import {
-  Button,
   Cell,
   Column,
   Flex,
@@ -17,6 +17,7 @@ import type { ApmeApiAdapter } from "@apme/client/transport";
 import { DataStatus, PageControls } from "./DataStatus";
 import { DisclosureSection } from "./DisclosureSection";
 import { useLoad } from "./useLoad";
+import { contentTree } from "./contentTree";
 
 const GraphVisualization = lazy(() =>
   import("@apme/ui-workflow/graph").then((module) => ({
@@ -39,11 +40,12 @@ function ProjectGraphContent({ projectId, adapter }: ApmeProjectGraphProps) {
     [projectId, adapter],
   );
   const state = useLoad(load);
-  const [diagram, setDiagram] = useState(true);
+  const [view, setView] = useState("tree");
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string>();
   const graph = state.value;
+  const tree = useMemo(() => (graph ? contentTree(graph) : ""), [graph]);
   const nodes =
     graph?.nodes.filter((node) =>
       `${node.id} ${node.data.name ?? ""} ${node.data.node_type ?? ""} ${node.data.file_path ?? ""} ${node.data.module ?? ""}`
@@ -56,8 +58,8 @@ function ProjectGraphContent({ projectId, adapter }: ApmeProjectGraphProps) {
     Math.max(0, Math.ceil(nodes.length / 50) - 1) * 50,
   );
   return (
-    <Flex direction="column" gap="4">
-      <Flex justify="between" align="center">
+    <Flex className="apme-ui" direction="column" gap="4">
+      <Flex className="apme-section-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           Content graph
         </Text>
@@ -73,23 +75,35 @@ function ProjectGraphContent({ projectId, adapter }: ApmeProjectGraphProps) {
       {graph &&
         (graph.nodes.length ? (
           <>
-            <Flex gap="2">
+            <div
+              className="apme-controls"
+              aria-label="Content graph presentation"
+            >
               <Button
                 variant="secondary"
-                aria-pressed={diagram}
-                onPress={() => setDiagram(true)}
+                aria-pressed={view === "tree"}
+                onPress={() => setView("tree")}
+              >
+                Tree
+              </Button>
+              <Button
+                variant="secondary"
+                aria-pressed={view === "diagram"}
+                onPress={() => setView("diagram")}
               >
                 Diagram
               </Button>
               <Button
                 variant="secondary"
-                aria-pressed={!diagram}
-                onPress={() => setDiagram(false)}
+                aria-pressed={view === "list"}
+                onPress={() => setView("list")}
               >
                 Node list
               </Button>
-            </Flex>
-            {diagram ? (
+            </div>
+            {view === "tree" ? (
+              <TreeOutput text={tree} label="Content graph tree" />
+            ) : view === "diagram" ? (
               <Suspense
                 fallback={<Text role="status">Loading graph renderer…</Text>}
               >
@@ -122,6 +136,7 @@ function ProjectGraphContent({ projectId, adapter }: ApmeProjectGraphProps) {
                         <Cell>
                           <Button
                             variant="tertiary"
+                            className="apme-table-link"
                             onPress={() => setSelectedId(node.id)}
                           >
                             {String(node.data.name || node.id)}

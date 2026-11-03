@@ -1,9 +1,9 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeButton as Button } from "./layout";
 import "./layout.css";
 import { useState, type FormEvent } from "react";
 import {
   Alert,
-  Button,
   Checkbox,
   Flex,
   PasswordField,
@@ -19,19 +19,34 @@ import {
 } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { useMutation } from "./useMutation";
+import { DeleteProject } from "./DeleteProject";
 
 export interface ApmeProjectSettingsProps {
   project: ProjectDetail;
   adapter: ApmeApiAdapter;
   /** Host must authorize editing this particular project; defaults to denied. */
   canManage?: boolean;
+  canDelete?: boolean;
+  onDeleted?: () => void;
   onSaved?: () => void;
 }
 
 export function ApmeProjectSettings(props: ApmeProjectSettingsProps) {
   if (!props.canManage)
     return <Text>Project settings are read-only for this account.</Text>;
-  return <ProjectSettingsForm key={props.project.id} {...props} />;
+  return (
+    <div className="apme-stack">
+      <ProjectSettingsForm key={props.project.id} {...props} />
+      {props.canDelete && (
+        <DeleteProject
+          key={props.project.id}
+          project={props.project}
+          adapter={props.adapter}
+          onDeleted={props.onDeleted}
+        />
+      )}
+    </div>
+  );
 }
 
 function ProjectSettingsForm({

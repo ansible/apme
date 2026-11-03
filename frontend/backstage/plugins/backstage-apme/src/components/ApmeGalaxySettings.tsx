@@ -1,13 +1,12 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeDialogFooter as DialogFooter } from "./layout";
+import { ApmeButton as Button, ApmeDialog as Dialog } from "./layout";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Alert,
-  Button,
   Checkbox,
-  Dialog,
   DialogBody,
-  DialogFooter,
   DialogHeader,
   Flex,
   PasswordField,
@@ -65,7 +64,7 @@ function GalaxySettingsContent({
     Math.max(0, Math.ceil((state.value?.length ?? 0) / 25) - 1) * 25,
   );
   return (
-    <Flex direction="column" gap="4">
+    <Flex className="apme-ui" direction="column" gap="4">
       <Flex className="apme-settings-header" justify="between" align="center">
         <Text as="h3" variant="title-small">
           Galaxy servers
@@ -116,6 +115,7 @@ function GalaxySettingsContent({
                       </Button>
                       <Button
                         variant="secondary"
+                        destructive
                         aria-label={`Delete ${server.name}`}
                         onPress={() => setDeletingId(server.id)}
                       >
@@ -389,6 +389,7 @@ function DeleteGalaxyServer({
           Cancel
         </Button>
         <Button
+          destructive
           isDisabled={mutation.saving}
           onPress={() =>
             void mutation.run(

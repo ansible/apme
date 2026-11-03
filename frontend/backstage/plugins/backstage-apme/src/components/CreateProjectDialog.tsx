@@ -1,11 +1,10 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
+import { ApmeDialogFooter as DialogFooter } from "./layout";
+import { ApmeButton as Button, ApmeDialog as Dialog } from "./layout";
 import { useState, type FormEvent } from "react";
 import {
   Alert,
-  Button,
-  Dialog,
   DialogBody,
-  DialogFooter,
   DialogHeader,
   Flex,
   PasswordField,

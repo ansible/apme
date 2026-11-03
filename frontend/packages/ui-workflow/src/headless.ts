@@ -7,3 +7,4 @@ export { useProjectOperationActions, SessionExpiredError, WorkingSetConflictErro
 export { useSessionStream, getPersistedSession } from './hooks/useSessionStream';
 export { violationToFinding, type FindingSource } from './shared/violationToFinding';
 export { AI_MODEL_STORAGE_KEY } from './shared/constants';
+export { SEVERITY_INT_OPTIONS } from './shared/severity';
