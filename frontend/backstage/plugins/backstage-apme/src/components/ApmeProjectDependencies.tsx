@@ -78,7 +78,6 @@ function ApmeProjectDependenciesContent({
           <Text>
             Ansible Core: {dependencies.ansible_core_version || "Not recorded"}
           </Text>
-          <DependencyDiagram dependencies={dependencies} />
           <SearchField
             label="Search dependencies"
             value={search}
@@ -198,6 +197,7 @@ function ApmeProjectDependenciesContent({
               </>
             )}
           </DependencyFindings>
+          <DependencyDiagram dependencies={dependencies} />
         </>
       )}
     </Flex>

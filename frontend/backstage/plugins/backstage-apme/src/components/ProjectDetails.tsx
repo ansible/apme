@@ -3,6 +3,7 @@ import { useCallback, type ReactNode } from "react";
 import { Alert, Flex, Text } from "@backstage/ui";
 import { getProject, type ProjectDetail } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
+import { severityOrder } from "@apme/ui-workflow/headless";
 import "./layout.css";
 import { useLoad } from "./useLoad";
 import { DataStatus } from "./DataStatus";
@@ -67,6 +68,10 @@ export function ProjectDetails({
             >
               {Object.entries(project.severity_breakdown)
                 .filter(([, count]) => count > 0)
+                .sort(
+                  ([left], [right]) =>
+                    severityOrder(left) - severityOrder(right),
+                )
                 .map(([level, count]) => (
                   <span key={level}>
                     {count} {level}

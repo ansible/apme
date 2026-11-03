@@ -90,5 +90,9 @@ Project entry discovers current Gateway operations without attaching. Only an
 explicit Start/Resume attaches; Dismiss detaches and subsequent navigation does
 not replay Create branch. Dependency diagrams open directly, using recorded uv
 relationships and the shared D3/Dagre renderer. Text remains an alternative;
-flat inventory does not imply dependencies. Local theme/layout styles load with
+flat inventory does not imply dependencies. The diagram follows the dependency
+inventory and requirements. Advanced scan options offer the existing Portal
+Ansible Core minor choices plus the Engine default; a preselected custom version
+remains selectable. Project finding summaries use ADR-043 severity order and omit
+zero counts. Local theme/layout styles load with
 the plugin entry and asset-load failures offer an explicit page reload.

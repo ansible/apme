@@ -72,40 +72,59 @@ it("filters only the labeled current page without refetching and uses Gateway-su
   );
 });
 
-it("selects a repository and starts the existing Gateway assess-pause workflow", async () => {
-  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.endsWith("/operation") && init?.method === "POST")
-      return new Response('{"operation_id":"op"}');
-    if (url.includes("/operation")) return new Response("", { status: 404 });
-    if (url.endsWith("/ai/models")) return new Response("[]");
-    return new Response(
-      JSON.stringify(
-        url.includes("/projects?") ? { total: 1, items: [project] } : project,
+it.each(["", "2.18"])(
+  "starts the Gateway workflow with the selected Ansible Core version (%s)",
+  async (ansibleVersion) => {
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/operation") && init?.method === "POST")
+          return new Response('{"operation_id":"op"}');
+        if (url.includes("/operation"))
+          return new Response("", { status: 404 });
+        if (url.endsWith("/ai/models")) return new Response("[]");
+        return new Response(
+          JSON.stringify(
+            url.includes("/projects?")
+              ? { total: 1, items: [project] }
+              : project,
+          ),
+        );
+      },
+    );
+    open(fetch);
+    fireEvent.click(await screen.findByRole("button", { name: "Automation" }));
+    expect(
+      await screen.findByRole("heading", { name: "Automation" }),
+    ).toBeTruthy();
+    fireEvent.click(await screen.findByText("Advanced Options"));
+    const versionSelect = screen.getByRole("combobox", {
+      name: "Ansible Core Version",
+    });
+    expect((versionSelect as HTMLSelectElement).value).toBe("");
+    fireEvent.change(versionSelect, { target: { value: ansibleVersion } });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Check repository" }),
+    );
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/host/apme/projects/project-one/operation",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            action: "check",
+            options: {
+              ...(ansibleVersion ? { ansible_version: ansibleVersion } : {}),
+              enable_ai: false,
+              assess_pause: true,
+              interactive: true,
+            },
+          }),
+        }),
       ),
     );
-  });
-  open(fetch);
-  fireEvent.click(await screen.findByRole("button", { name: "Automation" }));
-  expect(
-    await screen.findByRole("heading", { name: "Automation" }),
-  ).toBeTruthy();
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Check repository" }),
-  );
-  await waitFor(() =>
-    expect(fetch).toHaveBeenCalledWith(
-      "/host/apme/projects/project-one/operation",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          action: "check",
-          options: { enable_ai: false, assess_pause: true, interactive: true },
-        }),
-      }),
-    ),
-  );
-});
+  },
+);
 
 it("registers a repository with its branch, then opens the returned project identity", async () => {
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

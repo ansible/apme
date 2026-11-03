@@ -7,4 +7,5 @@ export { useProjectOperationActions, SessionExpiredError, WorkingSetConflictErro
 export { useSessionStream, getPersistedSession } from './hooks/useSessionStream';
 export { violationToFinding, type FindingSource } from './shared/violationToFinding';
 export { AI_MODEL_STORAGE_KEY } from './shared/constants';
-export { SEVERITY_INT_OPTIONS } from './shared/severity';
+export { SEVERITY_INT_OPTIONS, severityOrder } from './shared/severity';
+export { ANSIBLE_CORE_VERSION_OPTIONS } from './shared/ansibleCoreVersions';

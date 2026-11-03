@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { BUIProvider } from "@backstage/ui";
 import { createDefaultApmeApiAdapter, type ProjectDetail } from "@apme/client";
 import { ApmeProjectSettings } from "../plugins/backstage-apme/src/components/ApmeProjectSettings";
@@ -101,4 +107,67 @@ it("lets a user retry a failed project load", async () => {
   );
   fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
   await screen.findByRole("heading", { name: "Automation" });
+});
+
+it.each([
+  {
+    breakdown: {
+      medium: 100,
+      info: 33,
+      high: 8,
+      low: 115,
+      critical: 0,
+      error: 0,
+    },
+    expected: ["8 high", "100 medium", "115 low", "33 info"],
+  },
+  {
+    breakdown: { medium: 0, info: 3, high: 8, low: 0, critical: 2, error: 1 },
+    expected: ["2 critical", "1 error", "8 high", "3 info"],
+  },
+])(
+  "orders nonzero project finding counts by severity ($expected)",
+  async ({ breakdown, expected }) => {
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ ...project, severity_breakdown: breakdown }),
+        ),
+    );
+    render(
+      <BUIProvider>
+        <ProjectDetails
+          projectId="p1"
+          adapter={createDefaultApmeApiAdapter({ fetch })}
+        />
+      </BUIProvider>,
+    );
+    const summary = await screen.findByLabelText("Finding severity summary");
+    expect(
+      Array.from(summary.children, (element) => element.textContent),
+    ).toEqual(expected);
+    expect(within(summary).queryByText(/^0 /)).toBeNull();
+  },
+);
+
+it("omits the severity summary when all counts are zero", async () => {
+  const fetch = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          ...project,
+          severity_breakdown: { high: 0, medium: 0, low: 0, info: 0 },
+        }),
+      ),
+  );
+  render(
+    <BUIProvider>
+      <ProjectDetails
+        projectId="p1"
+        adapter={createDefaultApmeApiAdapter({ fetch })}
+      />
+    </BUIProvider>,
+  );
+  await screen.findByRole("heading", { name: "Automation" });
+  expect(screen.queryByLabelText("Finding severity summary")).toBeNull();
 });
