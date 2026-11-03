@@ -1,0 +1,67 @@
+{
+  "name": "@apme/portal-plugin",
+  "version": "0.0.0-dev",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/frontend/index.js",
+  "types": "./dist/frontend/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/frontend/index.d.ts",
+      "default": "./dist/frontend/index.js"
+    },
+    "./alpha": {
+      "types": "./dist/frontend/alpha.d.ts",
+      "default": "./dist/frontend/alpha.js"
+    },
+    "./api": {
+      "types": "./dist/frontend/api/apmeApiFactory.d.ts",
+      "default": "./dist/frontend/api/apmeApiFactory.js"
+    },
+    "./manifest": {
+      "types": "./dist/frontend/apmeManifest.d.ts",
+      "default": "./dist/frontend/apmeManifest.js"
+    }
+  },
+  "files": ["dist", "config.d.ts", "README.md", "LICENSE", "templates"],
+  "configSchema": "config.d.ts",
+  "dependencies": {
+    "@apme/ui-workflow": "*",
+    "@backstage/catalog-model": "1.10.0",
+    "@backstage/core-compat-api": "0.5.14",
+    "@backstage/core-components": "0.18.13",
+    "@backstage/core-plugin-api": "1.12.9",
+    "@backstage/frontend-plugin-api": "0.18.0",
+    "@backstage/integration-react": "1.2.21",
+    "@backstage/plugin-catalog": "2.0.8",
+    "@backstage/plugin-catalog-react": "3.2.2",
+    "@backstage/plugin-permission-react": "0.5.4",
+    "@backstage/plugin-scaffolder-react": "2.0.3",
+    "@backstage/plugin-user-settings": "0.9.6",
+    "@backstage/theme": "0.7.3",
+    "@material-ui/core": "^4.12.4",
+    "@material-ui/icons": "^4.11.3",
+    "@material-ui/lab": "^4.0.0-alpha.61",
+    "@patternfly/react-core": "^6.3.1",
+    "@patternfly/react-icons": "^6.3.1",
+    "@rjsf/utils": "^5.24.12",
+    "js-yaml": "^4.1.0",
+    "react-use": "^17.4.0",
+    "@backstage/config": "1.3.8",
+    "@backstage/errors": "1.3.1",
+    "@backstage/plugin-permission-common": "0.9.10"
+  },
+  "peerDependencies": {
+    "@ansible/backstage-rhaap-common": "^2.2.10",
+    "@ansible/portal-extension-api": "^0.1.0",
+    "@ansible/portal-extension-host": "^0.1.0",
+    "@backstage/backend-plugin-api": "^1.10.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6"
+  },
+  "backstage": {
+    "role": "frontend-plugin",
+    "pluginId": "apme"
+  }
+}

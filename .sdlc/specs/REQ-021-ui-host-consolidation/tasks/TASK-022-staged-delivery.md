@@ -59,3 +59,7 @@ replay an old parent's commits after squash; do not use it for that transition.
   authorization/lifecycle), 270 native/workflow tests, four-artifact consumer
   checks, harness build, repository lint and 4,976 Python tests passed
   (50 skipped). Upload UI and backend authorization ship together.
+- Stage 4: 459 Portal backend/common tests and 517 Portal frontend tests passed;
+  both packed consumers, 128 shared frontend tests, 270 native/workflow tests,
+  fresh root install, repository lint and 4,976 Python tests passed (50 skipped).
+  Portal source provenance and static NFS integration are preserved.

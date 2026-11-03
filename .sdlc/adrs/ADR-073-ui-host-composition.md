@@ -173,3 +173,6 @@ harness. Upload administration, Portal adapters and Local activation follow.
 
 Stage 3 adds the host-authorized upload channel and AI provider administration.
 ADR-074 defines the security boundary; Local activation still follows later.
+
+Stage 4 transfers Portal source ownership and verifies six-artifact release
+delivery. Portal adoption requires a release; the Local switch remains stage 5.
