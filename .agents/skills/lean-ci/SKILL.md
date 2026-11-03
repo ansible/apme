@@ -31,7 +31,9 @@ locally-runnable tox environments; CI just calls them.
    pin. `tox-uv` is CI-only and is pinned in `ci/tox-requirements.txt` (#591).
 
 3. **No scattered version pinning.** Python version is in `pyproject.toml`
-   (`requires-python`). Node is in `frontend/package.json` (`engines.node`).
+   (`requires-python`). Native UI Node support is in `frontend/package.json`;
+   the shared Backstage/Portal package baseline is in root `package.json`
+   (`engines.node`, constrained to the tested host-compatible major).
    Tool versions are managed in `.pre-commit-config.yaml`
    (ruff, mypy) and `pyproject.toml` (deps). Not in workflow YAML.
    Carve-out: CI installs `tox`/`tox-uv` with `uvx` from
@@ -40,13 +42,15 @@ locally-runnable tox environments; CI just calls them.
    version and the documented `uv tool install` pin aligned with the CI
    tox pin. `tox-uv` is CI-only and remains outside the project lock.
    Jobs that need Node use `actions/setup-node` with
-   `node-version-file: frontend/package.json`.
+   `node-version-file` pointing at the appropriate package manifest.
 
 4. **Minimal setup actions.** `astral-sh/setup-uv` and `actions/checkout` only.
    No `actions/setup-python` (uv handles it). No other setup actions without
    explicit justification.
-   **Exception:** `test.yml` jobs `ui` and `ui-workflow-pack` use
-   `actions/setup-node` because `tox -e ui` / `ui-workflow-pack` need `npm`.
+   **Exception:** `test.yml` jobs `ui`, `ui-workflow-pack`, `backstage-packages`
+   and `portal-packages`, and the UI artifact release job use `actions/setup-node`.
+   Their tox environments run npm builds/tests or install the pinned Portal Yarn
+   SDK. They read the package engine range rather than defining another version.
 
 5. **Pin actions to commit SHAs.** Mutable tags (`@v4`) allow upstream changes
    to affect CI without review. Always pin to a full commit SHA with a comment

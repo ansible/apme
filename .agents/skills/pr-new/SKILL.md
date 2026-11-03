@@ -120,6 +120,10 @@ artifact type, translate it:
    something they shouldn't? Also check every capability grant:
    permission scopes, CORS origins, container capabilities. Does each
    grant the minimum necessary?
+   Trace every state-changing UI entry point against the host's permission
+   defaults, including creation dialogs and deep links. For public HTTP routes,
+   verify that rate limits and authorization precede expensive body parsing;
+   a later permission check does not bound work performed before it.
 
 3. **Would a caller be surprised?** Read every public function from
    the caller's perspective. Can it return a value the type doesn't
@@ -130,6 +134,9 @@ artifact type, translate it:
    the same module? When a helper opens a channel, socket, or other
    closeable resource, does every return path (success and failure)
    close it — typically via `finally` — or can a failed RPC leak it?
+   For fetch-based transports, trace response bodies on success, non-2xx,
+   cancellation and cleanup requests. Consuming a main stream does not dispose
+   separate creation, message or deletion responses.
    Trace async entry points through helpers to every filesystem operation,
    including discovery, metadata probes, and parsing. Blocking storage must
    stay off the event loop, and unchanged hot paths should avoid repeated
@@ -162,6 +169,12 @@ artifact type, translate it:
    or runs untrusted/repo scripts after checkout, is
    `persist-credentials: false` set so `GITHUB_TOKEN` is not left
    in local Git config? Match sibling jobs in the same workflow.
+   Reproduce build/test commands from a fresh checkout in CI order; verify their
+   dependency setup does not rely on outputs, symlinks, native addon binaries or
+   caches from an earlier local build. If lifecycle scripts are disabled, verify
+   runtime-required native dependencies have an explicit preparation step.
+   For published immutable assets, retries must verify existing bytes
+   and complete missing uploads without overwriting different published content.
 
 6. **Is there dead weight?** Check for unused imports, unreachable
    branches, written-but-never-read variables, parameters accepted

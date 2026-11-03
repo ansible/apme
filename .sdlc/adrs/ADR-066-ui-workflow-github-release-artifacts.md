@@ -4,6 +4,12 @@
 
 Implemented
 
+Extended by [ADR-073](ADR-073-ui-host-composition.md): the same product release
+also carries the Gateway client, standard Backstage frontend/backend and
+Portal integration adapters. The workflow
+tarball asset name remains compatible; its manifest pins the client artifact
+from that same release.
+
 ## Date
 
 2026-07-23 (revised 2026-07-31)
@@ -138,6 +144,13 @@ enough and the UI package tracks them naturally.
   automatically attaches the tarball. No manual version bump needed for the
   UI package.
 
+## Retry behavior
+
+Release retries verify already published asset checksums and upload only missing
+files. An existing asset with different bytes fails the job and is never replaced
+under the same immutable URL. The upload operation is exposed through
+`tox -e frontend-release-upload`; a completed retry is a no-op.
+
 ## Related Decisions
 
 - ADR-030: Frontend Deployment Model (SPA + Portal plugin)
@@ -152,3 +165,4 @@ enough and the UI package tracks them naturally.
 | 2026-07-23 | Initial — GitHub Release tarball publish for `@apme/ui-workflow` |
 | 2026-07-31 | Consolidated into main APME release; removed separate `ui-workflow-v*` tag convention |
 | 2026-09-22 | Agent: Status → Implemented — `ui-workflow-release.yml` and `tox -e ui-workflow-pack` publish `@apme/ui-workflow` with main release |
+| 2026-11-02 | Codex: extend the package set under ADR-073 and verify immutable published bytes before completing partial-release retries |

@@ -76,3 +76,14 @@ deploy/aws/terraform/.terraform.tfstate.lock.info
 .DS_Store
 Thumbs.db
 dependencies-output.json
+# JavaScript workspace dependencies and generated host assets
+node_modules/
+frontend/portal/dist/
+frontend/portal/node_modules
+.portal-sdk/
+frontend/backstage/dist-dev/
+*.tgz
+
+# RHDH dynamic plugin export output
+**/dist-dynamic/
+containers/rhdh/plugin/dist/

@@ -325,7 +325,7 @@ export async function fetchProjectOperationState(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ProjectOperationState | null> {
   const { fetch: doFetch } = adapter;
-  const res = await doFetch(apmeApiUrl(`/projects/${projectId}/operation`, adapter));
+  const res = await doFetch(apmeApiUrl(`/projects/${encodeURIComponent(projectId)}/operation`, adapter));
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(
@@ -594,7 +594,7 @@ export function useProjectOperationState(
     const adapter = apiRef.current;
     // Use apmeApiUrl (not EventSource-only helper) so absolute discovery
     // bases and adapter.fetch auth both apply.
-    const url = apmeApiUrl(`/projects/${projectId}/operation/events`, adapter);
+    const url = apmeApiUrl(`/projects/${encodeURIComponent(projectId)}/operation/events`, adapter);
 
     void (async () => {
       try {

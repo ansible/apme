@@ -1,0 +1,102 @@
+# REQ-021 Package and Host Contracts
+
+`@apme/client` exports existing Gateway helpers/types and `./transport`.
+`@apme/ui-workflow` preserves its root entry point and adds `./headless` and the isolated `./graph` presentation entry.
+`@apme/backstage-plugin` exports a routable Local page, an embeddable project
+workflow, API ref/factory and the original `createApmeUiWorkflowAdapter` Portal
+transport helper. New package names do not replace the existing Portal plugin
+ID. Its `./alpha` export declares the standard NFS API and Projects page.
+
+`./workflow`, `./findings`, `./activity`, `./dependencies` and `./graph` export
+reusable views, their props and capability descriptors. `./capabilities` publishes
+the host-neutral registry. Hosts can explicitly advertise `projectViews` through
+the host API or embedding props; an empty list enables none, while omission keeps
+the existing view set. Disabled deep links do not load hidden panels. Write
+permissions are independent, default to denied for embeds, and gate both project
+creation and editing. Hosts choose variants and scope without host-detection code.
+
+An `ApmeApiAdapter` supplies `fetch`, `apiBase` and `origin`. Hosts provide an
+authenticated fetch and an explicit backend path. Requests must not retry at a
+direct Gateway origin after permission denial. Gateway operation state remains
+authoritative; controllers do not create a parallel lifecycle or durable store.
+
+Project editing is opt-in: `ApmeHostApi.canManageProjects`, workbench
+`canManageProjects`, project tabs `canManageProject`, and standalone editor
+`canManage` default to denied for embedded hosts. Local's personal API factory
+enables it. The editor calls the existing authenticated Gateway PATCH contract
+through the supplied adapter; Portal must authorize the selected resource and
+expose an update route before enabling it. Blank, untouched tokens are omitted;
+explicit removal sends an empty token. Global settings remain independently
+gated and Local mounts them at `/apme/settings` via the `./settings` export.
+Local groups Projects, Rules, Health, Paste / upload and Settings under APME.
+The workbench accepts an explicit `section` and `showSectionNavigation={false}`
+for host-owned routes; its embedded defaults remain unchanged.
+
+Product release tarballs use the product version and immutable GitHub Release
+URLs for package-to-package dependencies. Local verification can pack the same
+artifacts with local tarball references for a clean install smoke check. Preserve
+the `apme-ui-workflow-X.Y.Z.tgz` asset name expected by existing consumers.
+
+`@apme/backstage-plugin-backend` supplies the personal Local backend plugin and
+`createUploadSessionRouter` for explicit Portal authorization (ADR-074). Its
+artifact is released with the other three packages. The client adapter can
+provide `openSessionSocket`; embedded uploads require that transport and an
+explicit host permission. Commands and streamed responses carry existing
+Gateway session frames; unknown ownership/resume bindings fail closed.
+
+Two additional Portal-only artifacts transfer the original guest integration:
+`@apme/portal-plugin` exports static NFS declarations through `./alpha`, its
+manifest through `./manifest`, and a legacy development-shell API through `./api`.
+`@apme/portal-plugin-backend` exports catalog and scaffolder modules through
+`./catalog` and `./scaffolder`. Their internal common contracts are bundled, and
+Portal SDK/AAP dependencies are host-provided peers. The four standalone packages
+remain free of `@ansible/*` dependencies. The six tarballs share a product release.
+
+The adapters own `/api/catalog/apme/*` handlers, settings and operation descriptors;
+the `apme` settings permission resource remains compatible with the host. Scan
+operations require `apme.scanning`; repository registration/removal and settings
+retain their independent permission checks and do not require a scanning license.
+Settings get/save operations use the same validation and persistence as HTTP.
+The registration template ships with the catalog module and requires no repository
+catalog file. Native composition activates descriptors statically: runtime manifest
+mounting, settings/nav blueprints and installed-plugin discovery remain host work.
+
+`tox -e portal-adoption -- --version X.Y.Z` generates a reviewable downstream
+patch. APME must release those artifacts before Portal can pin their immutable
+URLs and delete its old APME workspace after workflow acceptance.
+
+### Dependency triage capability
+
+Hosts explicitly opt into `canAcknowledgeFindings`; omission is read-only. The
+Local host enables this in its personal profile. The shared dependency view uses
+project-scoped suppressions with a visible confirmation of content or rule-wide
+scope, preserving ADR-055's existing fingerprint behavior. Finding requests are
+paginated and aborted when the view or authenticated adapter changes; failed
+finding requests never become zero/healthy counts.
+
+### Ordinary controls and project deletion
+
+Ordinary BUI actions explicitly opt into shared button/dialog presentation; the
+remediation workflow keeps its existing controls. Rule severity, enablement and
+enforcement remain Gateway-owned global overrides (ADR-041/043). Project deletion
+requires `canDeleteProjects` in addition to project management, defaults to denied
+in embedding hosts, and confirms the project name. Local enables it for its sole
+owner. Content/dependency text trees share a presentation; the graph also retains
+its lazy D3/Dagre diagram and complete paginated node inspector.
+
+### Project re-entry and dependency diagrams
+
+Project entry discovers current Gateway operations without attaching. Only an
+explicit Start/Resume attaches; Dismiss detaches and subsequent navigation does
+not replay Create branch. Dependency diagrams open directly, using recorded uv
+relationships and the shared D3/Dagre renderer. Text remains an alternative;
+flat inventory does not imply dependencies. The diagram follows the dependency
+inventory and requirements. Advanced scan options offer the existing Portal
+Ansible Core minor choices plus the Engine default; a preselected custom version
+remains selectable. Project finding summaries use ADR-043 severity order and omit
+zero counts. Local theme/layout styles load with
+the plugin entry and asset-load failures offer an explicit page reload.
+
+## Staged delivery
+
+Implementation is split from #832 under [TASK-022](tasks/TASK-022-staged-delivery.md). The complete target design below is delivered in order; the Local default switches only in the last PR. Intermediate merges retain the native deployment. Live two-host acceptance remains in #833.

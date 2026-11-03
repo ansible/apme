@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -15,8 +19,31 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "types": [
+      "react",
+      "react-dom"
+    ],
+    "paths": {
+      "react": [
+        "../../../node_modules/@types/react"
+      ],
+      "react/*": [
+        "../../../node_modules/@types/react/*"
+      ],
+      "react-dom": [
+        "../../../node_modules/@types/react-dom"
+      ],
+      "react-dom/*": [
+        "../../../node_modules/@types/react-dom/*"
+      ]
+    }
   },
-  "include": ["src/**/*"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
 }

@@ -36,3 +36,13 @@ Consumers pin the release download URL:
 ```
 
 No registry install required inside the APME frontend monorepo.
+
+## Other entries
+
+- `@apme/ui-workflow/headless`: controller/transport exports without presentation
+  or CSS. Includes the shared model preference key.
+- `@apme/ui-workflow/graph`: the existing native D3/Dagre graph renderer, shared
+  with the Backstage plugin. Graph dependencies load only for this entry; the
+  ordinary workflow and headless entries do not import it. Specialist SVG
+  styling currently keeps its existing dark palette. Native imports are a
+  compatibility re-export while host replacement is completed.

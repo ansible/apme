@@ -3,3 +3,5 @@
  * TypeScript 7 reports TS2882 on the side-effect CSS import in index.ts without this.
  */
 declare module '*.css';
+
+declare module 'prismjs/components/prism-yaml';

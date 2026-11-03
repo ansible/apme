@@ -12,7 +12,11 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom'],
     alias: {
+      '@apme/ui-workflow/graph': resolve(__dirname, 'packages/ui-workflow/src/graph/index.ts'),
       '@apme/ui-workflow': resolve(__dirname, 'packages/ui-workflow/src/index.ts'),
+      '@apme/client/transport': resolve(__dirname, 'packages/apme-client/src/transport.ts'),
+      '@apme/client/types': resolve(__dirname, 'packages/apme-client/src/types.ts'),
+      '@apme/client': resolve(__dirname, 'packages/apme-client/src/index.ts'),
     },
   },
   plugins: [react()],
@@ -37,6 +41,7 @@ export default defineConfig({
     sourcemap: false,
   },
   test: {
+    include: ['src/**/*.test.{ts,tsx}', 'packages/ui-workflow/src/**/*.test.{ts,tsx}'],
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
