@@ -1,0 +1,29 @@
+{
+  "name": "@apme/backstage-plugin-local",
+  "version": "0.0.0-dev",
+  "private": true,
+  "license": "Apache-2.0",
+  "backstage": {
+    "role": "frontend-plugin",
+    "pluginId": "apme"
+  },
+  "main": "src/index.tsx",
+  "exports": {
+    ".": "./src/index.tsx",
+    "./navigation": "./src/navigation.tsx"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@apme/backstage-plugin": "*",
+    "@backstage/frontend-plugin-api": "0.18.0",
+    "@backstage/core-plugin-api": "1.12.9",
+    "@backstage/ui": "0.17.1",
+    "@backstage/core-components": "0.18.13",
+    "@backstage/plugin-app-react": "0.2.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.30.6"
+  }
+}

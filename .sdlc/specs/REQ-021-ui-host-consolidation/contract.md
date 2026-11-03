@@ -99,4 +99,4 @@ the plugin entry and asset-load failures offer an explicit page reload.
 
 ## Staged delivery
 
-Implementation is split from #832 under [TASK-022](tasks/TASK-022-staged-delivery.md). The complete target design below is delivered in order; the Local default switches only in the last PR. Intermediate merges retain the native deployment. Live two-host acceptance remains in #833.
+Implementation is split from #832 under [TASK-022](tasks/TASK-022-staged-delivery.md). The target design in this document is delivered in order; the Local default switches only in the last PR. Intermediate merges retain the native deployment. Live two-host acceptance remains in #833.

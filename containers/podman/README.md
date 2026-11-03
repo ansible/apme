@@ -13,15 +13,16 @@ The pod includes an **otel-collector** sidecar that receives OTLP metrics from E
 ## Build and start
 
 ```bash
-# Via tox (recommended)
-tox -e up        # build images and start the pod
-tox -e pm            # build + start + health-check + open browser
-
-# Or directly
-./containers/podman/build.sh
-./containers/podman/up.sh
-./containers/podman/wait-for-pod.sh
+tox -e build     # build all images, including RHDH with checkout APME plugins
+tox -e up        # build with cached layers and start the pod
+tox -e pm        # build + start + health-check + open browser
 ```
+
+The personal UI is RHDH with APME at `http://127.0.0.1:8081`; choose guest
+sign-in. Both the frontend and authenticated upload backend are built into
+`apme-ui` from this checkout. No released plugin download or manual installation
+is needed. `up` replaces an existing pod while retaining its persistent data.
+See [the host build details](../../frontend/backstage/README.md#run-the-personal-rhdh-ui).
 
 Only run the health-check once the pod is **Running**. Use `wait-for-pod.sh` to wait for that, then run the health-check (or use `wait-for-pod.sh --health-check` to wait and then run the check in one step).
 

@@ -244,6 +244,7 @@ spec:
       ports:
         - containerPort: 8081
           hostPort: 8081
+          hostIP: 127.0.0.1
     - name: abbenay
       image: ghcr.io/redhat-developer/abbenay:v2026.8.9
       # Local Podman: publish HTTP admin UI on host :8787. gRPC stays on the

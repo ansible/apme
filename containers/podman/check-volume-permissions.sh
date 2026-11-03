@@ -70,7 +70,7 @@ check_app_readable apme-gateway:latest /app/src/apme_gateway/__init__.py
 check_app_readable apme-galaxy-proxy:latest /app/src/galaxy_proxy/__init__.py
 check_app_readable apme-opa:latest /entrypoint.sh
 check_app_readable apme-ui:latest /entrypoint.sh
-check_app_readable apme-ui:latest /etc/nginx/nginx.conf
-check_app_readable apme-ui:latest /etc/nginx/conf.d/default.conf.template
+check_app_readable apme-ui:latest /opt/app-root/src/containers/rhdh/app-config.yaml
+check_app_readable apme-ui:latest /opt/app-root/src/dynamic-plugins-root/app-config.dynamic-plugins.yaml
 
 echo "Volume permission checks passed (UID ${RUNTIME_UID})."

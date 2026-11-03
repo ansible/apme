@@ -1,0 +1,353 @@
+# TASK-005: Portal and RHDH Runtime Acceptance
+
+## Parent Requirement
+
+[REQ-021](../requirement.md), AC2, AC3 and AC5.
+
+## Status
+
+In Progress
+
+## Implementation Approval
+
+**Approved** — explicit maintainer authorization for the Portal integration
+scope supplied in the conversation on 2026-11-02:
+
+- Add the standard frontend `./alpha` NFS entry point, injected host API,
+  Projects page, Portal surface descriptors, owner-prefixed manifest IDs,
+  entitlement/config/content-type gates and the `ansible.apme.*` config schema.
+- Port the Portal backend operations, input/output schemas, REST exposure and
+  audit metadata; catalog-to-Gateway synchronization and authorized routers;
+  repository registration/deregistration and scaffolder template/action.
+- Package the client, workflow, frontend and backend release artifacts. Keep
+  standalone packages free of Portal/AAP dependencies and declare Portal
+  integration dependencies as peers rather than workspace references. Prepare
+  Portal to consume pinned release artifacts before deleting `workspaces/apme`
+  in a follow-up PR.
+
+This approves implementation; it does not mark these deliverables complete.
+Use static NFS declarations while runtime manifest discovery only validates and
+logs. Account for the host's missing native settings/navigation surfaces and
+experimental manifest compatibility behavior. Resolve ownership of `/apme/*`
+OpenAPI paths and the `apme` settings capability during integration. A release
+is still a prerequisite for Portal's artifact switch and workspace removal.
+
+## Description
+
+Consume APME artifacts in both actual hosts, finish Portal composition/RBAC
+adapters, and verify real Gateway/Engine workflows and resources.
+
+## Prerequisites
+
+TASK-003; consumes TASK-004 feature families incrementally.
+
+## Implementation Notes
+
+Local section navigation is complete in [TASK-014](TASK-014-local-section-navigation.md).
+This supersedes the earlier Local settings placement: Projects, Rules, Health,
+Paste / upload and global Settings now have separate routes grouped under APME.
+Host appearance/account preferences remain under User settings. Old global
+settings links redirect, and per-project settings remain inside project details.
+
+Portal artifact implementation is complete in [TASK-013](TASK-013-portal-artifact-integration.md).
+The original guest frontend/common/catalog/scaffolder sources now live in APME's
+Portal-only adapters, with explicit SDK peers and preserved host API/settings
+identifiers. A clean packed-artifact install, host type check and frontend
+production build pass in an isolated Portal worktree without its old APME
+workspace. The Local image also builds and renders with the shared public alpha
+API declaration. The release-dependent Portal switch and real two-host workflow,
+authorization and resource acceptance below remain outstanding.
+
+Local branding uses the existing `frontend/public/apme.svg` product asset and
+an APME label above the sidebar links, with a home link to Projects. Use the
+host's navigation-content extension and Sidebar components so pinning, hover,
+collapsed icons and mobile navigation retain host behavior. Export the app
+navigation module as a separate frontend feature and validate its metadata during
+dynamic packaging. Portal navigation remains host-owned.
+
+Correct Local host composition: register a root route reference and icon so
+Projects appears in the host sidebar on every page; align the fixed sidebar with
+the pinned host's inset viewport to prevent clipping. Contribute global APME
+settings as a sub-page of the existing host Settings page and remove Local's
+duplicate global-settings control. Restore a project Settings tab backed by
+Gateway PATCH, refresh project metadata after save, and preserve credentials
+unless explicitly replaced/removed. Gate editing on a host permission/capability
+that Local enables; existing Portal composition must not gain edit authority.
+Inspect these paths in the built Local image, including navigation away/back,
+project updates and global settings independently of the selected project.
+
+Local theme acceptance must cover the workbench, direct repository dialog and
+PatternFly workflow in both host light and dark modes, including switching modes
+without a reload. Reuse the original Portal plugin's host-to-PatternFly theme
+synchronization. Load PatternFly's global reset in Backstage's CSS base layer so
+it cannot override BUI component foregrounds, sizing or disabled states. Preserve
+each library's supplied semantic colors rather than defining another palette.
+
+Portal builds released artifacts into its host and keeps SDK integration at the
+host boundary. Preserve the existing catalog contributions and resource checks.
+Verify identity mapping, settings administration and operation authorization on
+every HTTP/SSE/upload/background path. Before Portal exposure, mount ADR-074's
+authenticated HTTP relay router (`createUploadSessionRouter`) with tenant, user,
+entitlement and scan authorization on every request. No bearer tokens in query strings.
+Measure install/start time, memory and workflow latency in actual hosts and
+optimize avoidable work. Document supported pinned runtime/image versions.
+
+### Observed Portal contract gaps
+
+Source baseline: `ansible-backstage-plugins` commit
+`6ab7fce5a37406c8958d1dc0291a4bc96eb1d3f5`.
+
+- Project/history routes omit Gateway totals/pagination. The shared adapter marks
+  the returned bounded entries as available results; forward pagination/total
+  before claiming complete history access.
+- Rules are normalized into Portal labels: ERROR and CRITICAL collapse into
+  `critical`, `aap` becomes `modernize`, and scope/registration time/numeric
+  severity are lost. Preserve the full catalog data in the backend contract;
+  the shared adapter currently keeps unavailable metadata unspecified. Existing
+  rule-detail/stats routes are absent, so shared rules use the catalog directly.
+- Galaxy create/update routes discard `validate_certs`. Forward and validate its
+  boolean/null policy and extend the consumer contract before enabling
+  `supportsGalaxyCertificateSettings`. The shared embedded form defaults it off.
+- Evaluate settings view/manage permissions before passing shared settings
+  props, and settings-manage before passing rule editing props. Defaults for
+  embedded components are read-only/no Galaxy access. Verify that HTTP failures
+  remain visible and never trigger a request to a different backend.
+- Graph and SBOM have no catalog proxy endpoints at this baseline. Add authorized
+  project-scoped forwarding for `/graph` JSON and `/sbom` CycloneDX bytes/headers,
+  including denied/missing project behavior. Shared components use the host
+  transport and currently show the missing-route error without direct fallback.
+
+## Files to Create/Modify
+
+APME host adapters, external Portal consumer manifests/composition, Local install
+configuration and host acceptance checks. Avoid a copied production UI tree.
+
+## Verification
+
+Real two-host check → findings → remediation → approval → Gateway SCM results;
+denied resource/mutation/settings actions; reconnect/expiry/unmount; supported
+upload paths; clean install and measured runtime resources. Add reproducible tox
+host test environments before claiming runtime acceptance.
+
+## Acceptance Criteria Reference
+
+AC2 authoritative workflow, AC3 host permissions, AC5 measured runtime efficiency.
+
+## Current Implementation Evidence
+
+2026-10-30: companion branch `feat/apme-shared-host-integration` implements
+authorized lossless project/history/findings/dependency/graph/SBOM and rule routes,
+project-bound activity details, settings-authorized AI discovery and Galaxy
+certificate-policy forwarding. Existing Portal envelopes remain stable.
+Portal full TypeScript checks, backend build, lint, OpenAPI drift/lint and
+110 route tests pass. APME supplies the matching project adapter and optional
+authenticated upload backend (ADR-074), plus focused channel and UI checks.
+
+Still required: Portal release artifact pinning/composition and upload router
+mounting with tenant/user/scan authorization; actual scan/remediation/SCM flows
+in both hosts, keyboard/theme acceptance and measured runtime resources. Local
+image build/startup is implemented below. Native source retirement remains gated
+on workflow acceptance rather than inferred from package checks.
+
+## Local build integration
+
+User clarified the delivery contract: the existing `tox -e build` must build
+the checkout plugins and an RHDH image containing them; `tox -e up` must start
+that image as the local UI. Keep the existing localhost port 8081 and pod-local
+Gateway address. Export frontend and backend dynamic plugins for a pinned RHDH
+image, include authenticated guest sign-in for this personal-only deployment,
+and wire REST/SSE proxy and upload discovery. Portal uses versioned standard
+release artifacts in its own image build. Do not require a release for Local.
+
+Implementation: `containers/rhdh/Dockerfile` builds the four standard packages,
+exports the NFS Local frontend and a self-contained upload backend, installs them
+and the host guest provider into pinned RHDH. The existing Podman build now uses
+this Dockerfile and the pod publishes port 8081 on loopback. The native image
+recipe/source remain for pending retirement; the Local build no longer uses it.
+
+Build evidence: all dynamic plugins installed during an arm64 image build.
+The built image started RHDH, initialized the `apme` backend and guest auth,
+served the app and exposed the frontend federation remote. Readiness and guest
+refresh returned HTTP 200. This workspace required Buildah with VFS/chroot through
+tox because nested Podman's single-UID/fuse setup cannot perform a normal build.
+Full pod startup, browser rendering and real Engine/SCM workflows are not claimed.
+
+### Build dependency security follow-up (2026-10-31)
+
+Scoped build-tool overrides patch the pinned Undici dependency and use upstream
+patch releases of Backstage CLI auth/new with Zod 4. Workspace audit findings
+fall from 41 (five high) to 32 (18 low, 14 moderate, no high/critical).
+Production-only audit remains seven moderate findings through the host-compatible
+Backstage/Router 6 dependency chain. Deprecation warnings remain visible.
+`tox -e frontend-audit` makes both full and `-- --omit=dev` reports reproducible.
+These are npm workspace findings, not an assessment of the prebuilt RHDH image.
+The shared host baseline was not changed. Remaining host/dependency findings
+still need review before claiming security acceptance.
+
+### Direct repository entry
+
+Preserve the current APME UI's URL/branch entry without any in-repository
+configuration or catalog metadata file. The shared Local page already posts
+straight to Gateway `/api/v1/projects`; restore native name suggestions and
+optional explicit SCM provider selection. This creates a Gateway project and
+selects its normal workflow, including for one-off use. It is not a new transient
+scan protocol. Portal must expose equally simple entry through authorized
+host-side repository records; its current project-operation authorizer requires
+a readable catalog repository subject. Do not bypass that check or treat an
+arbitrary project ID as owned by the current user.
+
+Portal source inspection confirms an existing GitHub.com-only no-file entry:
+`ApmeAddRepositoryHeaderAction` opens the `apme-register-git-repository` template,
+which executes the authorized `ansible:register:git-repository` action and manual
+provider. Ownership is derived from the initiating user, not a submitted owner.
+Preserve that flow during shared package adoption and track extension to other
+SCM providers; no user-authored repository descriptor is required today.
+
+Local parity changes pass package builds, RHDH federation export, TypeScript,
+format checks and repository lint. No additional test suites were run for this
+form change; real-host interaction remains in this acceptance task.
+
+### Local navigation correction
+
+The user encountered RHDH's catalog importer asking for a descriptor PR. Renaming
+`page:scaffolder` to Projects had mislabeled a template page and left the generic
+catalog importer reachable. Local now disables `page:catalog`,
+`page:catalog-import` and `page:scaffolder`; `page:apme` owns the Projects label
+and root route. Projects → Repositories → Add repository opens the shared direct
+URL form and posts to the Gateway via the authenticated proxy. No catalog import,
+descriptor generation or registration PR is part of that flow. This correction
+is scoped to the personal Local host.
+
+Built the corrected arm64 Local image from the checkout through tox (Buildah
+VFS/chroot fallback). In a headless Chromium preview of that clean image, guest
+sign-in loaded Projects as the APME workbench, and clicking Add repository opened
+the direct URL/name/provider/branch/token form with the no-repository-config
+explanation. The generic Catalog, catalog import and scaffolder navigation were
+absent. The preview has no Gateway, so repository listing showed an upstream
+connection error; no repository was submitted and no scan/remediation is claimed.
+Package/RHDH export, type/format checks and repository lint passed.
+
+The initial host-export preview resolved the transitional native workspace's
+React 19 runtime and failed to render in the React 18 host. The clean container
+build excludes native node_modules and rendered correctly. Host-side export
+isolation remains a development-path limitation until addressed or native
+retirement; do not infer browser acceptance from export success alone.
+
+### Local loopback origin loading
+
+The user reported only built-in navigation and ongoing audit warnings. Browser
+reproduction at `http://localhost:8081` showed CSP blocking APME federation
+scripts advertised at the configured `http://127.0.0.1:8081` backend URL. Local
+now explicitly permits these two loopback origins for federation assets,
+styles/fonts/images, API connections and credentialed CORS. It does not add
+arbitrary origins. Export packaging also fails if the frontend feature metadata,
+module federation manifest or remote entry is missing.
+
+Fresh workspace audit reports 88 package entries (7 low, 81 moderate, no high or
+critical); production-only audit remains seven moderate entries. Reports now flag
+glob/minimatch build-tool chains as well as the previously documented remaining
+issues. This supersedes the earlier 32-entry snapshot rather than claiming all
+warnings were fixed. The remaining audit proposals do not provide compatible
+non-breaking remediation for those dependency chains. Keep warnings visible and
+track dependency/host upgrades; do not force legacy glob/minimatch APIs to their
+new major versions or Router 6 to Router 7 simply to lower the count. These are
+npm workspace reports, not a scan of the prebuilt RHDH/OS image.
+
+Built the updated Local image through tox using the VFS/chroot fallback, then
+opened that image in Chromium at both `http://localhost:8081/` and
+`http://127.0.0.1:8081/`. Guest sign-in, Projects navigation and the direct Add
+repository form rendered at both origins. The remotes response includes the
+APME frontend and reflects localhost in its CORS header. The preview has no
+Gateway, so no repository registration or Engine/SCM workflow was exercised.
+Package type/format checks, federation export guards and repository lint pass.
+
+### Local theme readability
+
+Reproduced dark-mode black button labels and light inputs in the clean Local
+image. The wrapper lacked the original Portal plugin's PatternFly root-theme
+sync, and PatternFly's unlayered global reset overrode BUI's layered controls.
+The Local wrapper now adapts the original root class lifecycle using Backstage's
+theme API, including explicit/custom theme IDs and Auto/system changes, without
+adding a legacy MUI dependency. Its PatternFly base stylesheet loads in the
+`base` layer, below BUI components; both libraries keep their existing palettes.
+Dialog headings also now use the pinned BUI API's children rather than the HTML
+`title` attribute, which had left their visible/accessibility headings empty.
+
+Clean image builds and manual Chromium inspection cover light/dark workbench
+controls, the direct repository dialog, SCM selector popover and mixed BUI/PF
+paste/upload advanced options. Auto follows emulated system light/dark changes
+while the page stays mounted, and leaving Projects restores the prior root
+class. Type/format checks and repository lint pass. No additional test suites
+were run. The preview has no Gateway/Engine, so this is theme/rendering evidence,
+not repository mutation or scan/remediation acceptance. The broader two-host
+acceptance task remains in progress.
+
+### Local navigation and project settings correction
+
+The pinned host discovers sidebar destinations from a page's route reference,
+title and icon. Local now registers all three and a plugin root route, so
+Projects is visible from other host pages. Its fixed sidebar is aligned with
+the host's desktop page inset; the first item no longer paints above the clipped
+viewport. These layout rules are private to the Local entry point.
+
+Local contributes `sub-page:apme/settings` to `page:user-settings` at
+`/settings/apme`, preserving General, Authentication Providers and Feature Flags.
+It hides the duplicate global-settings button inside Projects and redirects old
+`?view=settings` links to the host page. Both Local page entry points share the
+same BUI/PatternFly theme wrapper, including direct settings loads.
+
+Project tabs now include an editor for name, URL, branch, SCM provider and token
+using the existing Gateway PATCH contract. A save refreshes project details;
+name-based selections become canonical IDs after a rename while retaining the
+Settings tab. Credentials are never read back, untouched tokens are omitted,
+replacement clears the local password field after success, and removal is
+explicit. Editing defaults to denied for embeds; Local opts in via its host API.
+Portal still needs resource-authorized update routing before enabling the editor.
+
+Built clean Local images through tox and inspected them in Chromium in light and
+dark modes. Projects persists in the sidebar on Settings and after reload;
+Catalog Graph and all navigation labels are fully visible. The existing host
+Settings → APME tab loads global provider/model/Galaxy controls independently of
+the selected repository, including a direct reload and the old-link redirect.
+
+An isolated, loopback-only Gateway and temporary PostgreSQL database supported
+manual browser creation and editing of a preview project. Name, URL, branch and
+provider updates persisted through the authenticated host proxy and appeared in
+both project details and the repository list. Blank-token editing retained the
+configured-token state; replacement and explicit removal succeeded, and the
+password field stayed empty after save. A rename opened through a project-name
+alias returned to the canonical ID with Settings selected. Type/format checks,
+repository lint and the image build pass. No additional test suites were run.
+Engine and Abbenay were absent from this preview; no scan/remediation, provider
+administration or Portal authorization acceptance is claimed here.
+
+### Remove unused Local host pages (2026-11-02)
+
+Disable `page:catalog-graph` and `page:search` in the personal Local profile.
+The sidebar now contains Projects and Settings. This does not disable the APME
+project Graph tab or change Portal configuration. The pinned base image still
+contains its built-in packages; this change disables the unused frontend pages.
+
+Frontend checks, repository lint and the clean Local image build pass. Manual
+Chromium inspection confirms only Projects and Settings in the sidebar, with
+both `/catalog-graph` and `/search` rendering the host's page-not-found view.
+The preview has no Gateway, so no backend workflow acceptance is claimed.
+
+### Local sidebar branding (2026-11-02)
+
+The Local app navigation module adds the existing product icon and APME name
+above Projects and Settings using the host's navigation-content blueprint and
+Sidebar components. The icon is bundled from the original product asset, and
+the brand links to Projects. The host continues to control pinning/collapse;
+collapsed navigation shows the icon with an accessible home-link label.
+Packaging now checks that both the frontend plugin and app navigation module
+are declared in dynamic feature metadata.
+
+The wrapper declares the pinned host core-components and app-react APIs directly.
+Dependency installation reports 95 npm findings (7 low, 88 moderate, no
+high/critical); existing dependency warnings remain visible. This is not a
+security scan of the host image. Clean container build, type/format checks and
+repository lint pass. Chromium inspection confirms the icon loads from the
+federated plugin asset, branding sits above both links, unpinning shows the
+icon-only header, and selecting the brand from Settings returns to Projects.
+The preview has no Gateway and does not establish workflow acceptance.
