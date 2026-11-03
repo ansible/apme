@@ -6,8 +6,9 @@ A comprehensive test plan for validating APME (Ansible Policy & Modernization En
 
 | Requirement | Purpose |
 |-------------|---------|
-| Python 3.10+ | CLI installation via pip |
-| Podman | Container deployment (optional) |
+| Podman (rootless) | Container deployment |
+| Git | Clone repo and manage content |
+| tox | Run build/up/cli commands |
 | Sample Ansible content | Files to scan |
 | 5-30 minutes | Depending on test depth |
 
@@ -16,25 +17,35 @@ A comprehensive test plan for validating APME (Ansible Policy & Modernization En
 Verify basic installation and operation:
 
 ```bash
-# 1. Install APME
-pip install apme-engine
+# 1. Clone the repo and build containers
+git clone https://github.com/ansible/apme.git
+cd apme
+tox -e build
 
-# 2. Check version
-apme --version
+# 2. Start the pod
+tox -e up
 
-# 3. Scan sample content
-apme check /path/to/playbook.yml
+# 3. Check version
+tox -e cli -- --version
 
-# 4. Verify exit codes
+# 4. Scan sample content
+tox -e cli -- check /path/to/playbook.yml
+
+# 5. Verify exit codes
 echo "Exit code: $?"
 # 0 = clean, 1 = violations found, 2 = error
+
+# 6. Stop the pod when done
+tox -e down
 ```
 
-If step 3 works, APME is functional. Continue with detailed testing below.
+If step 4 works, APME is functional. Continue with detailed testing below.
 
 ---
 
 ## CLI Command Reference
+
+> **Note**: When running from the repo with the Podman pod, prefix commands with `tox -e cli --`. For example: `tox -e cli -- check .` instead of `apme check .`
 
 ### Core Commands
 
@@ -48,6 +59,9 @@ If step 3 works, APME is functional. Continue with detailed testing below.
 | `apme format --check .` | CI mode: fail if changes needed | 0=clean, 1=changes, 2=error |
 | `apme remediate .` | Auto-fix Tier 1 violations | 0=all fixed, 1=remaining, 2=error |
 | `apme health-check` | Check service health | 0=healthy, 1=unhealthy |
+| `apme suppress add` | Add violation suppression | 0=added, 2=error |
+| `apme suppress list` | List all suppressions | 0 |
+| `apme suppress remove` | Remove a suppression | 0=removed, 2=error |
 
 ### Common Options
 
@@ -61,6 +75,7 @@ If step 3 works, APME is functional. Continue with detailed testing below.
 | `-v` | all | Verbose output (summary + top 10 slowest rules) |
 | `-vv` | all | Very verbose (full per-rule breakdown) |
 | `--no-ansi` | all | Disable colors (CI mode) |
+| `--show-suppressed` | check, remediate | Include suppressed violations in output |
 
 ---
 
@@ -125,7 +140,30 @@ apme health-check --json
 
 **Expected**: All services show "ok" status.
 
-### 5. Verbose Diagnostics
+### 5. Violation Suppression (ADR-055)
+
+Suppress known violations using content-based fingerprints:
+
+```bash
+# Run check to get fingerprints
+apme check --json . | jq '.violations[] | {rule_id, fingerprint}'
+
+# Add a suppression (baseline a known issue)
+apme suppress add L026 --fingerprint abc123def456...
+
+# List all suppressions
+apme suppress list
+
+# Remove a suppression
+apme suppress remove L026 --fingerprint abc123def456...
+
+# Show suppressed violations in output
+apme check --show-suppressed .
+```
+
+**Expected**: Suppressed violations stored in `.apme/suppressions.yml`, excluded from default output.
+
+### 6. Verbose Diagnostics
 
 ```bash
 # Summary diagnostics
@@ -215,17 +253,17 @@ Create `.gitlab-ci.yml`:
 include:
   - local: '.gitlab/apme-check.yml'
 
-# Or inline:
+# Or inline using container image:
 apme-check:
-  image: python:3.12-slim
-  before_script:
-    - pip install apme-engine
-    - curl -fsSL -o /usr/local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
-    - chmod +x /usr/local/bin/opa
+  image: ghcr.io/ansible/apme-cli:latest
+  services:
+    - name: ghcr.io/ansible/apme-primary:latest
+      alias: primary
   script:
     - apme check . --json > apme-report.json
   variables:
-    OPA_USE_PODMAN: "0"
+    APME_PRIMARY_HOST: primary
+    APME_PRIMARY_PORT: "50051"
   artifacts:
     paths:
       - apme-report.json
@@ -293,6 +331,13 @@ apme check tests/fixtures/customer-test/deprecated-modules.yml
 apme check tests/fixtures/customer-test/violations-playbook.yml
 # Expected: R108 violation
 ```
+
+### AAP-Specific Rules (A)
+
+The repository does not currently include dedicated fixtures for A001/A002.
+Those checks require AAP-specific task content; use a representative playbook
+from your own project when exercising them. Do not use sample paths that are
+not present in this repository.
 
 ### Secret Detection (SEC)
 
@@ -426,3 +471,20 @@ Include the APME version (`apme --version`) and ansible-core version in reports.
 | `vault-reference.yml` | 0 (Jinja2 filtering test) |
 
 Location: `tests/fixtures/customer-test/`
+
+---
+
+## Rule Categories
+
+For the current rule count and coverage by validator, see the generated
+[Rule Catalog](../rules/RULE_CATALOG.md). Avoid duplicating its count here.
+
+| Prefix | Category | Examples |
+|--------|----------|----------|
+| **L** | Lint | L003 (play name), L026 (FQCN), L040 (tabs) |
+| **M** | Modernize | M001 (FQCN resolution), M009 (with_items→loop) |
+| **R** | Risk | R108 (privilege escalation), R118 (external download) |
+| **A** | AAP-specific | A001 (named_url), A002 (deprecated API) |
+| **SEC** | Secrets | Hardcoded credentials, API keys |
+
+Use `--ansible-version` to target specific ansible-core versions for modernization rules.

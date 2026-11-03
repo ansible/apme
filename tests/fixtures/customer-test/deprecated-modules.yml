@@ -3,8 +3,6 @@
 # This playbook uses deprecated/removed modules to test M-rule detection.
 # Expected violations:
 #   - M001: Short module name should be FQCN
-#   - M002: Module is deprecated
-#   - M003: Module has been redirected
 #   - M009: with_* should be loop
 
 - name: Test deprecated module detection
@@ -26,7 +24,3 @@
         - one
         - two
         - three
-
-    # Example of old include syntax (if targeting older ansible versions)
-    # Uncomment to test M008 (bare include)
-    # - include: other_tasks.yml

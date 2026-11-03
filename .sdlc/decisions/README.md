@@ -128,6 +128,7 @@ Decision Requests (DRs) provide a formal mechanism for:
 
 | DR | Title | Reason | Revisit |
 |----|-------|--------|---------|
+| [DR-073](closed/deferred/DR-073-per-rule-config-options.md) | Per-Rule Configuration Options | Defer custom sensitive-name patterns until M031 customer feedback | After customer feedback |
 | [DR-004](closed/deferred/DR-004-aap-integration.md) | AAP Pre-Flight Integration | CLI-first focus for v1 | After v1 CLI complete |
 | [DR-002](closed/deferred/DR-002-sbom-format.md) | SBOM Format and Scope | Part of REQ-003 scope | When security/compliance prioritized |
 
