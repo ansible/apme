@@ -8,7 +8,11 @@ import {
   projectsRouteRef,
   projectsIcon,
 } from "@apme/backstage-plugin/alpha";
+import "@backstage/ui/css/styles.css";
+import "./theme.css";
+import "@apme/backstage-plugin/styles.css";
 import "./host.css";
+import { loadLocalPage } from "./assetLoading";
 import { Navigate } from "react-router-dom";
 import { sections } from "./sections";
 
@@ -20,14 +24,15 @@ const pages = sections.map(({ name, section, title, path, routeRef, icon }) =>
       title,
       routeRef,
       icon,
-      loader: async () => {
-        if (section === "settings") {
-          const { LocalApmeSettings } = await import("./settings");
-          return <LocalApmeSettings />;
-        }
-        const { LocalApmePage } = await import("./page");
-        return <LocalApmePage section={section} />;
-      },
+      loader: () =>
+        loadLocalPage(async () => {
+          if (section === "settings") {
+            const { LocalApmeSettings } = await import("./settings");
+            return <LocalApmeSettings />;
+          }
+          const { LocalApmePage } = await import("./page");
+          return <LocalApmePage section={section} />;
+        }),
     },
   }),
 );

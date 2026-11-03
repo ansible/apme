@@ -59,7 +59,7 @@ it("bounds deep and large graphs without recursion failure", () => {
     "Tree limited to 5,000 lines",
   );
 });
-it("uses the shared tree surface by default and keeps node inspection available without fetching again", async () => {
+it("keeps the shared tree surface available and keeps node inspection available without fetching again", async () => {
   const fetch = vi.fn(async () => new Response(JSON.stringify(graph)));
   render(
     <BUIProvider>
@@ -69,6 +69,7 @@ it("uses the shared tree surface by default and keeps node inspection available 
       />
     </BUIProvider>,
   );
+  fireEvent.click(await screen.findByRole("button", { name: "Tree" }));
   const tree = await screen.findByRole("region", {
     name: "Content graph tree",
   });
@@ -81,7 +82,7 @@ it("uses the shared tree surface by default and keeps node inspection available 
   await screen.findByRole("region", { name: "Selected graph node" });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
-it("expands the dependency tree on entry and lets users collapse it", async () => {
+it("shows dependency diagram by default and keeps raw text available", async () => {
   const fetch = vi.fn(
     async (input: RequestInfo | URL) =>
       new Response(
@@ -106,7 +107,7 @@ it("expands the dependency tree on entry and lets users collapse it", async () =
       />
     </BUIProvider>,
   );
-  await screen.findByRole("region", { name: "Dependency tree" });
-  fireEvent.click(screen.getByRole("button", { name: "Dependency tree" }));
-  expect(screen.queryByRole("region", { name: "Dependency tree" })).toBeNull();
+  await screen.findByRole("region", { name: "Dependency graph visualization" });
+  fireEvent.click(screen.getByRole("button", { name: "Text tree" }));
+  await screen.findByRole("region", { name: "Recorded dependency tree" });
 });

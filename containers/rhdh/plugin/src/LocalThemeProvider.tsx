@@ -2,8 +2,6 @@
 import type { PropsWithChildren } from "react";
 import { BUIProvider } from "@backstage/ui";
 import { useSyncPatternFlyTheme } from "./useSyncPatternFlyTheme";
-import "@backstage/ui/css/styles.css";
-import "./theme.css";
 
 export function LocalThemeProvider({ children }: PropsWithChildren) {
   useSyncPatternFlyTheme();

@@ -1,13 +1,18 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import "./layout.css";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Alert, Box, Button, Flex, Text } from "@backstage/ui";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import {
   ApmeApiProvider,
   useProjectWorkflow,
+  fetchProjectOperationState,
+  LIVE_OPERATION_STATUSES,
 } from "@apme/ui-workflow/headless";
 import { CheckOptionsForm, ProjectWorkflowPanel } from "@apme/ui-workflow";
+import { ApmeButton } from "./layout";
+import { DataStatus } from "./DataStatus";
+import { useLoad } from "./useLoad";
 
 export interface ApmeProjectWorkflowProps {
   projectId: string;
@@ -28,6 +33,7 @@ export function ApmeProjectWorkflow(props: ApmeProjectWorkflowProps) {
 
 function ProjectWorkflow({
   projectId,
+  adapter,
   enableAi: aiAvailable = true,
   feedbackEnabled = false,
   onViewDetails,
@@ -45,8 +51,21 @@ function ProjectWorkflow({
       enableAi: aiAvailable && enableAi,
       autoApplyTier1,
     },
-    initiallyAttached: true,
+    // Gateway snapshots outlive this view. Only Start/Resume attaches, per ADR-065.
+    initiallyAttached: false,
   });
+  const discover = useCallback(
+    () => fetchProjectOperationState(projectId, adapter),
+    [projectId, adapter],
+  );
+  const available = useLoad(discover, !workflow.attachOp);
+  const resumable =
+    available.value &&
+    (LIVE_OPERATION_STATUSES.has(available.value.status) ||
+      (available.value.status === "completed" &&
+        !available.value.pr_url &&
+        ((available.value.result?.remediated_count ?? 0) > 0 ||
+          (available.value.result?.patches?.length ?? 0) > 0)));
 
   async function start() {
     setStarting(true);
@@ -72,6 +91,19 @@ function ProjectWorkflow({
         />
       ) : (
         <Flex className="apme-form apme-panel" direction="column" gap="4">
+          <DataStatus {...available} subject="available workflow" />
+          {resumable && (
+            <div className="apme-stack">
+              <Text>
+                A workflow is available to resume (
+                {available.value?.status.replace(/_/g, " ")}). Starting a new
+                check may require discarding its draft changes.
+              </Text>
+              <ApmeButton variant="secondary" onPress={workflow.resumeSession}>
+                Resume workflow
+              </ApmeButton>
+            </div>
+          )}
           <Text>
             Check this repository, then review findings and proposed fixes.
           </Text>

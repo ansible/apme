@@ -17,8 +17,8 @@ open and the native UI must not be retired on the strength of these checks.
 | Paste/upload setup | File/directory selectors and removal of a selected file | Compact file-picker and remove action. Check options, start/cancel, proposal/remediation/result controls keep their existing workflow implementation and presentation. |
 | Project findings | Refresh, acknowledged visibility, pagination, existing grouped/flat/filter/detail controls | Shared refresh/pagination; existing specialist finding controls preserved. |
 | Project history | Refresh, run links, pagination; run refresh/close, PR link, proposal/change/log disclosures | Consistent actions and readable links; durable results never replay a previous run. |
-| Dependencies | Refresh, SBOM prepare/download, search, inventory pagination, issue links, all-findings/refresh, acknowledged visibility, finding pagination, acknowledgment reason/confirm/back/close | Consistent button/link/dialog styling. Acknowledgment retains existing project/content-or-rule scope and explicit permission. Dependency tree opens by default. |
-| Content graph | Refresh, Tree/Diagram/Node list, node search/selection/pagination, YAML/edge disclosures, fit/zoom/group/include controls | Text tree shares dependency-tree presentation; full diagram and node inspector remain available. Cycles, references, disconnected components and non-containment edges are represented. Rendering is bounded and diagram code remains lazy. |
+| Dependencies | Refresh, SBOM prepare/download, search, inventory pagination, issue links, all-findings/refresh, acknowledged visibility, finding pagination, acknowledgment reason/confirm/back/close | Consistent button/link/dialog styling. Acknowledgment retains existing project/content-or-rule scope and explicit permission. Dependency diagram opens by default above inventory, using the content graph renderer; raw text is an alternative (TASK-020). |
+| Content graph | Refresh, Tree/Diagram/Node list, node search/selection/pagination, YAML/edge disclosures, fit/zoom/group/include controls | Diagram is the default, shared with dependencies; text tree and full node inspector remain available. Cycles, references, disconnected components and non-containment edges are represented. Rendering is bounded and diagram code remains lazy. |
 | Project settings | Save, SCM provider, token visibility/removal, deletion confirmation/cancel/submit | Save remains credential-safe; health/last-check/severity metadata restored above tabs. Deletion restored behind independent host permission, name confirmation and active-operation guard. Failed project load now offers Retry. |
 | AI settings | Provider refresh/add/edit/delete/confirm/cancel, engine/model selectors, model refresh, token visibility | Shared compact ordinary controls and scoped dialogs. Destructive controls are marked; configured providers remain read-only. |
 | Galaxy settings | Refresh/add/edit/delete/confirm/cancel, token visibility/removal, certificate choice | Shared ordinary controls and scoped dialogs; wrapping long URLs retained. |
@@ -27,6 +27,23 @@ open and the native UI must not be retired on the strength of these checks.
 The opt-in `ApmeButton`/`ApmeDialog` scope avoids restyling the remediation
 workflow, Backstage's host pages, or Portal's existing Material UI components.
 Keyboard focus, disabled states and destructive actions remain distinct.
+
+## Follow-up corrections (TASK-020)
+
+Project entry now discovers workflows without automatically attaching to retained
+completed snapshots. Start and Resume are explicit; Next/Dismiss followed by
+leaving/reopening no longer forces Create branch. The back link says All projects.
+
+Dependency diagrams use the same D3/Dagre renderer as content graphs and appear
+above inventory without a collapsed disclosure. Parsing uses only recorded uv
+relationships; shared package/version references become shared graph nodes.
+Unrecorded relationships are never inferred from inventory. Raw text remains
+available and diagram complexity is bounded.
+
+Local theme/layout styles now load with the plugin entry. Settings route imports
+no longer fetch a separate lazy CSS chunk; stale asset load failures offer an
+explicit reload. Browser checks with caching enabled cover Settings revisits,
+visible rule switches/severity writes, and the workflow navigation sequence.
 
 ## Remaining replacement gaps discovered
 

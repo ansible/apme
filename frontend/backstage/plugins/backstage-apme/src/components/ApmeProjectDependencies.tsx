@@ -1,6 +1,6 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { ApmeButton as Button } from "./layout";
-import { ApmeTable, TreeOutput } from "./layout";
+import { ApmeTable } from "./layout";
 import { useCallback, useState } from "react";
 import {
   Cell,
@@ -15,7 +15,7 @@ import {
 import { getProjectDependencies } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { DataStatus, PageControls } from "./DataStatus";
-import { DisclosureSection } from "./DisclosureSection";
+import { DependencyDiagram } from "./DependencyDiagram";
 import { useLoad } from "./useLoad";
 import { DependencyFindings } from "./DependencyFindings";
 import { ApmeProjectSbom } from "./ApmeProjectSbom";
@@ -78,6 +78,7 @@ function ApmeProjectDependenciesContent({
           <Text>
             Ansible Core: {dependencies.ansible_core_version || "Not recorded"}
           </Text>
+          <DependencyDiagram dependencies={dependencies} />
           <SearchField
             label="Search dependencies"
             value={search}
@@ -193,14 +194,6 @@ function ApmeProjectDependenciesContent({
                       ))}
                     </ul>
                   </section>
-                )}
-                {dependencies.dependency_tree && (
-                  <DisclosureSection title="Dependency tree" defaultExpanded>
-                    <TreeOutput
-                      text={dependencies.dependency_tree}
-                      label="Dependency tree"
-                    />
-                  </DisclosureSection>
                 )}
               </>
             )}

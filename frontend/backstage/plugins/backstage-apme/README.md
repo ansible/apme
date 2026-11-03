@@ -232,9 +232,18 @@ future checks across projects. Project deletion requires both management and
 `canDeleteProjects`; embedding hosts default to denied. Local enables deletion
 with name confirmation and prevents it while an operation is active.
 
-Dependency trees open by default. Content graphs use the same selectable text
-presentation, with Diagram and Node list alternatives. Containment forms the
+Dependency diagrams open by default above the package inventory and use the
+content graph’s D3/Dagre renderer with fit, zoom and pan. Edges come only from
+the recorded uv tree; shared package/version nodes are deduplicated. Without a
+recorded tree, the inventory is shown without inferred connections. Raw text
+remains available via Text tree. Content graphs also default to Diagram, with
+Tree and Node list alternatives. Containment forms the
 hierarchy; other relationships remain explicit, and shared/cyclic nodes are
 references. Trees are limited to 5,000 lines, with full node access through the
 paginated inspector. See the [functionality audit](../../../../.sdlc/research/apme-local-controls-and-parity-audit.md)
 for the replacement gaps that remain before native UI retirement.
+
+Opening a project discovers the Gateway workflow but does not attach to it.
+Use Resume workflow to reconnect to a live operation or uncommitted changes, or
+Check repository to start a new check. Dismiss returns to the project form and
+leaving/reopening the project never forces the Create branch step to reopen.

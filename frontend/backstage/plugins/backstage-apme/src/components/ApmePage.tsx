@@ -303,7 +303,7 @@ export function ApmeWorkbench({
               onPress={() => select(null)}
               style={{ alignSelf: "flex-start" }}
             >
-              All repositories
+              All projects
             </Button>
             <ProjectDetails
               key={selected}

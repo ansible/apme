@@ -83,3 +83,12 @@ requires `canDeleteProjects` in addition to project management, defaults to deni
 in embedding hosts, and confirms the project name. Local enables it for its sole
 owner. Content/dependency text trees share a presentation; the graph also retains
 its lazy D3/Dagre diagram and complete paginated node inspector.
+
+### Project re-entry and dependency diagrams
+
+Project entry discovers current Gateway operations without attaching. Only an
+explicit Start/Resume attaches; Dismiss detaches and subsequent navigation does
+not replay Create branch. Dependency diagrams open directly, using recorded uv
+relationships and the shared D3/Dagre renderer. Text remains an alternative;
+flat inventory does not imply dependencies. Local theme/layout styles load with
+the plugin entry and asset-load failures offer an explicit page reload.

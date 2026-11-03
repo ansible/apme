@@ -40,7 +40,7 @@ function ProjectGraphContent({ projectId, adapter }: ApmeProjectGraphProps) {
     [projectId, adapter],
   );
   const state = useLoad(load);
-  const [view, setView] = useState("tree");
+  const [view, setView] = useState("diagram");
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string>();

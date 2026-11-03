@@ -14,6 +14,7 @@ const NODE_COLORS: Record<string, string> = {
   vars_file: '#8b949e',
   module: '#56d364',
   collection: '#a371f7',
+  python_package: '#58a6ff',
 };
 
 const MARKER_COLORS: Record<string, string> = {
@@ -63,9 +64,11 @@ function escapeHtml(s: string): string {
 
 interface Props {
   data: GraphData;
+  variant?: 'content' | 'dependencies';
 }
 
-export function GraphVisualization({ data }: Props) {
+export function GraphVisualization({ data, variant = 'content' }: Props) {
+  const title = variant === 'dependencies' ? 'Dependency graph' : 'Content graph';
   const markerPrefix = `apme-graph-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}-`;
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -152,7 +155,8 @@ export function GraphVisualization({ data }: Props) {
     });
     nodeMapRef.current = nodeMap;
 
-    const execEdges = (data.execution_edges || []).filter(
+    const layoutEdges = variant === 'dependencies' ? data.edges : (data.execution_edges || []);
+    const execEdges = layoutEdges.filter(
       (e) => nodeSet.has(e.source) && nodeSet.has(e.target),
     );
     execEdges.forEach((e, i) => {
@@ -228,7 +232,7 @@ export function GraphVisualization({ data }: Props) {
     }
 
     const flowGroup = container.append('g');
-    execEdges.forEach((e) => drawEdge(flowGroup, e.source, e.target, 'flow'));
+    if (variant === 'content') execEdges.forEach((e) => drawEdge(flowGroup, e.source, e.target, 'flow'));
 
     const xEdgeGroup = container.append('g');
     edgeData.forEach((e) => {
@@ -285,7 +289,7 @@ export function GraphVisualization({ data }: Props) {
             h += ` &middot; <span class="v">${escapeHtml(n.fullName)}</span>`;
           h += '<br>';
           if (n.module)
-            h += `<span class="f">module:</span> <span class="v mod">${escapeHtml(n.module)}</span><br>`;
+            h += `<span class="f">${variant === 'dependencies' ? 'version:' : 'module:'}</span> <span class="v mod">${escapeHtml(n.module)}</span><br>`;
           if (n.file) h += `<span class="f">file:</span> <span class="v">${escapeHtml(n.file)}</span>`;
           if (n.line) h += `:<span class="v">${n.line}</span>`;
           if (n.file) h += '<br>';
@@ -311,7 +315,7 @@ export function GraphVisualization({ data }: Props) {
       .transition()
       .duration(500)
       .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
-  }, [data, markerPrefix]);
+  }, [data, markerPrefix, variant]);
 
   useEffect(() => {
     buildGraph();
@@ -541,7 +545,7 @@ export function GraphVisualization({ data }: Props) {
   const edgeCount = data.edges.length;
 
   return (
-    <div ref={containerRef} className="graph-container" role="region" aria-label="Content graph visualization">
+    <div ref={containerRef} className="graph-container" role="region" aria-label={`${title} visualization`}>
       <style>{`
         .graph-container { position: relative; width: 100%; height: 70vh; min-height: 400px; background: #0d1117; border-radius: 8px; overflow: hidden; }
         .graph-container > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -594,13 +598,14 @@ export function GraphVisualization({ data }: Props) {
         .graph-container .graph-stats { position: absolute; bottom: 12px; left: 12px; padding: 8px 14px; font-size: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; color: #c9d1d9; }
       `}</style>
 
-      <svg ref={svgRef} role="img" aria-label={`Content graph: ${nodeCount} nodes and ${edgeCount} edges.`} />
+      <svg ref={svgRef} role="img" aria-label={`${title}: ${nodeCount} nodes and ${edgeCount} edges.`} />
       <div className="graph-tooltip" />
 
       <div className="graph-controls">
         <button type="button" aria-label="Fit graph to view" onClick={fitAll}>Fit</button>
         <button type="button" aria-label="Zoom in" onClick={zoomIn}>+</button>
         <button type="button" aria-label="Zoom out" onClick={zoomOut}>&minus;</button>
+        {variant === 'content' && <>
         <div className="sep" />
         <button
           type="button"
@@ -638,10 +643,15 @@ export function GraphVisualization({ data }: Props) {
         >
           Includes
         </button>
+        </>}
       </div>
 
       <details className="graph-legend">
         <summary>Legend</summary>
+        {variant === 'dependencies' ? <>
+          <div className="li"><div className="sw" style={{background: NODE_COLORS.python_package}} />Python package</div>
+          <div className="li">Arrows point from a package to its dependencies.</div>
+        </> : <>
         <h3>Nodes</h3>
         <div className="li"><div className="sw" style={{ background: '#f85149' }} />Playbook</div>
         <div className="li"><div className="sw" style={{ background: '#f0883e' }} />Play</div>
@@ -668,10 +678,11 @@ export function GraphVisualization({ data }: Props) {
           <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#3fb950" strokeWidth="1.2" strokeDasharray="2 4" /></svg>
           notify
         </div>
+        </>}
       </details>
 
       <div className="graph-stats">
-        {nodeCount} nodes &middot; {edgeCount} edges
+        {nodeCount} {variant === 'dependencies' ? 'packages' : 'nodes'} &middot; {edgeCount} {variant === 'dependencies' ? 'dependencies' : 'edges'}
       </div>
     </div>
   );
