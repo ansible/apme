@@ -1,0 +1,89 @@
+{
+  "name": "@apme/backstage-plugin",
+  "version": "0.0.0-dev",
+  "type": "module",
+  "description": "APME project workflows for RHDH Local and Portal host composition.",
+  "license": "Apache-2.0",
+  "backstage": {
+    "role": "frontend-plugin",
+    "pluginId": "apme"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ansible/apme.git",
+    "directory": "frontend/backstage/plugins/backstage-apme"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./host-api": {
+      "types": "./dist/api/apmeApi.d.ts",
+      "default": "./dist/api/apmeApi.js"
+    },
+    "./page": {
+      "types": "./dist/components/ApmePage.d.ts",
+      "default": "./dist/components/ApmePage.js"
+    },
+    "./settings": {
+      "types": "./dist/components/ApmeSettings.d.ts",
+      "default": "./dist/components/ApmeSettings.js"
+    },
+    "./package.json": "./package.json",
+    "./alpha": {
+      "types": "./dist/alpha.d.ts",
+      "default": "./dist/alpha.js"
+    },
+    "./workflow": {
+      "types": "./dist/workflow.d.ts",
+      "default": "./dist/workflow.js"
+    },
+    "./findings": {
+      "types": "./dist/findings.d.ts",
+      "default": "./dist/findings.js"
+    },
+    "./activity": {
+      "types": "./dist/activity.d.ts",
+      "default": "./dist/activity.js"
+    },
+    "./dependencies": {
+      "types": "./dist/dependencies.d.ts",
+      "default": "./dist/dependencies.js"
+    },
+    "./graph": {
+      "types": "./dist/graph.d.ts",
+      "default": "./dist/graph.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
+    "./styles.css": "./dist/components/layout.css"
+  },
+  "files": [
+    "dist",
+    "config.d.ts",
+    "README.md"
+  ],
+  "configSchema": "config.d.ts",
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', {recursive:true,force:true})\" && tsc -p tsconfig.build.json && cp src/components/layout.css dist/components/layout.css"
+  },
+  "dependencies": {
+    "@apme/client": "*",
+    "@apme/ui-workflow": "*"
+  },
+  "peerDependencies": {
+    "@backstage/core-plugin-api": "^1.12.9",
+    "@backstage/ui": "^0.17.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6",
+    "@patternfly/react-core": "^6.3.1",
+    "@patternfly/react-icons": "^6.3.1",
+    "@backstage/frontend-plugin-api": "^0.18.0"
+  }
+}

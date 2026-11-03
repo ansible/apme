@@ -7,10 +7,11 @@
     "node": ">=24.15.0 <25"
   },
   "workspaces": [
-    "frontend/packages/*"
+    "frontend/packages/*",
+    "frontend/backstage/plugins/*"
   ],
   "scripts": {
-    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow",
+    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin",
     "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json",
     "lint:ui": "node frontend/backstage/scripts/check-eslint-minimatch.mjs && eslint . --ext .ts,.tsx",
     "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",
@@ -18,15 +19,24 @@
     "format": "prettier --write eslint.config.mjs frontend/backstage frontend/packages/apme-client",
     "format:check": "prettier --check eslint.config.mjs frontend/backstage frontend/packages/apme-client",
     "pack:verify": "node frontend/backstage/scripts/verify-pack.mjs",
-    "pack:verify:release": "node frontend/backstage/scripts/verify-release-pack.mjs"
+    "pack:verify:release": "node frontend/backstage/scripts/verify-release-pack.mjs",
+    "dev": "vite --config frontend/backstage/vite.config.ts --host 127.0.0.1",
+    "build:dev": "vite build --config frontend/backstage/vite.config.ts"
   },
   "dependencies": {
+    "@backstage/backend-plugin-api": "1.10.0",
+    "@backstage/config": "1.3.8",
+    "@backstage/core-app-api": "1.20.4",
+    "@backstage/core-plugin-api": "1.12.9",
+    "@backstage/ui": "0.17.1",
     "@patternfly/react-core": "6.6.2",
     "@patternfly/react-icons": "6.6.1",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.30.6"
   },
   "devDependencies": {
+    "@backstage/config-loader": "1.10.12",
     "@eslint/js": "10.0.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",

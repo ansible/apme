@@ -182,7 +182,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: uvx --with-requirements ci/tox-requirements.txt tox -e ui-workflow-pack
 
-  shared-packages:
+  backstage-packages:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -194,4 +194,4 @@ jobs:
           node-version-file: package.json
           cache: npm
           cache-dependency-path: package-lock.json
-      - run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-lint,frontend-unit,frontend-pack-smoke,frontend-release-pack-smoke
+      - run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-lint,frontend-unit,frontend-pack-smoke,frontend-release-pack-smoke,frontend-dev-build

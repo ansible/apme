@@ -1,0 +1,458 @@
+/* Scoped APME layout using host colors and existing keyboard focus states. */
+.apme-ui {
+  min-width: 0;
+}
+
+.apme-page {
+  padding: 20px 24px;
+}
+
+.apme-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.apme-section-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.apme-section-heading :is(h1, h2, h3, p) {
+  margin: 0;
+}
+
+.apme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.apme-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Keep actions content-sized instead of stretching across column layouts. */
+.apme-ui .bui-Button {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.apme-ui .bui-Table {
+  border: 0;
+  background: var(--bui-bg-neutral-1);
+  font-size: 14px;
+}
+
+/* Match RHDH theme adapter specificity when setting compact cell padding. */
+.apme-ui table.bui-Table :is(td.bui-TableCell, th.bui-TableColumn) {
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
+.apme-ui .bui-Table th {
+  background: var(--bui-bg-neutral-2);
+}
+
+.apme-ui .bui-Table td .bui-Button {
+  padding: 0;
+  min-height: 28px;
+  height: auto;
+  text-align: start;
+}
+
+.apme-table-scroll {
+  overflow-x: auto;
+  min-width: 0;
+  border: 1px solid var(--bui-border-1);
+  border-radius: 8px;
+  background: var(--bui-bg-neutral-1);
+}
+
+.apme-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(2, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.apme-project-list-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(200px, 1fr);
+  align-items: end;
+  gap: 12px;
+}
+
+.apme-form {
+  width: 100%;
+  max-width: 56rem;
+}
+
+.apme-panel {
+  padding: 20px;
+  border: 1px solid var(--bui-border-1);
+  border-radius: 8px;
+  background: var(--bui-bg-neutral-1);
+}
+
+.apme-project-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  color: var(--bui-fg-secondary);
+  overflow-wrap: anywhere;
+}
+
+.apme-project-heading {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--bui-border-1);
+}
+
+.apme-upload-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 16px;
+}
+
+.apme-upload-source {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.apme-ui .apme-upload-inputs div.apme-upload-source textarea {
+  min-height: 200px;
+  padding: 12px;
+  border: 1px solid var(--bui-border-1);
+  border-radius: 4px;
+  background: var(--bui-bg-neutral-2);
+  font-family: monospace;
+}
+
+.apme-file-picker {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--bui-border-2, var(--bui-border-1));
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.apme-file-picker input {
+  width: 100%;
+  min-width: 0;
+}
+.apme-file-picker input::file-selector-button {
+  border: 1px solid var(--apme-line);
+  border-radius: 4px;
+  padding: 5px 10px;
+  margin-inline-end: 8px;
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .apme-page {
+    padding: 16px;
+  }
+  .apme-filters,
+  .apme-project-list-filters,
+  .apme-upload-inputs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .apme-panel {
+    padding: 16px;
+  }
+}
+
+.apme-ui table.bui-Table button.bui-Button.apme-table-link {
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--apme-link);
+  font-weight: 500;
+}
+.apme-ui table.bui-Table button.bui-Button.apme-table-link:hover {
+  text-decoration: underline;
+}
+
+/* Match the original APME outlined table surfaces and PatternFly link palette. */
+.apme-ui {
+  --apme-surface: #fff;
+  --apme-table-heading: #f5f5f5;
+  --apme-text: #151515;
+  --apme-muted: #6a6e73;
+  --apme-line: rgba(0, 0, 0, 0.12);
+  --apme-link: #0066cc;
+  --apme-hover: #f5f5f5;
+}
+:where([data-theme-mode="dark"], .pf-v6-theme-dark) .apme-ui {
+  --apme-surface: #212121;
+  --apme-table-heading: #2a2a2a;
+  --apme-text: #e0e0e0;
+  --apme-muted: #a8a8a8;
+  --apme-line: rgba(255, 255, 255, 0.12);
+  --apme-link: #73bcf7;
+  --apme-hover: #2e2e2e;
+}
+.apme-ui .apme-table-scroll,
+.apme-ui .apme-panel,
+.apme-ui .apme-settings-item {
+  background: var(--apme-surface);
+  border-color: var(--apme-line);
+}
+.apme-ui div.apme-table-scroll table.bui-Table,
+.apme-ui table.bui-Table tbody td.bui-TableCell {
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  border-color: var(--apme-line);
+}
+.apme-ui table.bui-Table thead th.bui-TableColumn {
+  background: var(--apme-table-heading);
+  color: var(--apme-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.apme-ui table.bui-Table tbody tr:hover td.bui-TableCell {
+  background: var(--apme-hover);
+}
+.apme-ui table.bui-Table tbody tr:last-child td.bui-TableCell {
+  border-bottom: 0;
+}
+.apme-ui .apme-actions button.bui-Button,
+.apme-ui .apme-panel button.bui-Button {
+  border-radius: 4px;
+}
+.apme-ui .bui-Flex,
+.apme-ui .apme-panel,
+.apme-ui section {
+  min-width: 0;
+}
+.apme-settings {
+  width: 100%;
+  min-width: 0;
+  max-width: 72rem;
+}
+.apme-settings-header {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.apme-settings-header > .bui-Flex {
+  flex-wrap: wrap;
+}
+.apme-settings-list {
+  display: grid;
+  gap: 12px;
+}
+.apme-settings-item {
+  border: 1px solid var(--apme-line);
+  border-radius: 6px;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.apme-settings-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin: 12px 0 0;
+}
+.apme-settings-details dt {
+  font-size: 12px;
+  color: var(--apme-muted);
+  margin-bottom: 4px;
+}
+.apme-settings-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.apme-setting-url {
+  grid-column: 1 / -1;
+}
+.apme-ui table.bui-Table button.apme-run-link {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: normal;
+  text-align: left;
+}
+.apme-run-id {
+  font-family: monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.apme-issue-count {
+  font-variant-numeric: tabular-nums;
+}
+.apme-ui table.bui-Table button.apme-issue-count[data-has-issues="true"] {
+  color: var(--pf-t--global--color--status--danger--default, #c9190b);
+}
+.apme-ui .apme-findings-dialog {
+  max-width: min(70rem, calc(100vw - 32px));
+}
+.apme-dependency-summary {
+  display: flex;
+  gap: 8px 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+@media (max-width: 600px) {
+  .apme-settings-details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Only these opted-in controls change; the remediation workflow keeps its UI. */
+.apme-ui button.bui-Button.apme-button[data-variant] {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  height: auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 12px;
+  border: 1px solid var(--apme-line);
+  border-radius: 4px;
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: normal;
+  box-shadow: none;
+}
+.apme-ui button.bui-Button.apme-button[data-variant]:hover {
+  background: var(--apme-hover);
+  border-color: var(--apme-muted);
+}
+.apme-ui button.bui-Button.apme-button[data-variant][data-variant="primary"] {
+  background: var(--apme-link);
+  border-color: var(--apme-link);
+  color: var(--apme-surface);
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant][data-variant="primary"]:hover {
+  filter: brightness(0.9);
+}
+.apme-ui button.bui-Button.apme-button[data-variant][data-variant="tertiary"] {
+  background: transparent;
+  border-color: transparent;
+  color: var(--apme-link);
+  padding-inline: 4px;
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant][data-variant="tertiary"]:hover {
+  text-decoration: underline;
+}
+.apme-ui button.bui-Button.apme-button[data-variant][data-destructive="true"] {
+  color: var(--pf-t--global--color--status--danger--default, #c9190b);
+  border-color: currentColor;
+  background: transparent;
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant]:is(
+    [disabled],
+    [data-disabled="true"],
+    [data-ispending="true"]
+  ) {
+  color: var(--apme-muted);
+  background: transparent;
+  border-color: var(--apme-line);
+  filter: none;
+  cursor: not-allowed;
+  opacity: 0.7;
+  text-decoration: none;
+}
+.apme-ui
+  button.bui-Button.apme-button[data-variant]:is(
+    :focus-visible,
+    [data-focus-visible]
+  ) {
+  outline: 2px solid var(--apme-link);
+  outline-offset: 3px;
+}
+.apme-ui table.bui-Table button.bui-Button.apme-table-link {
+  padding: 0;
+  min-height: 28px;
+}
+.apme-ui .apme-pagination {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--apme-muted);
+}
+
+.apme-ui.apme-dialog,
+.apme-dialog .bui-DialogContent {
+  border-radius: 8px;
+}
+.apme-dialog .bui-DialogHeader button[name="close"] {
+  border: 0;
+  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  color: var(--apme-muted);
+  background: transparent;
+}
+.apme-tree-output {
+  max-height: 32rem;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre;
+  margin: 0;
+  padding: 16px;
+  background: var(--apme-surface);
+  color: var(--apme-text);
+  border: 1px solid var(--apme-line);
+  border-radius: 4px;
+  font:
+    13px/1.7 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+.apme-ui .apme-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.apme-ui .apme-rule-severity {
+  min-width: 125px;
+}
+.apme-ui table.apme-rules-table {
+  min-width: 1080px;
+}
+.apme-ui table.apme-rules-table td:nth-child(2) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.apme-ui table.apme-rules-table .bui-Switch {
+  white-space: nowrap;
+  min-width: 95px;
+}
+.apme-ui table.apme-rules-table .bui-SwitchIndicator {
+  flex-shrink: 0;
+}
+.apme-ui .apme-controls button.bui-Button.apme-button[aria-pressed="true"],
+.apme-ui button.bui-Button.apme-button[aria-current="page"] {
+  border-color: var(--apme-link);
+  color: var(--apme-link);
+  background: var(--apme-hover);
+}

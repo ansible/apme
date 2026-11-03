@@ -165,3 +165,6 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 ## Staged delivery
 
 Implementation is split from #832 under [TASK-022](../specs/REQ-021-ui-host-consolidation/tasks/TASK-022-staged-delivery.md). The complete target design below is delivered in order; the Local default switches only in the last PR. Intermediate merges retain the native deployment. Live two-host acceptance remains in #833.
+
+Stage 2 adds host-composable project/data/settings views and the development
+harness. Upload administration, Portal adapters and Local activation follow.

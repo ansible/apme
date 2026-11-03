@@ -45,6 +45,7 @@ if (!contained(realpathSync(output)))
 const packages = [
     ["@apme/client", "frontend/packages/apme-client"],
     ["@apme/ui-workflow", "frontend/packages/ui-workflow"],
+    ["@apme/backstage-plugin", "frontend/backstage/plugins/backstage-apme"],
 ];
 const filenames = Object.fromEntries(
     packages.map(([name]) => [

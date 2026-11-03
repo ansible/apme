@@ -5,7 +5,7 @@ import { fileURLToPath, URL } from "node:url";
 const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
 export default defineConfig({
-  root: at("../.."),
+  root: at("./dev"),
   plugins: [react()],
   resolve: {
     dedupe: ["react", "react-dom"],
