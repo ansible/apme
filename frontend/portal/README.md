@@ -89,3 +89,12 @@ The adapter source is authoritative here after adoption. Portal should retain
 only generic SDK/composition code and pinned APME package references. Release the
 artifacts before switching production dependencies and delete the downstream
 APME workspace only after packed-artifact and host workflow acceptance.
+
+## Project deletion authorization
+
+The Portal catalog module does not grant direct Gateway project deletion.
+`DELETE /apme/projects/:projectId` denies access unless an embedding host supplies
+`authorizeProjectDeletion`, a dedicated policy covering entitlement, repository
+access and destructive permission. Sign-in and scan permission do not grant
+project deletion. Portal repository deregistration remains a separate supported
+operation. No Gateway API path or schema changes are required.

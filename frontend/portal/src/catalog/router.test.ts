@@ -327,7 +327,7 @@ describe("catalog-backend-module-apme router", () => {
       },
     );
 
-    it("forwards authenticated health and project reads and repository removal", async () => {
+    it("forwards authenticated reads and denies deletion without a host policy", async () => {
       mockApmeService.getHealth.mockResolvedValue({ status: "ok" });
       const health = await request(app).get("/apme/health").expect(200);
       expect(health.body).toEqual({ status: "ok" });
@@ -335,8 +335,8 @@ describe("catalog-backend-module-apme router", () => {
         .get("/apme/projects/proj-1")
         .expect(200);
       expect(project.body.id).toBe("proj-1");
-      await request(app).delete("/apme/projects/proj-1").expect(204);
-      expect(mockApmeService.deleteProject).toHaveBeenCalledWith("proj-1");
+      await request(app).delete("/apme/projects/proj-1").expect(403);
+      expect(mockApmeService.deleteProject).not.toHaveBeenCalled();
     });
 
     it.each([undefined, "org/repo"])(
@@ -1432,5 +1432,89 @@ describe("catalog-backend-module-apme router", () => {
     mockPermissions.authorize.mockResolvedValue([
       { result: AuthorizeResult.ALLOW },
     ]);
+  });
+});
+
+describe("project deletion authorization", () => {
+  async function setupDeletion(
+    authorizeProjectDeletion?: (
+      projectId: string,
+      credentials: unknown,
+    ) => Promise<void>,
+  ) {
+    const credentials = {
+      principal: { type: "user", userEntityRef: "user:default/owner" },
+    };
+    const authenticate = jest.fn().mockResolvedValue(credentials);
+    const deleteProject = jest.fn().mockResolvedValue(undefined);
+    const logger = {
+      info: jest.fn(),
+      debug: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    const router = await createRouter({
+      apmeService: { deleteProject } as never,
+      logger: logger as never,
+      httpAuth: { credentials: authenticate } as never,
+      rootConfig: new ConfigReader({
+        ansible: { apme: { enabled: true, baseUrl: "http://localhost:8080" } },
+      }),
+      permissions: {} as never,
+      authorizeProjectDeletion,
+    });
+    const app = express().use(router);
+    app.use(
+      (
+        error: unknown,
+        _req: express.Request,
+        res: express.Response,
+        _next: express.NextFunction,
+      ) => {
+        res
+          .status(error instanceof NotAllowedError ? 403 : 500)
+          .json({ error: String(error) });
+      },
+    );
+    return { app, credentials, authenticate, deleteProject };
+  }
+
+  it("denies deletion without a dedicated host authorization policy", async () => {
+    const { app, deleteProject } = await setupDeletion();
+    await request(app).delete("/apme/projects/other-project").expect(403);
+    expect(deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("does not forward a deletion denied by the host", async () => {
+    const authorize = jest
+      .fn()
+      .mockRejectedValue(new NotAllowedError("Repository deletion denied"));
+    const { app, credentials, deleteProject } = await setupDeletion(authorize);
+    await request(app).delete("/apme/projects/other-project").expect(403);
+    expect(authorize).toHaveBeenCalledWith("other-project", credentials);
+    expect(deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("authenticates before invoking the deletion policy", async () => {
+    const authorize = jest.fn().mockResolvedValue(undefined);
+    const { app, authenticate, deleteProject } = await setupDeletion(authorize);
+    authenticate.mockRejectedValueOnce(new NotAllowedError("User required"));
+    await request(app).delete("/apme/projects/proj-1").expect(403);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("awaits the dedicated policy before forwarding an authorized deletion", async () => {
+    let deleteProject: jest.Mock;
+    const authorize = jest.fn(async () => {
+      await Promise.resolve();
+      expect(deleteProject).not.toHaveBeenCalled();
+    });
+    const state = await setupDeletion(authorize);
+    deleteProject = state.deleteProject;
+    await request(state.app).delete("/apme/projects/proj-1").expect(204);
+    expect(authorize).toHaveBeenCalledWith("proj-1", state.credentials);
+    expect(deleteProject).toHaveBeenCalledWith("proj-1");
+    expect(deleteProject).toHaveBeenCalledTimes(1);
   });
 });

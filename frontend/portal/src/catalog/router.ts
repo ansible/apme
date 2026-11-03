@@ -21,6 +21,7 @@ import PromiseRouter from "express-promise-router";
 import type { Router } from "express";
 import type { IncomingHttpHeaders } from "node:http";
 import {
+  type BackstageCredentials,
   HttpAuthService,
   LoggerService,
   PermissionsService,
@@ -74,6 +75,13 @@ export interface RouterOptions {
   permissions: PermissionsService;
   /** Missing authorizer denies interactive workflow traffic. */
   authorizeProjectOperation?: ProjectOperationAuthorizer;
+  /** Dedicated host policy: entitlement, repository access and destructive permission.
+   * Omission denies project deletion; scan authorization never grants deletion.
+   */
+  authorizeProjectDeletion?: (
+    projectId: string,
+    credentials: BackstageCredentials,
+  ) => Promise<void>;
 }
 
 function scmTokenFromBody(body: unknown): string | undefined {
@@ -822,8 +830,13 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   });
 
   router.delete("/apme/projects/:projectId", async (req, res) => {
-    await ensureUser(req);
+    const credentials = await ensureUser(req);
     const { projectId } = req.params;
+    if (!options.authorizeProjectDeletion)
+      throw new NotAllowedError(
+        "Project deletion authorization is unavailable",
+      );
+    await options.authorizeProjectDeletion(projectId, credentials);
     logger.info(`APME delete project ${projectId} requested`);
     await apmeService.deleteProject(projectId);
     res.status(204).send();

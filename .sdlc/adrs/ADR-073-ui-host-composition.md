@@ -176,3 +176,9 @@ ADR-074 defines the security boundary; Local activation still follows later.
 
 Stage 4 transfers Portal source ownership and verifies six-artifact release
 delivery. Portal adoption requires a release; the Local switch remains stage 5.
+
+Split review identified an inherited Portal project-deletion authorization gap.
+The catalog module now denies direct deletion unless its router receives a
+separate host deletion policy covering entitlement, repository access and
+independent destructive permission. Existing repository deregistration is
+unchanged. Sign-in and scan authorization do not grant deletion.
