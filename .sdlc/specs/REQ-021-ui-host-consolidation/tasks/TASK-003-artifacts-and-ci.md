@@ -6,7 +6,11 @@
 
 ## Status
 
-Complete
+Complete in the original full implementation (#832). During staged delivery,
+stage 1 publishes client/workflow only. Standard frontend/backend artifacts and
+the development harness arrive in stages 2–3; Portal artifacts arrive in stage 4.
+The results below are historical full-implementation evidence, not stage-1
+acceptance. See [TASK-022](TASK-022-staged-delivery.md) for each merge boundary.
 
 ## Description
 

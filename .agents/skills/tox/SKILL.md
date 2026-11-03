@@ -48,9 +48,6 @@ directly. Every task maps to a `tox -e <env>` command.
 |-------------|-------------|-------------|
 | `tox -e lint` | `prek run --all-files` (ruff, mypy, pydoclint, uv-lock) | Before every commit. Verification step for all tasks. |
 
-`tox -e frontend-audit` reports npm workspace advisories; pass `-- --omit=dev`
-to restrict the report to production dependencies. Findings produce a nonzero exit.
-
 ### Test suites
 
 | Environment | What it runs | When to use |
@@ -86,9 +83,7 @@ to restrict the report to production dependencies. Findings produce a nonzero ex
 |-------------|-------------|-------------|
 | `tox -e up` | Build images + start the pod | After any code/config change. The common case. |
 | `tox -e up -- --no-cache` | Full rebuild + start | When cached layers are stale. |
-| `tox -e build` | `containers/podman/build.sh` | Build images including checkout APME plugins baked into RHDH (no start). |
-| `tox -e build-ui` | Build only the RHDH Local UI image | No host Node or published APME release needed. |
-| `tox -e frontend-rhdh-export` | Build packages and export RHDH dynamic plugins | Host-side export development; requires Node/npm and `frontend-ci`. |
+| `tox -e build` | `containers/podman/build.sh` | Build images only (no start). |
 | `tox -e down` | `containers/podman/down.sh` | Stop the APME pod. |
 | `tox -e wipe` | Stop + wipe DB, sessions, and Abbenay `secrets.json` | Preserve images, wipe state. |
 | `tox -e build-clean` | Wipe + rebuild `--no-cache` | Full clean rebuild (no start). |

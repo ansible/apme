@@ -37,6 +37,15 @@ runs on PRs targeting feat/ui-split-* branches. Regenerate locks from the review
 resolution for each manifest; enable no job before its sources exist. Audit the
 last tree against #832. Live Gateway/Engine acceptance remains in #833.
 
+## Squash/rebase merges
+
+Record each old parent tip before updating it. After its merge, use
+`git rebase --onto origin/main <old-parent-tip> <child-branch>` to move only the
+child's commits. Rebase later descendants onto their updated parent, using the
+respective old parent tips. Push rebased branches with `--force-with-lease`,
+retarget the newly unblocked PR to main and rerun its checks. A plain rebase can
+replay an old parent's commits after squash; do not use it for that transition.
+
 ## Verified merge boundaries
 
 - Stage 1: clean root/native installs, package builds, 50 shared/client tests,
