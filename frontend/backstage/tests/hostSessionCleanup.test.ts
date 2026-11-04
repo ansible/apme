@@ -91,6 +91,7 @@ it("disposes a channel that arrives after the client has already closed", async 
     "ws://gateway/session",
   );
   socket.close();
+  expect(fetch.mock.calls[0]?.[1]?.signal).toBeUndefined();
   finish(new Response('{"id":"late"}'));
   await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
   expect(fetch).toHaveBeenCalledTimes(2);

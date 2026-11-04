@@ -65,7 +65,7 @@ mounting, settings/nav blueprints and installed-plugin discovery remain host wor
 patch. APME must release those artifacts before Portal can pin their immutable
 URLs and delete its old APME workspace after workflow acceptance.
 
-### Dependency triage capability
+## Dependency triage capability
 
 Hosts explicitly opt into `canAcknowledgeFindings`; omission is read-only. The
 Local host enables this in its personal profile. The shared dependency view uses

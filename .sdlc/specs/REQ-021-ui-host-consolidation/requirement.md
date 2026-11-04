@@ -109,8 +109,11 @@ back from a Portal authorization failure to a direct Gateway connection.
 - Architectural compatibility verified: backend service, validator, persistence,
   API versioning and SCM invariants remain intact. ADR-073 amends the presentation
   choice in ADR-030 and extends ADR-066 artifact packaging.
-- Existing plugin source: `ansible/ansible-backstage-plugins` at
-  `6ab7fce5a37406c8958d1dc0291a4bc96eb1d3f5`.
+- Governing plugin-source revision for this requirement:
+  `ansible/ansible-backstage-plugins` at
+  `6ab7fce5a37406c8958d1dc0291a4bc96eb1d3f5`. The Phase 0 baseline records
+  `f3b1bf911c99f7104249105a3055b38260d52d59` as its earlier historical snapshot;
+  the requirement's revision governs implementation work.
 - Existing Gateway client, `@apme/ui-workflow`, RHDH/Backstage and Portal RBAC.
 
 ## Non-Functional Requirements

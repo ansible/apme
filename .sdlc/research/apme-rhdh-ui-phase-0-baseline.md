@@ -7,8 +7,11 @@ packaging claims still need verification against current sources.
 
 Status: working evidence for Phase 0. This record is not a ratified capability
 matrix, architecture decision, support policy, or approval to begin production
-implementation. The controlling plan is the document in [APME PR 785](https://github.com/ansible/apme/blob/4820cceb/.sdlc/research/apme-rhdh-ui-consolidation-plan.md).
-The review recommendation and open questions are in the [consolidation proposal](apme-rhdh-ui-consolidation-proposal.md).
+implementation. The document in [APME PR 785](https://github.com/ansible/apme/blob/4820cceb/.sdlc/research/apme-rhdh-ui-consolidation-plan.md)
+is the historical source plan. Current decisions and requirements are governed
+by [ADR-073](../adrs/ADR-073-ui-host-composition.md) and
+[REQ-021](../specs/REQ-021-ui-host-consolidation/requirement.md). The review
+recommendation and open questions are in the [consolidation proposal](apme-rhdh-ui-consolidation-proposal.md).
 
 Evidence collected on 2026-10-26. Current selections follow the user direction:
 use APME main as the work base and current ansible-backstage-plugins main as

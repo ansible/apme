@@ -79,7 +79,6 @@ export function createHostSessionSocket(
         resume: requested.searchParams.get("resume"),
         scan_id: requested.searchParams.get("scan_id"),
       }),
-      signal: controller.signal,
     });
     let body: unknown;
     try {

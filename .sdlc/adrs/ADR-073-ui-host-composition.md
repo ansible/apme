@@ -62,6 +62,10 @@ and the CLI remain governed by their existing ADRs.
 
 ### Local image build contract
 
+The RHDH-based image below is the target Local build contract after the final
+PR in this stack merges. Until then, Local retains the native deployment
+described in [Staged delivery](#staged-delivery).
+
 `tox -e build` builds the current checkout into an RHDH-based `apme-ui`
 image, including frontend and upload backend dynamic plugins and personal-host
 configuration. `tox -e up` starts this image in the existing local Podman pod on
@@ -156,6 +160,7 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 | 2026-11-02 | Codex | Audited ordinary controls and restored discoverable rule configuration and project summaries/deletion with an independent host permission; text trees share a lightweight presentation while D3 remains optional. Live acceptance and remaining feature gaps are tracked in #833. |
 | 2026-11-03 | Codex | Corrected project attachment to explicit Start/Resume per ADR-065; dependency diagrams now reuse D3/Dagre by default, and Local styles load with the plugin entry to avoid lazy Settings CSS failures. |
 | 2026-11-03 | Codex | TASK-021 moves dependency diagrams below inventory, uses Portal's existing Ansible Core minor choices in advanced scan options, and applies ADR-043 ordering to nonzero project severity counts. Live acceptance remains in #833. |
+| 2026-11-04 | Codex | Clarified that the RHDH Local image contract takes effect after the final staged PR; intermediate merges retain the native deployment. |
 
 ## Staged delivery
 
