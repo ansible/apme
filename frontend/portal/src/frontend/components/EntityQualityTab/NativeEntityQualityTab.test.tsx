@@ -23,9 +23,7 @@ function UpdateSearch() {
   return (
     <button
       type="button"
-      onClick={() =>
-        setSearchParams({ rule: "R002", category: "security" })
-      }
+      onClick={() => setSearchParams({ rule: "R002", category: "security" })}
     >
       Update filters
     </button>
@@ -47,9 +45,7 @@ describe("NativeEntityQualityTab URL filters", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId("filters")).toHaveTextContent(
-      "R001|reliability",
-    );
+    expect(screen.getByTestId("filters")).toHaveTextContent("R001|reliability");
     fireEvent.click(screen.getByRole("button", { name: "Update filters" }));
     expect(screen.getByTestId("filters")).toHaveTextContent("R002|security");
   });

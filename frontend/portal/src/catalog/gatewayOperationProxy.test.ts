@@ -35,7 +35,9 @@ describe("gateway operation proxy", () => {
   ])(
     "rejects traversal suffix %s before contacting Gateway",
     async (operationSuffix) => {
-      const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue({} as Response);
+      const fetchSpy = jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue({} as Response);
       const { response } = responseSink();
       await expect(
         proxyProjectOperation({

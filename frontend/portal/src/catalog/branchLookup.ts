@@ -77,7 +77,9 @@ export function parseGitRepoUrl(
     throw new InputError(`Invalid repository URL: ${repoUrl}`);
   }
 
-  const integrations = rootConfig ? ScmIntegrations.fromConfig(rootConfig) : undefined;
+  const integrations = rootConfig
+    ? ScmIntegrations.fromConfig(rootConfig)
+    : undefined;
   const provider: ScmProvider | undefined = integrations
     ? integrations.github.byHost(host)
       ? "github"

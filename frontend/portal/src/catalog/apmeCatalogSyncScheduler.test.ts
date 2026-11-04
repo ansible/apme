@@ -69,7 +69,9 @@ describe("APME catalog sync scheduler recovery", () => {
     );
     expect(onSyncError).toHaveBeenCalledWith(
       "development",
-      expect.objectContaining({ message: expect.stringContaining("catalog unavailable") }),
+      expect.objectContaining({
+        message: expect.stringContaining("catalog unavailable"),
+      }),
     );
     await expect(scheduled[0].fn()).resolves.toBeUndefined();
     expect(onSyncRecovered).toHaveBeenCalledWith("development");

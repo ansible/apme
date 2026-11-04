@@ -117,7 +117,13 @@ describe("apmeCatalogSync helpers", () => {
       [
         baseEntity("same-org", "github-repo"),
         baseEntity("same-org", "gitlab-repo", [], "gitlab.com", "gitlab"),
-        baseEntity("same-org", "enterprise-repo", [], "git.example.com", "gitlab"),
+        baseEntity(
+          "same-org",
+          "enterprise-repo",
+          [],
+          "git.example.com",
+          "gitlab",
+        ),
       ],
       scopedConfig,
     );

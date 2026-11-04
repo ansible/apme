@@ -251,7 +251,9 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   };
   const authorizeSettingsPermission = async (
     req: unknown,
-    permission: typeof ansibleSettingsEditPermission | typeof ansibleSettingsViewPermission,
+    permission:
+      | typeof ansibleSettingsEditPermission
+      | typeof ansibleSettingsViewPermission,
   ) => {
     const credentials = await ensureUser(req);
     const [decision] = await permissions.authorize(
@@ -831,7 +833,10 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     const scope = req.query.scope as string | undefined;
     const projectScope = scope && /^project:(.+)$/.exec(scope);
     if (projectScope) {
-      await authorizeWorkflow({ method: "GET", params: { projectId: projectScope[1] } });
+      await authorizeWorkflow({
+        method: "GET",
+        params: { projectId: projectScope[1] },
+      });
     } else {
       await authorizeSettingsPermission(req, ansibleSettingsViewPermission);
     }

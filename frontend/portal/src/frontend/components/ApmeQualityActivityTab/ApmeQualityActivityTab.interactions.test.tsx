@@ -387,9 +387,13 @@ describe("ApmeQualityActivityTab interactions and edge cases", () => {
     getActivity.mockResolvedValue([activity("latest")]);
     renderTab("/?rule=L001&keep=yes");
     await screen.findByRole("button", { name: "Close activity detail" });
-    fireEvent.click(screen.getByRole("button", { name: "Close activity detail" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close activity detail" }),
+    );
     await screen.findByRole("grid");
-    expect(screen.getByTestId("query")).toHaveTextContent("?rule=L001&keep=yes");
+    expect(screen.getByTestId("query")).toHaveTextContent(
+      "?rule=L001&keep=yes",
+    );
     expect(getActivityDetail).toHaveBeenCalledTimes(1);
   });
 

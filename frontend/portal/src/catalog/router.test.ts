@@ -1013,7 +1013,9 @@ describe("catalog-backend-module-apme router", () => {
       body: new ReadableStream({
         start(controller) {
           controller.enqueue(
-            new TextEncoder().encode(JSON.stringify({ operation_id: "scan-1" })),
+            new TextEncoder().encode(
+              JSON.stringify({ operation_id: "scan-1" }),
+            ),
           );
           controller.close();
         },

@@ -82,10 +82,9 @@ async function authorizePortalAccess(
         ? apmeRepositoryRegisterPermission
         : undefined;
   if (permission) {
-    const [decision] = await options.permissions.authorize(
-      [{ permission }],
-      { credentials },
-    );
+    const [decision] = await options.permissions.authorize([{ permission }], {
+      credentials,
+    });
     if (decision?.result !== AuthorizeResult.ALLOW) {
       throw new NotAllowedError(
         operation === "scan"
@@ -155,9 +154,7 @@ async function authorizeCatalogRepository(
     );
     if (decision?.result === AuthorizeResult.ALLOW) return;
   }
-  throw new NotAllowedError(
-    "Repository is not accessible to the current user",
-  );
+  throw new NotAllowedError("Repository is not accessible to the current user");
 }
 
 /** Authorize before forwarding workflow traffic or resolving SCM credentials. */

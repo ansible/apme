@@ -36,12 +36,12 @@ describe("branchLookup", () => {
 
     it("throws for invalid URLs", () => {
       expect(() => parseGitRepoUrl("not-a-url")).toThrow(InputError);
-      expect(() => parseGitRepoUrl("https://github.bad.test/acme/repo")).toThrow(
-        /configured SCM integration/,
-      );
       expect(() =>
-        parseGitRepoUrl("http://github.com/acme/repo"),
-      ).toThrow(/HTTPS/);
+        parseGitRepoUrl("https://github.bad.test/acme/repo"),
+      ).toThrow(/configured SCM integration/);
+      expect(() => parseGitRepoUrl("http://github.com/acme/repo")).toThrow(
+        /HTTPS/,
+      );
     });
 
     it("returns an empty last path segment for empty lists", () => {

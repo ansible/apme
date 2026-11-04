@@ -484,7 +484,7 @@ export class ApmeClient {
     await this.executeRequest<void>(
       `/api/v1/projects/${encodeURIComponent(projectId)}`,
       {
-      method: "DELETE",
+        method: "DELETE",
       },
     );
   }
