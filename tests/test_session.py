@@ -907,6 +907,9 @@ class TestSessionApprovalGates:
             "file": "play.yml",
             "path": "play.yml/plays[0]/tasks[0]",
             "message": "Use a module instead of command.",
+            # L005 carries the resolver target in production; FQCN rules without
+            # one are parked for manual review and never reach the AI gate.
+            "resolved_fqcn": "ansible.builtin.command",
             "severity": "medium",
             "line": 1,
             "scope": "task",

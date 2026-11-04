@@ -170,7 +170,7 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
         return RemediationClass.MANUAL_REVIEW
-    if bare_id in FQCN_RULES:
+    if bare_id in FQCN_RULES and not has_fqcn_target(violation):
         return RemediationClass.MANUAL_REVIEW
     if _get_scope(violation) not in AI_PROPOSABLE_SCOPES:
         return RemediationClass.MANUAL_REVIEW

@@ -9,6 +9,7 @@ from ruamel.yaml.comments import CommentedMap
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 from apme_engine.engine.yaml_utils import FormattedYAML
 from apme_engine.remediation.partition import (
+    FQCN_RULES,
     add_classification_to_violations,
     classify_violation,
     count_by_remediation_class,
@@ -290,16 +291,32 @@ class TestPartition:
         assert len(list(RemediationResolution)) == 11
 
     def test_all_registered_rules_classify_as_remaining(self) -> None:
-        """Remaining violations for registered rules classify as AI_CANDIDATE, not AUTO_FIXABLE.
+        """Remaining violations classify as AI_CANDIDATE unless they are FQCN rules.
 
         AUTO_FIXABLE is only for violations proven fixed during convergence.
+        FQCN rules without a canonical target are manual-review items: neither a
+        deterministic rewrite nor an AI guess may invent a module name.
         """
         reg = build_default_registry()
         for rule_id in reg:
             v: ViolationDict = {"rule_id": rule_id}
+            if rule_id in FQCN_RULES:
+                assert classify_violation(v) == RemediationClass.MANUAL_REVIEW, (
+                    f"Remaining targetless {rule_id} should require manual review"
+                )
+                continue
             assert classify_violation(v) == RemediationClass.AI_CANDIDATE, (
                 f"Remaining {rule_id} should classify as AI_CANDIDATE"
             )
+
+    def test_fqcn_rule_with_target_classifies_as_ai_candidate(self) -> None:
+        """A remaining FQCN finding that kept its resolver target can escalate.
+
+        The rule family is only parked for manual review when the canonical
+        target is missing; with a target there is nothing for AI to invent.
+        """
+        v: ViolationDict = {"rule_id": "M001", "resolved_fqcn": "ansible.builtin.apt"}
+        assert classify_violation(v) == RemediationClass.AI_CANDIDATE
 
     def test_partition_play_scope_to_tier3(self) -> None:
         """Verifies play-scoped violations route to tier3 via scope metadata."""
