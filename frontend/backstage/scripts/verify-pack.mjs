@@ -89,6 +89,8 @@ try {
             "bundler",
             "--module",
             "ESNext",
+            "--lib",
+            "ES2021,DOM,DOM.Iterable",
             "--target",
             "ES2020",
             "main.ts",
