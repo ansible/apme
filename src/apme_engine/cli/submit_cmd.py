@@ -38,6 +38,13 @@ def run_submit(args: argparse.Namespace) -> None:
             detail = str(coded.get("message") or coded.get("code") or detail)
         print(f"Error: {exc.response.status_code} — {detail}", file=sys.stderr)
         sys.exit(1)
+    except httpx.TimeoutException:
+        print(
+            "Error: Gateway submit timed out. The operation may still have completed; "
+            "check the activity or target branch before retrying.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     except httpx.RequestError:
         print(
             f"Error: could not connect to Gateway at {client.base_url} — is it running?",

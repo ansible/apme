@@ -2074,6 +2074,33 @@ class TestFixSessionRPC:
         assert exc_info.value.code.name == "UNAVAILABLE"
         assert "retry the scan" in exc_info.value.details
 
+    async def test_venv_read_guard_timeout_maps_to_unavailable(self) -> None:
+        """Read-guard contention is surfaced as a retryable gRPC status."""
+        from apme_engine.daemon.engine_server import EngineServicer, _VenvReadGuardTimeout
+
+        async def _guard_busy(
+            self: EngineServicer,
+            session: SessionState,
+            scan_id: str,
+        ) -> AsyncIterator[SessionEvent]:
+            del self, session, scan_id
+            raise _VenvReadGuardTimeout("read guard busy")
+            yield SessionEvent()  # pragma: no cover
+
+        servicer = EngineServicer()
+        stream = AsyncCommandStream()
+        ctx = FakeGrpcContext()
+        stream.send(SessionCommand(upload=ScanChunk(scan_id="read-guard-busy", last=True)))
+        with (
+            patch.object(EngineServicer, "_session_process", _guard_busy),
+            pytest.raises(_AbortSignal) as exc_info,
+        ):
+            async for _event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                pass
+
+        assert exc_info.value.code.name == "UNAVAILABLE"
+        assert "retry the scan" in exc_info.value.details
+
     async def test_session_created_on_first_upload(self) -> None:
         """First upload yields SessionCreated with ID and positive TTL."""
         from apme_engine.daemon.engine_server import EngineServicer

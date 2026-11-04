@@ -1668,7 +1668,14 @@ def _redact_import_secrets(message: str) -> str:
             r"|aws[_-]?session[_-]?token|github[_-]?token|\bpwd\b)"
             r"\s*[:=]\s*\S+"
         )
-    redacted = _SECRET_REDACT_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", message)
+    # Remove complete PEM blocks before the keyed expression consumes the
+    # ``-----BEGIN`` prefix and leaves the key body behind.
+    redacted = _re.sub(
+        r"-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----",
+        "[REDACTED]",
+        message,
+    )
+    redacted = _SECRET_REDACT_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", redacted)
     # Bare high-entropy credential shapes with no key (AKIA IDs, ghp_/xox-
     # tokens, PEM blocks, glpat/sk/JWT) are redacted best-effort; keyed
     # pairs above stay primary.
@@ -1676,11 +1683,6 @@ def _redact_import_secrets(message: str) -> str:
     redacted = _re.sub(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b", "[REDACTED]", redacted)
     redacted = _re.sub(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "[REDACTED]", redacted)
     # Lone PEM blocks without a preceding key name (CWE-532 #1).
-    redacted = _re.sub(
-        r"-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----",
-        "[REDACTED]",
-        redacted,
-    )
     # Bare GitLab / generic secret prefixes and JWT runs.
     redacted = _re.sub(r"\bglpat-[A-Za-z0-9_-]{8,}\b", "[REDACTED]", redacted)
     redacted = _re.sub(r"\bsk-[A-Za-z0-9]{8,}\b", "[REDACTED]", redacted)

@@ -853,6 +853,18 @@ class TestImportScanCaps:
         assert "ghp_abcdefghij1234567890" not in ghp
         assert "[REDACTED]" in ghp
 
+    def test_redact_keyed_pem_block_before_key_value_redaction(self) -> None:
+        """A keyed PEM private key is removed as a complete block."""
+        from apme_gateway.api.router import _redact_import_secrets
+
+        message = (
+            "private_key: -----BEGIN RSA PRIVATE KEY-----\nMIIE-secret-key-material\n-----END RSA PRIVATE KEY-----"
+        )
+        redacted = _redact_import_secrets(message)
+        assert "MIIE-secret-key-material" not in redacted
+        assert "BEGIN RSA PRIVATE KEY" not in redacted
+        assert "[REDACTED]" in redacted
+
     def test_manifest_hash_alias(self) -> None:
         """manifest_hash is an additive alias of requirements_hash."""
         from apme_gateway.api.schemas import SessionVenvInfo

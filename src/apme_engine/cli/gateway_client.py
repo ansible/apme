@@ -7,6 +7,7 @@ read-heavy operations on persisted data go through the Gateway REST API.
 from __future__ import annotations
 
 import os
+import uuid
 
 import httpx
 
@@ -73,10 +74,13 @@ class GatewayClient:
             payload["branch_name"] = branch_name
         if activity_id:
             payload["activity_id"] = activity_id
+        idempotency_key = uuid.uuid4().hex
         resp = httpx.post(
             f"{self.base_url}/api/v1/projects/{project_id}/operation/submit",
             json=payload,
-            timeout=120,
+            headers={"Idempotency-Key": idempotency_key},
+            # Submit can wait for a 30s lock and up to three 120s SCM calls.
+            timeout=420,
         )
         resp.raise_for_status()
         data = resp.json()

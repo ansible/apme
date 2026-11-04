@@ -378,8 +378,9 @@ tox -e ui                            # Playwright UI tests
 tox                                  # run all default environments
 ```
 
-`tox -e unit` always enforces the combined and per-package coverage floors;
-`--no-cov` is unsupported in this environment.
+`tox -e unit` always enforces the combined and per-package coverage floors.
+The environment erases old coverage data before the test run, so `--no-cov`
+cannot reuse stale data to pass the package-specific reports; it is unsupported.
 
 ### Test structure
 

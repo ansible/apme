@@ -641,10 +641,10 @@ async def drain_notification_outbox(
 ) -> int:
     """Drain a bounded startup pass, advancing past failed rows once.
 
-    Startup pages use a stable ``(created_at, scan_id)`` cursor so rows that
-    fail and have their attempt counts changed are not selected again during
-    the same startup drain. At most ``page_size * max_pages`` rows are
-    attempted in one call.
+    A single bounded snapshot is ordered by attempt count before age, so
+    repeatedly failing rows do not starve newer pending notifications. At
+    most ``page_size * max_pages`` rows are attempted in one call, each at
+    most once during this startup drain.
 
     Args:
         page_size: Maximum rows processed per database page, capped at 100.
@@ -655,42 +655,29 @@ async def drain_notification_outbox(
     """
     page = max(1, min(page_size, _RECONCILE_OUTBOX_PAGE_SIZE))
     pages = max(1, min(max_pages, _STARTUP_OUTBOX_MAX_PAGES))
-    cursor: tuple[str, str] | None = None
     delivered = 0
 
-    for _ in range(pages):
-        try:
-            from sqlalchemy import and_ as _sa_and  # noqa: PLC0415
-            from sqlalchemy import or_ as _sa_or  # noqa: PLC0415
-            from sqlalchemy import select as _sa_select  # noqa: PLC0415
+    try:
+        from sqlalchemy import select as _sa_select  # noqa: PLC0415
 
-            from apme_gateway.db import get_session as _get_session  # noqa: PLC0415
-            from apme_gateway.db.models import NotificationOutbox  # noqa: PLC0415
+        from apme_gateway.db import get_session as _get_session  # noqa: PLC0415
+        from apme_gateway.db.models import NotificationOutbox  # noqa: PLC0415
 
-            stmt = _sa_select(NotificationOutbox).where(NotificationOutbox.sent_at.is_(None))
-            if cursor is not None:
-                stmt = stmt.where(
-                    _sa_or(
-                        NotificationOutbox.created_at > cursor[0],
-                        _sa_and(
-                            NotificationOutbox.created_at == cursor[0],
-                            NotificationOutbox.scan_id > cursor[1],
-                        ),
-                    )
-                )
-            stmt = stmt.order_by(NotificationOutbox.created_at, NotificationOutbox.scan_id).limit(page)
-            async with _get_session() as db:
-                rows = list((await db.execute(stmt)).scalars().all())
-        except Exception:
-            logger.warning("Notification outbox startup drain failed (query)", exc_info=True)
-            break
+        stmt = (
+            _sa_select(NotificationOutbox)
+            .where(NotificationOutbox.sent_at.is_(None))
+            .order_by(NotificationOutbox.attempts, NotificationOutbox.created_at, NotificationOutbox.scan_id)
+            .limit(page * pages)
+        )
+        async with _get_session() as db:
+            rows = list((await db.execute(stmt)).scalars().all())
+    except Exception:
+        logger.warning("Notification outbox startup drain failed (query)", exc_info=True)
+        return 0
 
-        if not rows:
-            break
-        cursor = (rows[-1].created_at, rows[-1].scan_id)
-        delivered += await _deliver_notification_page([row.scan_id for row in rows])
-        if len(rows) < page:
-            break
+    for start in range(0, len(rows), page):
+        batch = rows[start : start + page]
+        delivered += await _deliver_notification_page([row.scan_id for row in batch])
 
     return delivered
 

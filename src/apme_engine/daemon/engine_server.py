@@ -227,6 +227,10 @@ class _VenvWriteGuardTimeout(TimeoutError):
     """Raised when the venv write guard remains contended after retries."""
 
 
+class _VenvReadGuardTimeout(TimeoutError):
+    """Raised when the venv read guard remains contended during scan fan-out."""
+
+
 @dataclass
 class _ValidatorResult:
     """Result from a single validator RPC call.
@@ -1461,6 +1465,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Raises:
             CollectionDependencyError: If one or more required collections
                 could not be installed into the session venv.
+            _VenvReadGuardTimeout: If a concurrent venv install keeps the
+                scan fan-out read guard unavailable past its timeout.
             RequiredValidatorDependencyError: If a required validator
                 (native, opa, ansible) is not configured or its RPC fails.
             ValueError: If ``rule_configs_complete`` is ``True`` and either
@@ -1725,11 +1731,16 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             # released (sequential, never nested), and guards are keyed per
             # (session_id, core_version) — distinct sids do not contend
             # (see the #7 wedge verdict comment at venv acquisition).
-            async with venv_read_guard(sid, core_version):
-                named_results = await asyncio.gather(
-                    *[_run_validator(n, c) for n, c in zip(task_names, task_coros, strict=True)],
-                    return_exceptions=True,
-                )
+            try:
+                async with venv_read_guard(sid, core_version):
+                    named_results = await asyncio.gather(
+                        *[_run_validator(n, c) for n, c in zip(task_names, task_coros, strict=True)],
+                        return_exceptions=True,
+                    )
+            except TimeoutError as exc:
+                raise _VenvReadGuardTimeout(
+                    f"Venv read guard stayed contended for session={sid} req={scan_id}"
+                ) from exc
             fan_out_ms = (time.monotonic() - fan_t0) * 1000
 
             counts: dict[str, int] = {}
@@ -2244,7 +2255,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         except ResourceExhaustedError as e:
             _drop_unsealed_created()
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(e))
-        except _VenvWriteGuardTimeout as e:
+        except (_VenvWriteGuardTimeout, _VenvReadGuardTimeout) as e:
             _drop_unsealed_created()
             await context.abort(grpc.StatusCode.UNAVAILABLE, f"Venv is busy; retry the scan: {e}")
         except CollectionDependencyError as e:

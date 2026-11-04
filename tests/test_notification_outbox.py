@@ -288,6 +288,49 @@ async def test_startup_drain_advances_past_a_failing_page() -> None:
     assert attempts == {scan_ids[0]: 1, scan_ids[1]: 1, scan_ids[2]: 1}
 
 
+async def test_startup_drain_prioritizes_unattempted_rows() -> None:
+    """A repeatedly failing old row cannot starve a newer pending row."""
+    from unittest.mock import patch
+
+    scan_ids = ("outbox-startup-old-flap", "outbox-startup-new")
+    servicer = ReportingServicer()
+    with patch("apme_gateway.grpc_reporting.servicer._schedule_scan_notifications"):
+        for index, scan_id in enumerate(scan_ids):
+            await servicer.ReportFixCompleted(
+                reporting_pb2.FixCompletedEvent(
+                    scan_id=scan_id,
+                    session_id=f"sess-startup-priority-{index}",
+                    project_path="/proj",
+                    source="cli",
+                ),
+                _mock_context(),
+            )
+
+    async with get_session() as db:
+        old = (
+            await db.execute(sa_select(NotificationOutbox).where(NotificationOutbox.scan_id == scan_ids[0]))
+        ).scalar_one()
+        old.attempts = 5
+        old.created_at = "2026-01-01T00:00:00+00:00"
+        new = (
+            await db.execute(sa_select(NotificationOutbox).where(NotificationOutbox.scan_id == scan_ids[1]))
+        ).scalar_one()
+        new.attempts = 0
+        new.created_at = "2026-06-01T00:00:00+00:00"
+        await db.commit()
+
+    attempted: list[str] = []
+
+    async def _deliver(scan_id: str) -> bool:
+        attempted.append(scan_id)
+        return False
+
+    with patch("apme_gateway.notifications._deliver_scan_notifications", side_effect=_deliver):
+        assert await drain_notification_outbox(page_size=1, max_pages=1) == 0
+
+    assert attempted == [scan_ids[1]]
+
+
 async def test_concurrent_deliveries_create_and_broadcast_once() -> None:
     """Concurrent outbox deliveries serialize on the scan and emit once."""
     from unittest.mock import patch

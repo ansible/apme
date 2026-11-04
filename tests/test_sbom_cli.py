@@ -80,6 +80,27 @@ class TestGatewayClient:
         with pytest.raises(httpx.HTTPStatusError):
             client.get_sbom("missing")
 
+    @patch("apme_engine.cli.gateway_client.httpx.post")
+    def test_submit_operation_sends_idempotency_key_and_server_bounded_timeout(self, mock_post: MagicMock) -> None:
+        """Submits can be replayed safely and wait for the bounded SCM path.
+
+        Args:
+            mock_post: Patched ``httpx.post``.
+        """
+        response = MagicMock()
+        response.json.return_value = {"branch_name": "apme/fix"}
+        response.raise_for_status.return_value = None
+        mock_post.return_value = response
+
+        result = GatewayClient(base_url="http://test:8080").submit_operation("project")
+
+        assert result == {"branch_name": "apme/fix"}
+        kwargs = mock_post.call_args.kwargs
+        token = kwargs["headers"]["Idempotency-Key"]
+        assert len(token) == 32
+        assert int(token, 16) >= 0
+        assert kwargs["timeout"] == 420
+
 
 # ── run_sbom ───────────────────────────────────────────────────
 
