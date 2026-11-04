@@ -14,7 +14,15 @@ const productIcon = new URL(
 ).href;
 
 function ProductIcon() {
-  return <img src={productIcon} alt="" width="32" height="32" />;
+  return (
+    <img
+      src={productIcon}
+      alt="APME logo"
+      aria-hidden="true"
+      width="32"
+      height="32"
+    />
+  );
 }
 
 function ApmeNavigation({ navItems }: NavContentComponentProps) {
