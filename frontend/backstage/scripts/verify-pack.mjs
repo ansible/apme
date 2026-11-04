@@ -11,6 +11,10 @@ const record = JSON.parse(
 );
 if (record.dependencyMode !== "local-verification")
     throw new Error("Pack with --local first");
+if ("node" in record)
+    throw new Error(
+        "Package manifest must not include the runner's Node version",
+    );
 const temp = mkdtempSync(join(tmpdir(), "apme-foundation-consumer-"));
 try {
     const dependencies = {

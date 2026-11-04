@@ -160,7 +160,6 @@ writeFileSync(
                 cwd: root,
                 encoding: "utf8",
             }).trim(),
-            node: process.version,
             dependencyMode: values.local ? "local-verification" : "release",
             artifacts,
         },

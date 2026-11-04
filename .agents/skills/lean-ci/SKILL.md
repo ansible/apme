@@ -47,10 +47,14 @@ locally-runnable tox environments; CI just calls them.
 4. **Minimal setup actions.** `astral-sh/setup-uv` and `actions/checkout` only.
    No `actions/setup-python` (uv handles it). No other setup actions without
    explicit justification.
-   **Exception:** `test.yml` jobs `ui`, `ui-workflow-pack`, `backstage-packages`
-   and `portal-packages`, and the UI artifact release job use `actions/setup-node`.
-   Their tox environments run npm builds/tests or install the pinned Portal Yarn
-   SDK. They read the package engine range rather than defining another version.
+   **Exception:** `test.yml` jobs `ui`, `ui-workflow-pack`, and
+   `shared-packages`, plus the `attach-tarball` job in
+   `ui-workflow-release.yml`, use `actions/setup-node`. Their tox environments
+   run the UI tests, package type checks/tests/builds, or package build and
+   smoke checks; the release job also packs and uploads release artifacts.
+   Each job reads the package engine range rather than defining another Node
+   version. Add jobs to this exception only when they are introduced with
+   `actions/setup-node`.
 
 5. **Pin actions to commit SHAs.** Mutable tags (`@v4`) allow upstream changes
    to affect CI without review. Always pin to a full commit SHA with a comment

@@ -182,6 +182,9 @@ artifact type, translate it:
    runtime-required native dependencies have an explicit preparation step.
    For published immutable assets, retries must verify existing bytes
    and complete missing uploads without overwriting different published content.
+   Keep their manifests deterministic across retries: omit runner-specific
+   values such as the executing Node patch version unless that value is an
+   intentional, pinned part of the artifact contract.
 
 6. **Is there dead weight?** Check for unused imports, unreachable
    branches, written-but-never-read variables, parameters accepted
