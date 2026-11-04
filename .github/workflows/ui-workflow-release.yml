@@ -47,6 +47,9 @@ jobs:
       - name: Verify standard packages
         run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-build,frontend-lint,frontend-unit
 
+      - name: Verify packed consumer
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-pack-smoke
+
       - name: Pack immutable release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}

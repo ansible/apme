@@ -51,7 +51,8 @@ locally-runnable tox environments; CI just calls them.
    `shared-packages`, plus the `attach-tarball` job in
    `ui-workflow-release.yml`, use `actions/setup-node`. Their tox environments
    run the UI tests, package type checks/tests/builds, or package build and
-   smoke checks; the release job also packs and uploads release artifacts.
+   smoke checks; the release job also verifies the packed consumer before
+   packing and uploading release artifacts.
    Each job reads the package engine range rather than defining another Node
    version. Add jobs to this exception only when they are introduced with
    `actions/setup-node`.
