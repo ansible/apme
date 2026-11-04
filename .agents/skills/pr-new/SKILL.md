@@ -126,6 +126,9 @@ artifact type, translate it:
    defaults, including creation dialogs and deep links. For public HTTP routes,
    verify that rate limits and authorization precede expensive body parsing;
    a later permission check does not bound work performed before it.
+   Reserve a finite process-wide budget before parsing large request bodies
+   and hold it until downstream writes complete; check retained payloads and
+   concurrent sends so transport queues cannot grow with client concurrency.
 
 3. **Would a caller be surprised?** Read every public function from
    the caller's perspective. Can it return a value the type doesn't
@@ -143,6 +146,11 @@ artifact type, translate it:
    concise JSDoc description of its purpose and any non-obvious behavior;
    enforce this on public exports rather than requiring boilerplate for
    private callbacks.
+   For async route setup, trace disconnect and shutdown across every await: a
+   request that closes while authorization or host configuration is pending
+   must not attach a stream, clear orphan cleanup, or create an upstream session
+   after shutdown. Keep capacity reservations through parsing and downstream
+   send completion, releasing them on every error and disposal path.
    Trace async entry points through helpers to every filesystem operation,
    including discovery, metadata probes, and parsing. Blocking storage must
    stay off the event loop, and unchanged hot paths should avoid repeated
@@ -227,6 +235,12 @@ artifact type, translate it:
    protocol? Cross-artifact mismatches (proto declaration vs Python
    implementation) are the easiest to miss and the most embarrassing
    to ship.
+   For optional host capabilities, compare the permission flag, transport,
+   backend installation and config default across Local and Portal. Do not
+   expose an active transport when its host integration is absent. For editable
+   values, trace omission (preserve), explicit clearing/reset, and a new value
+   separately through UI state, client types, serialized requests and stored
+   configuration; falsy values must not silently collapse these meanings.
 
 8. **Would a constructed scenario break this?** For each public
    function, construct one realistic failure case: an edge-case
@@ -234,6 +248,9 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   Include requests disconnected during async authorization, shutdown while a
+   dependency lookup is pending, simultaneous large bodies across distinct
+   resources, and edits that preserve versus clear an existing optional value.
    When tests exercise optional OS or native capabilities, trace both
    available and unavailable cases: gate capability-specific assertions
    and separately assert the documented fallback.

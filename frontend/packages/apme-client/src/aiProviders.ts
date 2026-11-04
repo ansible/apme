@@ -73,7 +73,8 @@ export interface ApmeAiProviderConfigureRequest {
    * Abbenay persists the key on the config volume — Gateway does not store it.
    */
   apiKey?: string;
-  baseUrl?: string;
+  /** Omit to preserve the current override; null removes it and uses engine default. */
+  baseUrl?: string | null;
   /** Logical Abbenay secret name; defaults to ``{PROVIDER}_API_KEY`` when omitted. */
   secretName?: string;
   /**

@@ -66,6 +66,12 @@ run separately. Proxy transport must preserve streaming responses and disconnect
 Gateway prefix to bypass Portal policy. This Local profile is personal and is
 not a multiple-user authorization backend.
 
+Local uploads are disabled by default. Install and configure
+`@apme/backstage-plugin-backend`, then explicitly set
+`apme.uploads.enabled: true` to expose the upload workflow. The optional
+`apme.uploadApiBase` setting changes the authenticated backend discovery URL;
+it does not point directly to the Gateway.
+
 ## Portal composition
 
 The existing Portal composition can use the shared project workflow while

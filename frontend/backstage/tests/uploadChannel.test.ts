@@ -17,10 +17,12 @@ let base: string;
 let targets: string[];
 let authorizations: number;
 let gatewayBaseUrl: () => Promise<string>;
+let authorizationGate: Promise<void> | undefined;
 
 beforeEach(async () => {
   targets = [];
   authorizations = 0;
+  authorizationGate = undefined;
   gateway = createServer();
   sockets = new WebSocketServer({ server: gateway });
   sockets.on("connection", (socket, req) => {
@@ -42,6 +44,7 @@ beforeEach(async () => {
     maxRequestsPerMinute: 20,
     authorize: async (req) => {
       authorizations++;
+      await authorizationGate;
       if (!req.headers["x-user"]) throw new Error("Denied");
       return String(req.headers["x-user"]);
     },
@@ -222,6 +225,97 @@ it("fails closed for unknown resume bindings", async () => {
   const result = await create("alice", { resume: "unknown" });
   expect(result.response.status).toBe(404);
   expect(targets).toEqual([]);
+});
+
+it("does not create a Gateway session after shutdown during host lookup", async () => {
+  let release!: () => void;
+  let lookups = 0;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  gatewayBaseUrl = async () => {
+    lookups++;
+    await pending;
+    return `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
+  };
+  const request = create();
+  try {
+    await vi.waitFor(() => expect(lookups).toBe(1));
+    transport.close();
+    release();
+    const { response } = await request;
+    expect(response.status).toBe(503);
+    await response.body?.cancel();
+    expect(targets).toEqual([]);
+  } finally {
+    release();
+  }
+});
+
+it("disposes a channel when its event request disconnects during authorization", async () => {
+  const { body } = await create();
+  await vi.waitFor(() => expect(sockets.clients.size).toBe(1));
+  let release!: () => void;
+  authorizationGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const controller = new AbortController();
+  const events = fetch(`${base}/${body!.id}/events`, {
+    headers: { "x-user": "alice" },
+    signal: controller.signal,
+  }).catch(() => undefined);
+  try {
+    await vi.waitFor(() => expect(authorizations).toBe(2));
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+    await events;
+    await vi.waitFor(() => expect(sockets.clients.size).toBe(0));
+  } finally {
+    release();
+  }
+});
+
+it("reserves the process message budget before parsing request bodies", async () => {
+  const { body } = await create();
+  const { body: secondChannel } = await create();
+  await vi.waitFor(() => expect(sockets.clients.size).toBe(2));
+  const authorizationCount = authorizations;
+  const first = httpRequest(
+    `${base}/${body!.id}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": 1024,
+        "x-user": "alice",
+      },
+    },
+    (response) => response.resume(),
+  );
+  first.on("error", () => undefined);
+  first.flushHeaders();
+  first.write('{"data":"');
+  try {
+    await vi.waitFor(() => expect(authorizations).toBe(authorizationCount + 1));
+    const blocked = await fetch(`${base}/${secondChannel!.id}/messages`, {
+      method: "POST",
+      headers: { "x-user": "alice", "Content-Type": "application/json" },
+      body: JSON.stringify({ data: JSON.stringify({ type: "start" }) }),
+    });
+    expect(blocked.status).toBe(429);
+    await blocked.body?.cancel();
+  } finally {
+    first.destroy();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const unblocked = await fetch(`${base}/${secondChannel!.id}/messages`, {
+    method: "POST",
+    headers: { "x-user": "alice", "Content-Type": "application/json" },
+    body: JSON.stringify({ data: JSON.stringify({ type: "start" }) }),
+  });
+  expect(unblocked.status).toBe(204);
+  await unblocked.body?.cancel();
 });
 
 it("carries the existing session protocol through authenticated fetch in both directions", async () => {

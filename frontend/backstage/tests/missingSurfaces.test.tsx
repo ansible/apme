@@ -61,6 +61,66 @@ it("shows deployment providers without editing actions", async () => {
   expect(screen.queryByRole("button", { name: "Edit system" })).toBeNull();
   expect(document.body.textContent).not.toContain("never-render-this");
 });
+it("lets a managed provider explicitly return to its engine default URL", async () => {
+  const updates: Array<{ url: string; body?: unknown }> = [];
+  const adapter = createDefaultApmeApiAdapter({
+    fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST")
+        updates.push({
+          url,
+          ...(init.body
+            ? { body: JSON.parse(String(init.body)) as unknown }
+            : {}),
+        });
+      if (url.endsWith("/ai/providers"))
+        return new Response(
+          JSON.stringify([{ id: "managed", engine: "openai" }]),
+        );
+      if (url.endsWith("/ai/engines"))
+        return new Response(
+          JSON.stringify({ engines: [{ id: "openai", requiresKey: true }] }),
+        );
+      if (url.endsWith("/ai/config") && !init?.method)
+        return new Response(
+          JSON.stringify({
+            config: {
+              providers: {
+                managed: {
+                  engine: "openai",
+                  base_url: "https://existing.example",
+                  models: { model: {} },
+                },
+              },
+            },
+          }),
+        );
+      if (url.endsWith("/configure"))
+        return new Response(null, { status: 204 });
+      return new Response("{}");
+    }),
+  });
+  render(
+    <BUIProvider>
+      <ApmeAiProviders adapter={adapter} canView canManage />
+    </BUIProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Edit managed" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Use engine default" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save provider" }));
+  await waitFor(() => expect(updates).toHaveLength(2));
+  expect(updates[0].body).not.toHaveProperty("baseUrl");
+  expect(updates[1].body).toMatchObject({
+    config: {
+      providers: { managed: { engine: "openai", models: { model: {} } } },
+    },
+  });
+  expect(updates[1].body).not.toHaveProperty(
+    "config.providers.managed.base_url",
+  );
+});
 it("pastes content into the existing upload session protocol and shows its result", async () => {
   const sent: Array<Record<string, unknown>> = [];
   let finishClose: (() => void) | undefined;

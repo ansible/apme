@@ -17,6 +17,11 @@ apme:
     gatewayBaseUrl: http://127.0.0.1:8080
 ```
 
+The backend package's shared config schema treats this key as optional so
+Backstage hosts that do not install the upload plugin can still validate their
+other `apme` settings. When this plugin is registered, it reads the key during
+startup and fails immediately if it is missing.
+
 The frontend discovers `apme` for its upload channel. Existing REST/SSE still use
 the configured host proxy. Keep the Gateway private to the host backend.
 
@@ -31,12 +36,17 @@ scan IDs to their authenticated owner. Unknown/restarted ownership bindings fail
 closed. Active channels require sticky routing in multi-replica hosts. The
 transport keeps at most 64 live channels (4 per user), accepts payloads up to
 70 MiB (the Gateway's 50 MiB messages plus base64 overhead), caps pre-stream
-buffering at 256 KiB, and closes channels not attached to a reader within 30 s.
+buffering at 256 KiB, and parses/sends only one upload message at a time per
+backend process. This bounds concurrent request-body buffering to one 70 MiB
+envelope; competing messages receive HTTP 429 rather than queueing in memory.
+It closes channels not attached to a reader within 30 s.
 Streaming uses backpressure. Cleanup releases sockets and timers on disconnect
 and shutdown. Resource and real-host acceptance remain required.
 
 All upload routes use a per-client-IP request limiter before authentication and
 parsing (6000 requests/minute per backend process by default;
 `maxRequestsPerMinute` can lower it). Configure trusted proxy handling in the host.
-Creation bodies are limited to 8 KiB and messages retain the 70 MiB envelope;
-both parse only after authorization. Shutdown also disposes limiter storage.
+Creation bodies are limited to 8 KiB and parse only after authorization. Messages
+retain the 70 MiB envelope and parse only after authorization and capacity
+reservation. Shutdown disposes channels and limiter storage and rejects session
+creation after pending host configuration lookups return.

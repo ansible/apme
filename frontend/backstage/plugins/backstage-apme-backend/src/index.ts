@@ -21,6 +21,9 @@ export default createBackendPlugin({
         lifecycle: coreServices.lifecycle,
       },
       async init({ httpRouter, httpAuth, config, lifecycle }) {
+        // Keep this out of the shared schema's required set, but fail at startup
+        // when the optional Local transport itself is installed without config.
+        const gatewayBaseUrl = config.getString("apme.gatewayBaseUrl");
         const transport = createUploadSessionRouter({
           authorize: async (req) => {
             const credentials = await httpAuth.credentials(req, {
@@ -28,7 +31,7 @@ export default createBackendPlugin({
             });
             return credentials.principal.userEntityRef;
           },
-          gatewayBaseUrl: async () => config.getString("apme.gatewayBaseUrl"),
+          gatewayBaseUrl: async () => gatewayBaseUrl,
         });
         httpRouter.use(transport.router);
         lifecycle.addShutdownHook(async () => transport.close());

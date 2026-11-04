@@ -32,6 +32,7 @@ export interface ApmeUploadWorkbenchProps {
   adapter: ApmeApiAdapter;
   canUpload?: boolean;
 }
+/** Runs the Gateway upload workflow when the host grants the capability. */
 export function ApmeUploadWorkbench({
   adapter,
   canUpload = false,
@@ -51,6 +52,7 @@ export function ApmeUploadWorkbench({
     </ApmeApiProvider>
   );
 }
+/** Drives the resumable Gateway upload session and proposal review workflow. */
 function UploadContent() {
   const session = useSessionStream();
   const [files, setFiles] = useState<File[]>([]);
@@ -72,6 +74,7 @@ function UploadContent() {
     const saved = getPersistedSession();
     if (saved) void session.resumeSession(saved.sessionId, saved.scanId);
   }, [session.resumeSession]);
+  /** Validates selected paths and sends the current upload through FixSession. */
   async function start() {
     setInputError(undefined);
     if (paste.trim() && (!filename || !safePath(filename))) {
@@ -295,6 +298,7 @@ function UploadContent() {
     </Flex>
   );
 }
+/** Accepts relative upload paths that cannot escape through separators or dot segments. */
 function safePath(path: string) {
   return (
     !path.includes("\\") &&
@@ -302,6 +306,7 @@ function safePath(path: string) {
     path.split("/").every((part) => !!part && part !== "." && part !== "..")
   );
 }
+/** Exposes the completed patch files as a safe ZIP download. */
 function PatchedDownloads({ patches }: { patches: Patch[] }) {
   const mutation = useMutation();
   const [links, setLinks] = useState<Array<{ path: string; url: string }>>([]);
@@ -321,6 +326,7 @@ function PatchedDownloads({ patches }: { patches: Patch[] }) {
         .map((patch) => [patch.file, patch]),
     ).values(),
   ];
+  /** Builds a fresh archive and replaces any prior object URLs. */
   function prepare() {
     let archive: Blob | undefined;
     void mutation.run(

@@ -18,6 +18,7 @@ interface Channel {
   socket: WebSocket;
   pending: string[];
   pendingBytes: number;
+  messageInFlight: boolean;
   response?: Response;
   orphan: ReturnType<typeof setTimeout>;
 }
@@ -51,6 +52,9 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
   >();
   const maxChannels = options.maxChannels ?? 64;
   const maxPayload = 70 * 1024 * 1024;
+  // One process-wide lease bounds parsed request bodies and queued socket sends.
+  let messageInFlight = false;
+  let closed = false;
   function dispose(id: string) {
     const channel = channels.get(id);
     if (!channel) return;
@@ -80,21 +84,52 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
     }
   }
   function route(
-    action: (req: Request, res: Response, owner: string) => Promise<void>,
+    action: (
+      req: Request,
+      res: Response,
+      owner: string,
+      responseClosed: () => boolean,
+    ) => Promise<void>,
     parser?: express.RequestHandler,
     requireChannel = false,
+    beforeParse?: (
+      req: Request,
+      res: Response,
+      owner: string,
+      channel: Channel | undefined,
+    ) => (() => void) | false,
   ) {
     return (req: Request, res: Response, next: NextFunction) => {
       res.setHeader("Cache-Control", "no-store");
+      let responseClosed = res.destroyed;
+      res.once("close", () => {
+        responseClosed = true;
+      });
       void options
         .authorize(req)
         .then(async (owner) => {
-          if (requireChannel && !owned(req, res, owner)) return;
-          if (parser)
-            await new Promise<void>((resolve, reject) =>
-              parser(req, res, (error) => (error ? reject(error) : resolve())),
+          const channel = requireChannel ? owned(req, res, owner) : undefined;
+          if (requireChannel && !channel) return;
+          if (parser && (responseClosed || res.destroyed)) return;
+          const release = beforeParse?.(req, res, owner, channel);
+          if (release === false) return;
+          try {
+            if (parser)
+              await new Promise<void>((resolve, reject) =>
+                parser(req, res, (error) =>
+                  error ? reject(error) : resolve(),
+                ),
+              );
+            if (release) req.off("aborted", release);
+            return action(
+              req,
+              res,
+              owner,
+              () => responseClosed || res.destroyed,
             );
-          return action(req, res, owner);
+          } finally {
+            release?.();
+          }
         })
         .catch(next);
     };
@@ -111,11 +146,41 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
     }
     return channel;
   }
+  function reserveMessage(
+    req: Request,
+    res: Response,
+    _owner: string,
+    channel: Channel | undefined,
+  ): (() => void) | false {
+    if (!channel) return false;
+    if (closed) {
+      res.status(503).end();
+      return false;
+    }
+    if (channel.messageInFlight || messageInFlight) {
+      res.status(429).json({ error: "Too many upload messages in flight" });
+      return false;
+    }
+    channel.messageInFlight = true;
+    messageInFlight = true;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      req.off("aborted", release);
+      if (channel.messageInFlight) {
+        channel.messageInFlight = false;
+        messageInFlight = false;
+      }
+    };
+    req.once("aborted", release);
+    return release;
+  }
   const parseCreate = express.json({ limit: "8kb" });
   const parseMessage = express.json({ limit: maxPayload });
   router.post(
     "/upload-sessions",
-    route(async (req, res, owner) => {
+    route(async (req, res, owner, responseClosed) => {
       for (const [id, binding] of owners)
         if (binding.expires < Date.now()) owners.delete(id);
       const resume: unknown = req.body?.resume;
@@ -128,10 +193,16 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
           .json({ error: "Upload session unavailable; start a new upload" });
         return;
       }
-      const target = new URL(
-        "/api/v1/ws/session",
-        await options.gatewayBaseUrl(),
-      );
+      if (closed || responseClosed() || res.destroyed) {
+        res.status(503).end();
+        return;
+      }
+      const gatewayBaseUrl = await options.gatewayBaseUrl();
+      if (closed || responseClosed() || res.destroyed) {
+        res.status(503).end();
+        return;
+      }
+      const target = new URL("/api/v1/ws/session", gatewayBaseUrl);
       if (!["http:", "https:"].includes(target.protocol))
         throw new Error("Invalid Gateway protocol");
       target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
@@ -153,7 +224,14 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
       const socket = new WebSocket(target, { maxPayload });
       const orphan = setTimeout(() => dispose(id), 30_000);
       orphan.unref();
-      channels.set(id, { owner, socket, pending: [], pendingBytes: 0, orphan });
+      channels.set(id, {
+        owner,
+        socket,
+        pending: [],
+        pendingBytes: 0,
+        messageInFlight: false,
+        orphan,
+      });
       socket.on("open", () => emit(id, { event: "open" }));
       socket.on("message", (data) => {
         const text = data.toString();
@@ -207,14 +285,23 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
   );
   router.get(
     "/upload-sessions/:id/events",
-    route(async (req, res, owner) => {
+    route(async (req, res, owner, responseClosed) => {
       const channel = owned(req, res, owner);
       if (!channel) return;
+      if (responseClosed()) {
+        dispose(req.params.id);
+        return;
+      }
       if (channel.response) {
         res.status(409).end();
         return;
       }
       channel.response = res;
+      res.once("close", () => dispose(req.params.id));
+      if (responseClosed()) {
+        dispose(req.params.id);
+        return;
+      }
       clearTimeout(channel.orphan);
       res.setHeader("Content-Type", "application/x-ndjson");
       res.setHeader("Cache-Control", "no-store");
@@ -229,7 +316,6 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
         dispose(req.params.id);
         return;
       }
-      res.on("close", () => dispose(req.params.id));
     }),
   );
   router.post(
@@ -278,6 +364,7 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
       },
       parseMessage,
       true,
+      reserveMessage,
     ),
   );
   router.delete(
@@ -291,6 +378,8 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
   return {
     router,
     close() {
+      if (closed) return;
+      closed = true;
       for (const id of channels.keys()) dispose(id);
       owners.clear();
       rateLimitStore.shutdown();

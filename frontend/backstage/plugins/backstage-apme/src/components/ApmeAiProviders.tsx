@@ -31,9 +31,11 @@ export interface ApmeAiProvidersProps {
   canManage?: boolean;
   onChanged?: () => void;
 }
+/** Renders the host-authorized AI provider catalog and optional management form. */
 export function ApmeAiProviders(props: ApmeAiProvidersProps) {
   return props.canView ? <ProvidersContent {...props} /> : null;
 }
+/** Loads and presents provider rows, edit controls, and deletion confirmation. */
 function ProvidersContent({
   adapter,
   canManage,
@@ -55,6 +57,7 @@ function ProvidersContent({
     offset,
     Math.max(0, Math.ceil((state.value?.length ?? 0) / 25) - 1) * 25,
   );
+  /** Closes the active dialog and refreshes provider state after a save. */
   function saved() {
     setEditingId(undefined);
     setDeletingId(undefined);
@@ -158,6 +161,7 @@ function ProvidersContent({
     </Flex>
   );
 }
+/** Edits managed provider settings while preserving omitted values. */
 function ProviderForm({
   adapter,
   provider,
@@ -175,6 +179,7 @@ function ProviderForm({
   const [engine, setEngine] = useState(provider?.engine ?? "");
   const [key, setKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [clearBaseUrl, setClearBaseUrl] = useState(false);
   const [modelText, setModelText] = useState(provider?.models.join("\n") ?? "");
   const mutation = useMutation(adapter);
   const available =
@@ -206,7 +211,11 @@ function ProviderForm({
             engine: selectedEngine,
             secretStore: "file",
             ...(key.trim() ? { apiKey: key.trim() } : {}),
-            ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+            ...(clearBaseUrl
+              ? { baseUrl: null }
+              : baseUrl.trim()
+                ? { baseUrl: baseUrl.trim() }
+                : {}),
           },
           models,
           adapter,
@@ -267,11 +276,31 @@ function ProviderForm({
               description="Stored by the AI service. Never saved in browser storage."
             />
             <TextField
-              label="Base URL (blank keeps current or engine default)"
+              label="Base URL (blank keeps current)"
               value={baseUrl}
-              onChange={setBaseUrl}
+              onChange={(value) => {
+                setBaseUrl(value);
+                setClearBaseUrl(false);
+              }}
               isDisabled={mutation.saving}
             />
+            {provider && (
+              <>
+                <Button
+                  variant="secondary"
+                  onPress={() => {
+                    setBaseUrl("");
+                    setClearBaseUrl(true);
+                  }}
+                  isDisabled={mutation.saving}
+                >
+                  Use engine default
+                </Button>
+                {clearBaseUrl && (
+                  <Text>Engine default will be used on save.</Text>
+                )}
+              </>
+            )}
             <TextAreaField
               label="Models (one ID per line)"
               value={modelText}
@@ -301,6 +330,7 @@ function ProviderForm({
     </Dialog>
   );
 }
+/** Confirms deletion of a managed provider and reports failures in the dialog. */
 function RemoveProvider({
   adapter,
   provider,

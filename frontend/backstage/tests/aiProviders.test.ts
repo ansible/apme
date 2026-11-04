@@ -110,3 +110,53 @@ it("preserves other providers, provider options and retained model metadata when
     },
   });
 });
+
+it("removes an existing base URL when explicitly selecting the engine default", async () => {
+  const updates: Array<{ url: string; body?: unknown }> = [];
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method === "POST")
+      updates.push({
+        url,
+        ...(init.body
+          ? { body: JSON.parse(String(init.body)) as unknown }
+          : {}),
+      });
+    if (init?.method === "POST" && url.endsWith("/configure"))
+      return new Response(null, { status: 204 });
+    if (!init?.method)
+      return new Response(
+        JSON.stringify({
+          config: {
+            providers: {
+              provider: {
+                engine: "openai",
+                base_url: "https://existing.example",
+                models: { model: {} },
+              },
+            },
+          },
+        }),
+      );
+    return new Response("{}");
+  });
+  await saveAiProvider(
+    "provider",
+    { engine: "openai", secretStore: "file", baseUrl: null },
+    ["model"],
+    createDefaultApmeApiAdapter({ fetch }),
+  );
+  expect(updates[0]).toMatchObject({
+    url: "/api/v1/ai/provider/provider/configure",
+    body: { engine: "openai", secretStore: "file" },
+  });
+  expect(updates[0].body).not.toHaveProperty("baseUrl");
+  expect(updates[1].body).toEqual({
+    location: "user",
+    config: {
+      providers: {
+        provider: { engine: "openai", models: { model: {} } },
+      },
+    },
+  });
+});

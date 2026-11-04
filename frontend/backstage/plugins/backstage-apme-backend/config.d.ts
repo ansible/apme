@@ -1,6 +1,6 @@
 export interface Config {
   apme?: {
-    /** Private Gateway origin used only by the authenticated upload backend. */
-    gatewayBaseUrl: string;
+    /** Private Gateway origin required when this optional backend plugin is registered. */
+    gatewayBaseUrl?: string;
   };
 }

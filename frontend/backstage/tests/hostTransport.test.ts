@@ -42,12 +42,34 @@ describe("host transports", () => {
     });
     const adapter = await api.getAdapter();
     expect(adapter.apiBase).toBe("https://local.test/api/proxy/apme");
+    expect(api.canUpload).toBe(false);
+    expect(adapter.openSessionSocket).toBeUndefined();
     expect(discoveryApi.getBaseUrl).toHaveBeenCalledWith("proxy");
+    expect(discoveryApi.getBaseUrl).toHaveBeenCalledTimes(1);
     await expect(getHealth(adapter)).resolves.toEqual({ status: "ok" });
     expect(fetch).toHaveBeenCalledWith(
       "https://local.test/api/proxy/apme/health",
       expect.anything(),
     );
+  });
+
+  it("creates the Local upload transport only when explicitly enabled", async () => {
+    const discoveryApi = {
+      getBaseUrl: vi.fn(async (id: string) =>
+        id === "proxy"
+          ? "https://local.test/api/proxy"
+          : "https://local.test/api/apme",
+      ),
+    };
+    const api = apmeHostApiFactory.factory({
+      discoveryApi,
+      fetchApi: { fetch: vi.fn() },
+      configApi: new ConfigReader({ apme: { uploads: { enabled: true } } }),
+    });
+    const adapter = await api.getAdapter();
+    expect(api.canUpload).toBe(true);
+    expect(adapter.openSessionSocket).toBeDefined();
+    expect(discoveryApi.getBaseUrl.mock.calls).toEqual([["proxy"], ["apme"]]);
   });
 
   it("keeps Portal on its catalog-authorized operation path, including encoded IDs", async () => {
