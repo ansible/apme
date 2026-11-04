@@ -121,6 +121,26 @@ describe("interactive APME project authorization", () => {
       "catalog.entity.read",
     );
   });
+  it("authorizes non-default branches at the repository level", async () => {
+    getProject.mockResolvedValueOnce({
+      id: "project-1",
+      repo_url: "https://github.com/acme/repo",
+      branch: "release/1.x",
+    });
+
+    await expect(
+      authorize()("project-1", credentials, false),
+    ).resolves.toBeUndefined();
+    expect(permissions.authorize).toHaveBeenCalledWith(
+      [
+        {
+          permission: expect.objectContaining({ name: "catalog.entity.read" }),
+          resourceRef: "component:engineering/repo",
+        },
+      ],
+      { credentials },
+    );
+  });
   it.each([{ allowed: false }, { allowed: true, organizationId: "other" }])(
     "denies entitlement %j before contacting the gateway",
     async (decision) => {
@@ -155,7 +175,6 @@ describe("interactive APME project authorization", () => {
     );
   });
   it.each([
-    { ...entity, spec: { ...entity.spec, repository_default_branch: "other" } },
     {
       ...entity,
       metadata: {

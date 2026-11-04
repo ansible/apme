@@ -66,7 +66,6 @@ describe("resolveApmeProject", () => {
       apmeService,
       "https://github.com/acme/ans-tower-devsecops.git",
       "main",
-      "ans-tower-devsecops",
     );
     expect(project).toEqual(baseProject);
     expect(apmeService.getProjects).toHaveBeenCalled();
@@ -81,7 +80,20 @@ describe("resolveApmeProject", () => {
         apmeService,
         "https://github.com/acme/missing",
         "main",
-        "missing",
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("does not resolve a different repository by a shared display name", async () => {
+    const apmeService = mockService({
+      getProjects: jest.fn().mockResolvedValue([baseProject]),
+    });
+
+    await expect(
+      resolveApmeProject(
+        apmeService,
+        "https://github.com/other/ans-tower-devsecops",
+        "main",
       ),
     ).resolves.toBeNull();
   });
@@ -173,6 +185,27 @@ describe("registerOrResolveApmeProject", () => {
       registerOrResolveApmeProject(apmeService, {
         name: "ans-tower-devsecops",
         repo_url: "https://github.com/acme/ans-tower-devsecops",
+        branch: "main",
+      }),
+    ).rejects.toBe(conflict);
+  });
+
+  it("does not reuse a same-name project after a create conflict", async () => {
+    const conflict = new Error(
+      'APME API conflict: {"detail":"already exists"}',
+    );
+    const apmeService = mockService({
+      getProjects: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([baseProject]),
+      createProject: jest.fn().mockRejectedValue(conflict),
+    });
+
+    await expect(
+      registerOrResolveApmeProject(apmeService, {
+        name: "ans-tower-devsecops",
+        repo_url: "https://github.com/other/ans-tower-devsecops",
         branch: "main",
       }),
     ).rejects.toBe(conflict);

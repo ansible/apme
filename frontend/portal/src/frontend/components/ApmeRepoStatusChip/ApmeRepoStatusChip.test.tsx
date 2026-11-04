@@ -6,7 +6,13 @@
 
 import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@material-ui/core";
 import { MemoryRouter } from "react-router-dom";
 import type { Project } from "../../../common/types";
@@ -84,6 +90,8 @@ describe("ApmeRepoStatusChip", () => {
     mockGetOperationState.mockResolvedValue(null);
   });
 
+  afterEach(() => jest.useRealTimers());
+
   it("renders nothing when APME is disabled", () => {
     mockUseApmeEnabled.mockReturnValue(false);
     const { container } = renderChip();
@@ -102,6 +110,26 @@ describe("ApmeRepoStatusChip", () => {
     );
     renderChip();
     expect(await screen.findByText("Clean")).toBeInTheDocument();
+  });
+
+  it("replaces an old status with Unavailable after a poll fails", async () => {
+    jest.useFakeTimers();
+    mockGetProjectByRepoUrl
+      .mockResolvedValueOnce(project({ id: "p1", total_violations: 0 }))
+      .mockRejectedValueOnce(new Error("catalog unavailable"));
+    renderChip();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Clean")).toBeInTheDocument();
+
+    await act(async () => {
+      jest.advanceTimersByTime(30_000);
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Clean")).not.toBeInTheDocument();
   });
 
   it("renders Scanning when the project has an active operation", async () => {

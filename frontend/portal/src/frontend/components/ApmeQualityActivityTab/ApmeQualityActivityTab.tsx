@@ -363,10 +363,12 @@ function QualityActivityBody({ projectId }: Readonly<{ projectId: string }>) {
   });
 
   const [activities, setActivities] = useState<Activity[] | null>(null);
-  const [detail, setDetail] = useState<ActivityDetail | null>(null);
+  const [detailResult, setDetailResult] = useState<{
+    activityId: string;
+    detail: ActivityDetail | null;
+    error: Error | null;
+  } | null>(null);
   const [listError, setListError] = useState<Error | null>(null);
-  const [detailError, setDetailError] = useState<Error | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
 
   const openActivity = useCallback(
     (scanId: string, replace = false) => {
@@ -382,8 +384,7 @@ function QualityActivityBody({ projectId }: Readonly<{ projectId: string }>) {
     const next = new URLSearchParams(searchParams);
     next.delete("activity");
     setSearchParams(next, { replace: true });
-    setDetail(null);
-    setDetailError(null);
+    setDetailResult(null);
   }, [ruleFilter, searchParams, setSearchParams]);
 
   useEffect(() => {
@@ -426,27 +427,24 @@ function QualityActivityBody({ projectId }: Readonly<{ projectId: string }>) {
 
   useEffect(() => {
     if (!activityId) {
-      setDetail(null);
-      setDetailError(null);
-      setDetailLoading(false);
+      setDetailResult(null);
       return undefined;
     }
     let cancelled = false;
-    setDetailLoading(true);
     void (async () => {
       try {
         const next = await apmeApi.getActivityDetail(activityId);
         if (!cancelled) {
-          setDetail(next);
-          setDetailError(null);
+          setDetailResult({ activityId, detail: next, error: null });
         }
       } catch (e) {
         if (!cancelled) {
-          setDetail(null);
-          setDetailError(e instanceof Error ? e : new Error(String(e)));
+          setDetailResult({
+            activityId,
+            detail: null,
+            error: e instanceof Error ? e : new Error(String(e)),
+          });
         }
-      } finally {
-        if (!cancelled) setDetailLoading(false);
       }
     })();
     return () => {
@@ -463,21 +461,23 @@ function QualityActivityBody({ projectId }: Readonly<{ projectId: string }>) {
 
   if (activityId) {
     let detailBody: JSX.Element;
-    if (detailLoading) {
+    const currentDetail =
+      detailResult?.activityId === activityId ? detailResult : null;
+    if (!currentDetail) {
       detailBody = <Progress />;
-    } else if (detailError) {
+    } else if (currentDetail.error) {
       detailBody = (
         <Flex direction={{ default: "column" }} gap={{ default: "gapSm" }}>
           <Flex justifyContent={{ default: "justifyContentFlexEnd" }}>
             <CloseDetailButton onClose={backToList} />
           </Flex>
-          <ResponseErrorPanel error={detailError} />
+          <ResponseErrorPanel error={currentDetail.error} />
         </Flex>
       );
-    } else if (detail) {
+    } else if (currentDetail.detail) {
       detailBody = (
         <ActivityDetailView
-          detail={detail}
+          detail={currentDetail.detail}
           onBack={backToList}
           ruleFilter={ruleFilter}
         />

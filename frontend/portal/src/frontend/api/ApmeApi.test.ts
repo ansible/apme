@@ -286,6 +286,31 @@ describe("ApmeApiClient", () => {
         }),
       );
     });
+
+    it("forwards AI overrides and SCM tokens through the authenticated Portal route", async () => {
+      mockFetchApi.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ operation_id: "op-789" }),
+      });
+
+      await client.triggerScan("project-1", {
+        enableAi: true,
+        scmToken: "user-token",
+        userIdentity: { userEntityRef: "user:default/alice" },
+      });
+
+      expect(mockFetchApi.fetch).toHaveBeenCalledWith(
+        "http://localhost:7007/api/catalog/apme/projects/project-1/operation",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ "X-SCM-Token": "user-token" }),
+          body: JSON.stringify({
+            action: "check",
+            options: { enable_ai: true },
+          }),
+        }),
+      );
+    });
   });
 
   describe("validateRepoBranch", () => {

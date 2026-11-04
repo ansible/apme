@@ -465,10 +465,19 @@ export class ApmeApiClient implements ApmeApi {
     if (version) {
       scanOptions.ansible_version = version;
     }
+    if (options?.enableAi !== undefined) {
+      scanOptions.enable_ai = options.enableAi;
+    }
+    const headers = options?.scmToken?.trim()
+      ? { "X-SCM-Token": options.scmToken.trim() }
+      : undefined;
+    // Portal establishes the caller identity from its authenticated request;
+    // browser-supplied userIdentity is intentionally not trusted here.
     const response = await this.fetch<{ operation_id: string }>(
       `/projects/${encodeURIComponent(projectId)}/operation`,
       {
         method: "POST",
+        headers,
         body: JSON.stringify({ action: "check", options: scanOptions }),
       },
     );
@@ -510,7 +519,7 @@ export class ApmeApiClient implements ApmeApi {
 
   async getOperationState(projectId: string): Promise<OperationState | null> {
     return this.fetch<OperationState | null>(
-      `/projects/${encodeURIComponent(projectId)}/operation/state`,
+      `/projects/${encodeURIComponent(projectId)}/operation`,
       undefined,
       { notFoundReturnsNull: true },
     );

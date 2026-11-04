@@ -35,7 +35,10 @@ describe("resolveIntegrationScmToken", () => {
 
   const rootConfig = new ConfigReader({
     integrations: {
-      github: [{ host: "github.com", token: "test-token" }],
+      github: [
+        { host: "github.com", token: "test-token" },
+        { host: "github.enterprise.test", token: "enterprise-token" },
+      ],
     },
   });
 
@@ -88,6 +91,28 @@ describe("resolveIntegrationScmToken", () => {
     expect(mockResolveGithubToken).toHaveBeenCalledWith(
       expect.objectContaining({
         host: "github.com",
+        organization: "acme",
+        repository: "playbooks",
+      }),
+    );
+  });
+
+  it("resolves credentials for a configured GitHub Enterprise host", async () => {
+    mockResolveGithubToken.mockResolvedValue({
+      token: " enterprise-token ",
+    } as never);
+
+    await expect(
+      resolveIntegrationScmToken({
+        rootConfig,
+        logger: logger as never,
+        repoUrl: "https://github.enterprise.test/acme/playbooks",
+      }),
+    ).resolves.toBe("enterprise-token");
+
+    expect(mockResolveGithubToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: "github.enterprise.test",
         organization: "acme",
         repository: "playbooks",
       }),

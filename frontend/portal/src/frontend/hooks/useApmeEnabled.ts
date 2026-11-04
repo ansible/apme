@@ -15,6 +15,7 @@
  */
 
 import { configApiRef, useApi } from "@backstage/core-plugin-api";
+import { useSyncExternalStore } from "react";
 import { useAsync } from "react-use";
 import type { ApmeAiStatus, ApmePortalSettings } from "../../common/types";
 import { apmeApiRef } from "../api";
@@ -25,6 +26,17 @@ let portalSettingsCache: ApmePortalSettings | undefined;
 let portalSettingsCacheTime = 0;
 let portalSettingsPromise: Promise<ApmePortalSettings> | undefined;
 let portalSettingsIsError = false;
+let portalSettingsRevision = 0;
+const portalSettingsSubscribers = new Set<() => void>();
+
+function subscribeToPortalSettings(listener: () => void): () => void {
+  portalSettingsSubscribers.add(listener);
+  return () => portalSettingsSubscribers.delete(listener);
+}
+
+function getPortalSettingsRevision(): number {
+  return portalSettingsRevision;
+}
 
 /** Drop cached portal settings after Quality settings save. */
 export function invalidateApmePortalSettingsCache(): void {
@@ -32,6 +44,8 @@ export function invalidateApmePortalSettingsCache(): void {
   portalSettingsCacheTime = 0;
   portalSettingsPromise = undefined;
   portalSettingsIsError = false;
+  portalSettingsRevision += 1;
+  portalSettingsSubscribers.forEach((listener) => listener());
 }
 
 async function loadPortalSettings(
@@ -75,6 +89,11 @@ export function useApmeEnabled(): boolean {
 export function useApmeAiEnabled(): boolean {
   const configApi = useApi(configApiRef);
   const apmeApi = useApi(apmeApiRef);
+  const settingsRevision = useSyncExternalStore(
+    subscribeToPortalSettings,
+    getPortalSettingsRevision,
+    getPortalSettingsRevision,
+  );
   const { value } = useAsync(
     () =>
       loadPortalSettings(apmeApi, {
@@ -83,7 +102,7 @@ export function useApmeAiEnabled(): boolean {
           configApi.getOptionalBoolean("ansible.apme.publishViaGateway") ??
           true,
       }),
-    [apmeApi, configApi],
+    [apmeApi, configApi, settingsRevision],
   );
   return value?.enableAi ?? false;
 }

@@ -159,7 +159,7 @@ describe("APME frontend HTTP contracts", () => {
     },
     {
       name: "operation state",
-      path: "/projects/team%2Frepo/operation/state",
+      path: "/projects/team%2Frepo/operation",
       payload: { status: "running" },
       call: (api) => api.getOperationState("team/repo"),
     },

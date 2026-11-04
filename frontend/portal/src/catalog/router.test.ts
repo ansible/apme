@@ -7,11 +7,16 @@ import request from "supertest";
 import os from "os";
 import path from "path";
 import fs from "fs/promises";
+import { lookup } from "node:dns/promises";
 import { ConfigReader } from "@backstage/config";
 import { InputError, NotAllowedError } from "@backstage/errors";
 import { AuthorizeResult } from "@backstage/plugin-permission-common";
 import { createRouter } from "./router";
 import { ApmePortalSettingsStore } from "./apmePortalSettingsStore";
+
+jest.mock("node:dns/promises", () => ({ lookup: jest.fn() }));
+
+const mockDnsLookup = lookup as jest.MockedFunction<typeof lookup>;
 
 describe("catalog-backend-module-apme router", () => {
   const mockApmeService = {
@@ -62,6 +67,7 @@ describe("catalog-backend-module-apme router", () => {
     authorize: jest.fn().mockResolvedValue([{ result: AuthorizeResult.ALLOW }]),
     authorizeConditional: jest.fn().mockResolvedValue([]),
   };
+  const mockHttpAuthCredentials = jest.fn().mockResolvedValue({});
   const authorizeProjectOperation = jest.fn();
   const authorizeRepositoryOperation = jest.fn();
 
@@ -120,6 +126,10 @@ describe("catalog-backend-module-apme router", () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    mockHttpAuthCredentials.mockResolvedValue({});
+    mockDnsLookup.mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+    ] as never);
     mockPermissions.authorize.mockResolvedValue([
       { result: AuthorizeResult.ALLOW },
     ]);
@@ -148,7 +158,7 @@ describe("catalog-backend-module-apme router", () => {
       apmeService: mockApmeService as never,
       logger: logger as never,
       httpAuth: {
-        credentials: jest.fn().mockResolvedValue({}),
+        credentials: mockHttpAuthCredentials,
       } as never,
       rootConfig: new ConfigReader({
         ansible: { apme: { enabled: true, baseUrl: "http://localhost:8080" } },
@@ -359,6 +369,30 @@ describe("catalog-backend-module-apme router", () => {
         expect(mockApmeService.getSuppressions).toHaveBeenCalledWith(scope);
       },
     );
+
+    it("authorizes project-scoped suppression reads with the actual request", async () => {
+      mockApmeService.getSuppressions.mockResolvedValueOnce([{ id: 3 }]);
+
+      const response = await request(app)
+        .get("/apme/suppressions")
+        .query({ scope: "project:proj-1" });
+
+      expect(response.status).toBe(200);
+      expect(mockApmeService.getSuppressions).toHaveBeenCalledWith(
+        "project:proj-1",
+      );
+      expect(mockHttpAuthCredentials).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: expect.stringContaining("/apme/suppressions"),
+        }),
+        { allow: ["user"] },
+      );
+      expect(authorizeProjectOperation).toHaveBeenCalledWith(
+        "proj-1",
+        {},
+        false,
+      );
+    });
 
     it("validates suppression identifiers before removing a suppression", async () => {
       await request(app).delete("/apme/suppressions/invalid").expect(400);
@@ -802,6 +836,16 @@ describe("catalog-backend-module-apme router", () => {
     expect(response.status).toBe(200);
     expect(response.body.targetAnsibleCoreVersion).toBe("2.17");
     expect(response.body.gatewayBaseUrl).toBe("http://localhost:8080");
+  });
+
+  it("requires settings-view permission to read gateway settings", async () => {
+    mockPermissions.authorize.mockResolvedValueOnce([
+      { result: AuthorizeResult.DENY },
+    ]);
+
+    const response = await request(app).get("/apme/settings");
+
+    expect(response.status).toBe(403);
   });
 
   it("persists global default via PUT /apme/settings", async () => {
@@ -1539,6 +1583,7 @@ describe("catalog-backend-module-apme router", () => {
   });
 
   it.each([
+    "/apme/settings",
     "/apme/settings/galaxy-servers",
     "/apme/ai/config",
     "/apme/ai/engines",
@@ -1570,9 +1615,6 @@ describe("catalog-backend-module-apme router", () => {
     mockApmeService.getAiProviders.mockResolvedValueOnce([]);
     const providersRes = await request(app).get("/apme/ai/providers");
     expect(providersRes.status).toBe(200);
-
-    const settingsRes = await request(app).get("/apme/settings");
-    expect(settingsRes.status).toBe(200);
 
     // Restore default ALLOW for subsequent tests
     mockPermissions.authorize.mockResolvedValue([

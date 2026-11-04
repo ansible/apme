@@ -26,7 +26,7 @@ export async function resolveIntegrationScmToken(options: {
   const { rootConfig, logger, repoUrl } = options;
   let parsed;
   try {
-    parsed = parseGitRepoUrl(repoUrl);
+    parsed = parseGitRepoUrl(repoUrl, rootConfig);
   } catch {
     logger.debug(
       `Cannot parse repo URL for integration token fallback: ${repoUrl}`,

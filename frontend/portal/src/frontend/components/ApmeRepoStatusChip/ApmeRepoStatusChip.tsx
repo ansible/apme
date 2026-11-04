@@ -69,11 +69,13 @@ export const ApmeRepoStatusChip = ({
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [operationActive, setOperationActive] = useState(false);
+  const [lookupUnavailable, setLookupUnavailable] = useState(false);
 
   useEffect(() => {
     if (!enabled || !repoUrl) {
       setProject(null);
       setOperationActive(false);
+      setLookupUnavailable(false);
       setLoading(false);
       return undefined;
     }
@@ -108,10 +110,14 @@ export const ApmeRepoStatusChip = ({
 
         setProject(fresh);
         setOperationActive(active);
+        setLookupUnavailable(false);
         setLoading(false);
         schedule(active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
       } catch {
         if (!cancelled) {
+          setProject(null);
+          setOperationActive(false);
+          setLookupUnavailable(true);
           setLoading(false);
           schedule(IDLE_POLL_MS);
         }
@@ -135,6 +141,12 @@ export const ApmeRepoStatusChip = ({
 
   if (loading && !project) {
     return <CircularProgress size={16} />;
+  }
+
+  if (lookupUnavailable) {
+    return (
+      <Chip size="small" label="Unavailable" className={classes.notScanned} />
+    );
   }
 
   if (!project) {

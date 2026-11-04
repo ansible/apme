@@ -102,4 +102,62 @@ describe("gateway operation proxy", () => {
     expect(Buffer.concat(chunks).toString()).toBe("first");
     expect(response.end).toHaveBeenCalledTimes(1);
   });
+
+  it("settles a backpressure wait when the client disconnects", async () => {
+    let closeResponse: (() => void) | undefined;
+    let drainResponse: (() => void) | undefined;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("first"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue({
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      body,
+    } as Response);
+    const response = {
+      status: jest.fn().mockReturnThis(),
+      setHeader: jest.fn(),
+      write: jest.fn().mockReturnValue(false),
+      end: jest.fn(),
+      once: jest.fn((_event: string, listener: () => void) => {
+        drainResponse = listener;
+      }),
+      on: jest.fn((_event: string, listener: () => void) => {
+        closeResponse = listener;
+      }),
+      off: jest.fn(),
+      writableEnded: false,
+      destroyed: false,
+    };
+
+    const operation = proxyProjectOperation({
+      req: {
+        method: "GET",
+        url: "/apme/projects/p/operation",
+        headers: {},
+      },
+      res: response,
+      rootConfig,
+      logger,
+      projectId: "p",
+      operationSuffix: "",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(drainResponse).toBeDefined();
+    response.destroyed = true;
+    closeResponse?.();
+    await operation;
+
+    const [, init] = fetchSpy.mock.calls[0];
+    expect((init?.signal as AbortSignal).aborted).toBe(true);
+    expect(cancelled).toBe(true);
+    expect(response.off).toHaveBeenCalledWith("drain", drainResponse);
+  });
 });

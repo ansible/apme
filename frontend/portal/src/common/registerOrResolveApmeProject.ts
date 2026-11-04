@@ -26,7 +26,6 @@ export async function resolveApmeProject(
   apmeService: ApmeProjectResolver,
   repoUrl: string,
   branch: string,
-  name?: string,
 ): Promise<Project | null> {
   const branchValue = branch || "main";
   const byRepo = await apmeService.getProjectByRepoUrl(repoUrl, branchValue);
@@ -45,13 +44,6 @@ export async function resolveApmeProject(
     return byKey;
   }
 
-  if (name) {
-    const byName = projects.find((project) => project.name === name);
-    if (byName) {
-      return byName;
-    }
-  }
-
   return null;
 }
 
@@ -66,7 +58,6 @@ export async function registerOrResolveApmeProject(
     apmeService,
     request.repo_url,
     branch,
-    request.name,
   );
   if (existing) {
     return existing;
@@ -83,7 +74,6 @@ export async function registerOrResolveApmeProject(
       apmeService,
       request.repo_url,
       branch,
-      request.name,
     );
     if (!resolved) {
       throw err;

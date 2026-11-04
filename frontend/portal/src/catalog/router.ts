@@ -388,8 +388,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     res.json(health);
   });
 
-  router.get("/apme/settings", async (req, res) => {
-    await ensureUser(req);
+  router.get("/apme/settings", requireApmeSettingsView, async (_req, res) => {
     res.json(await mergedPortalSettings());
   });
 
@@ -426,9 +425,9 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
       if (typeof url !== "string" || !url.trim()) {
         throw new InputError("url is required");
       }
-      assertSafeHttpUrl(url, "url", outboundUrlOptions());
+      await assertSafeHttpUrl(url, "url", outboundUrlOptions());
       if (typeof auth_url === "string" && auth_url.trim()) {
-        assertSafeHttpUrl(auth_url, "auth_url", outboundUrlOptions());
+        await assertSafeHttpUrl(auth_url, "auth_url", outboundUrlOptions());
       }
       const server = await apmeService.createGalaxyServer({
         ...certificatePolicy(req.body ?? {}),
@@ -465,13 +464,13 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
         body.name = name.trim();
       }
       if (typeof url === "string") {
-        assertSafeHttpUrl(url, "url", outboundUrlOptions());
+        await assertSafeHttpUrl(url, "url", outboundUrlOptions());
         body.url = url.trim();
       }
       if (typeof token === "string") body.token = token;
       if (typeof auth_url === "string") {
         if (auth_url.trim()) {
-          assertSafeHttpUrl(auth_url, "auth_url", outboundUrlOptions());
+          await assertSafeHttpUrl(auth_url, "auth_url", outboundUrlOptions());
         }
         body.auth_url = auth_url;
       }
@@ -833,10 +832,8 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     const scope = req.query.scope as string | undefined;
     const projectScope = scope && /^project:(.+)$/.exec(scope);
     if (projectScope) {
-      await authorizeWorkflow({
-        method: "GET",
-        params: { projectId: projectScope[1] },
-      });
+      const credentials = await ensureUser(req);
+      await authorizeProject(projectScope[1], credentials, false);
     } else {
       await authorizeSettingsPermission(req, ansibleSettingsViewPermission);
     }

@@ -41,7 +41,7 @@ export type OperationProxyResponse = {
   end(): void;
   once?: (event: "drain", listener: () => void) => unknown;
   on?: (event: "close", listener: () => void) => unknown;
-  off?: (event: "close", listener: () => void) => unknown;
+  off?: (event: "close" | "drain", listener: () => void) => unknown;
   writableEnded?: boolean;
   destroyed?: boolean;
   /** Present when compression middleware is installed. */
@@ -204,7 +204,24 @@ export async function proxyProjectOperation(options: {
       const canContinue = res.write(Buffer.from(value));
       if (isEventStream) res.flush?.();
       if (!canContinue && res.once) {
-        await new Promise<void>((resolve) => res.once?.("drain", resolve));
+        const drained = await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const finish = (value: boolean) => {
+            if (settled) return;
+            settled = true;
+            res.off?.("drain", onDrain);
+            controller.signal.removeEventListener("abort", onAbort);
+            resolve(value);
+          };
+          const onDrain = () => finish(true);
+          const onAbort = () => finish(false);
+          res.once?.("drain", onDrain);
+          controller.signal.addEventListener("abort", onAbort, {
+            once: true,
+          });
+          if (controller.signal.aborted) onAbort();
+        });
+        if (!drained) break;
       }
     }
   } catch (error) {

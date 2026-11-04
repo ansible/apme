@@ -171,12 +171,11 @@ export function createProjectOperationAuthorizer(
     if (!project.branch) {
       throw new NotAllowedError("Project has no authorized repository subject");
     }
-    await authorizeCatalogRepository(
-      options,
-      credentials,
-      project.repo_url,
-      project.branch,
-    );
+    // Catalog access is repository-scoped. Branches are validated against the
+    // SCM integration at registration time, but are not separate catalog
+    // entities; requiring the catalog's default branch here would strand
+    // projects registered against another valid branch.
+    await authorizeCatalogRepository(options, credentials, project.repo_url);
   };
 }
 
