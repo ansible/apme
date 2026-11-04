@@ -1,6 +1,6 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { ApmeButton as Button } from "./layout";
-import { Alert, Flex, Text } from "@backstage/ui";
+import { Alert, Text } from "@backstage/ui";
 
 export function DataStatus({
   loading,

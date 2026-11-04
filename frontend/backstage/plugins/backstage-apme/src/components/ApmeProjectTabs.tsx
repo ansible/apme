@@ -92,7 +92,6 @@ export function ApmeProjectTabs({
   projectViews?: readonly ApmeProjectView[];
 }) {
   const tabs = projectViews.map((view) => apmeProjectViews[view]);
-  const canEdit = canManageProject && project !== undefined;
   const canAccessSettings =
     project !== undefined && (canManageProject || canDeleteProject);
   const visible = (view: ApmeProjectView) => projectViews.includes(view);

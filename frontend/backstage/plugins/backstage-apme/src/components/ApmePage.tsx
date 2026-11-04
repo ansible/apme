@@ -148,16 +148,16 @@ export function ApmeWorkbench({
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("created_at:desc");
-  const [revision, setRevision] = useState(0);
   const load = useCallback(
     () =>
       listProjects(25, offset, sort.split(":")[0], sort.split(":")[1], adapter),
-    [adapter, offset, revision, sort],
+    [adapter, offset, sort],
   );
   const {
     value: projects,
     loading,
     error,
+    reload,
   } = useLoad(load, view === "repositories" && !selected);
 
   function selectView(value: string) {
@@ -216,7 +216,7 @@ export function ApmeWorkbench({
             <>
               <Button
                 variant="secondary"
-                onPress={() => setRevision((n) => n + 1)}
+                onPress={reload}
               >
                 Refresh
               </Button>
@@ -300,7 +300,7 @@ export function ApmeWorkbench({
                   canDeleteProject={canDeleteProjects}
                   onProjectDeleted={() => {
                     select(null);
-                    setRevision((value) => value + 1);
+                    reload();
                   }}
                   onProjectUpdated={() => {
                     // A name alias stops resolving after a rename. Keep the
@@ -442,7 +442,7 @@ export function ApmeWorkbench({
           onClose={() => setAdding(false)}
           onCreated={(project) => {
             setAdding(false);
-            setRevision((n) => n + 1);
+            reload();
             select(project.id);
           }}
         />

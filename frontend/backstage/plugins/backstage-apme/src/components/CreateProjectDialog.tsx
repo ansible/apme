@@ -101,7 +101,6 @@ export function CreateProjectDialog({
               onChange={changeUrl}
               description="For example, https://github.com/your-org/your-repo.git"
               isRequired
-              autoFocus
             />
             <TextField
               label="Project name"

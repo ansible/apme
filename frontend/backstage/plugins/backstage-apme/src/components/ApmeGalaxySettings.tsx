@@ -267,7 +267,6 @@ function GalaxyServerForm({
               value={name}
               onChange={setName}
               isRequired
-              autoFocus
               isDisabled={mutation.saving}
             />
             <TextField

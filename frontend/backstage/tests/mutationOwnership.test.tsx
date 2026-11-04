@@ -2,7 +2,7 @@ import { Suspense, startTransition, useState } from "react";
 import { fireEvent, render, screen, act } from "@testing-library/react";
 import { useMutation } from "../plugins/backstage-apme/src/components/useMutation";
 
-let suspended = new Promise<void>(() => {});
+const suspended = new Promise<void>(() => {});
 
 function Harness({
   action,

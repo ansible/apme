@@ -32,6 +32,8 @@ export function dependencyGraph(dependencies: ProjectDependencies) {
   }
   const lines = dependencies.dependency_tree.split(/\r?\n/);
   for (const raw of lines.slice(0, 10000)) {
+    // Strip terminal color sequences from dependency-tree output.
+    // eslint-disable-next-line no-control-regex -- ANSI escape codes contain ESC.
     const line = raw.replace(/\u001b\[[0-9;]*m/g, "");
     const connector = /[├└]─+\s/.exec(line);
     const indentation = /^\s*/.exec(line)![0].replace(/\t/g, "    ").length;

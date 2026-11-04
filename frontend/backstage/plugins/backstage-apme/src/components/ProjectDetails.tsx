@@ -1,6 +1,6 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { useCallback, type ReactNode } from "react";
-import { Alert, Flex, Text } from "@backstage/ui";
+import { Flex, Text } from "@backstage/ui";
 import { getProject, type ProjectDetail } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { severityOrder } from "@apme/ui-workflow/headless";
