@@ -129,17 +129,18 @@ export function ApmeWorkbench({
       : "repositories");
   const selected = params.get("project");
   const requestedTab = params.get("tab");
+  const canAccessProjectSettings = canManageProjects || canDeleteProjects;
   const tab =
     isApmeProjectTab(requestedTab) &&
     (requestedTab === "settings"
-      ? canManageProjects
+      ? canAccessProjectSettings
       : projectViews.some(
           (view) => apmeProjectViews[view].tab === requestedTab,
         ))
       ? requestedTab
       : projectViews[0]
         ? apmeProjectViews[projectViews[0]].tab
-        : canManageProjects
+        : canAccessProjectSettings
           ? "settings"
           : "workflow";
   const activityId = params.get("scan") || undefined;

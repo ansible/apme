@@ -1,5 +1,5 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiErrorMessage } from "@apme/client";
 
 /** Single-flight mutation with visible errors and no callbacks after unmount. */
@@ -7,7 +7,9 @@ export function useMutation(scope?: unknown) {
   const mounted = useRef(true);
   const owner = useMemo(() => ({ pending: false }), [scope]);
   const currentOwner = useRef(owner);
-  currentOwner.current = owner;
+  useLayoutEffect(() => {
+    currentOwner.current = owner;
+  }, [owner]);
   const [state, setState] = useState<{
     owner: typeof owner;
     saving: boolean;

@@ -32,14 +32,16 @@ export interface ApmeProjectSettingsProps {
 }
 
 export function ApmeProjectSettings(props: ApmeProjectSettingsProps) {
-  if (!props.canManage)
+  if (!props.canManage && !props.canDelete)
     return <Text>Project settings are read-only for this account.</Text>;
   return (
     <div className="apme-stack">
-      <ProjectSettingsForm key={props.project.id} {...props} />
+      {props.canManage && (
+        <ProjectSettingsForm key={`settings-${props.project.id}`} {...props} />
+      )}
       {props.canDelete && (
         <DeleteProject
-          key={props.project.id}
+          key={`delete-${props.project.id}`}
           project={props.project}
           adapter={props.adapter}
           onDeleted={props.onDeleted}

@@ -240,6 +240,13 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
     # Hold the per-project lock across active-check → abandon → create so a
     # concurrent remediate cannot interleave and wipe another op's drafts.
     async with registry.project_lock(proj.id):
+        # Deletion uses the same lock. Re-resolve after acquiring it so an
+        # operation request that waited behind deletion cannot create work for
+        # a project that no longer exists.
+        async with get_session() as db:
+            proj = await q.resolve_project(db, proj.id)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
         prior_op = registry.get_by_project(proj.id)
         if prior_op is not None and prior_op.status not in TERMINAL_STATUSES:
             raise HTTPException(

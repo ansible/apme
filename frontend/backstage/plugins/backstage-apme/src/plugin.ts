@@ -4,14 +4,12 @@ import {
   createRouteRef,
   createRoutableExtension,
 } from "@backstage/core-plugin-api";
-import { apmeHostApiFactory } from "./api/apmeApi";
 
 export const rootRouteRef = createRouteRef({ id: "apme" });
 
 export const apmePlugin = createPlugin({
   id: "apme",
   routes: { root: rootRouteRef },
-  apis: [apmeHostApiFactory],
 });
 
 export const ApmePage = apmePlugin.provide(

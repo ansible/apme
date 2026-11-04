@@ -788,10 +788,30 @@ async def delete_project_endpoint(project_id: str) -> None:
     Raises:
         HTTPException: 404 if not found.
     """
+    from apme_gateway.operation_registry import get_operation_registry
+    from apme_gateway.operation_types import TERMINAL_STATUSES
+
     async with get_session() as db:
-        ok = await q.delete_project(db, project_id)
-        if not ok:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await q.resolve_project(db, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    registry = get_operation_registry()
+    async with registry.project_lock(project.id):
+        operation = registry.get_by_project(project.id)
+        if operation is not None and operation.status not in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot delete a project while an operation is active",
+            )
+        # Resolve again under the same lock used by operation creation. A
+        # deletion that won the lock after the first lookup must not race with
+        # an operation request that was waiting on that project.
+        async with get_session() as db:
+            project = await q.resolve_project(db, project.id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+            await q.delete_project(db, project.id)
 
 
 # ── Project-scoped endpoints (ADR-037) ───────────────────────────────

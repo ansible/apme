@@ -81,7 +81,7 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
           <Button
             variant="secondary"
             onPress={state.reload}
-            isDisabled={state.loading}
+            isDisabled={state.loading && !state.value}
           >
             Refresh rules
           </Button>
@@ -297,16 +297,29 @@ function RuleSeverity({
   saving: boolean;
   onChange: (value: number) => void;
 }) {
+  const knownSeverity = SEVERITY_INT_OPTIONS.some(
+    (option) => option.value === rule.effective_severity_int,
+  );
   return (
     <Select
       className="apme-rule-severity"
       selectionMode="single"
       aria-label={`Severity for ${rule.rule_id}`}
-      value={String(rule.effective_severity_int)}
-      options={SEVERITY_INT_OPTIONS.map(({ value, label }) => ({
-        id: String(value),
-        label,
-      }))}
+      value={knownSeverity ? String(rule.effective_severity_int) : ""}
+      options={[
+        ...(!knownSeverity
+          ? [
+              {
+                id: "",
+                label: `Choose severity (current: ${rule.effective_severity || "unknown"})`,
+              },
+            ]
+          : []),
+        ...SEVERITY_INT_OPTIONS.map(({ value, label }) => ({
+          id: String(value),
+          label,
+        })),
+      ]}
       isDisabled={saving}
       onChange={(value) => {
         const severity = Number(value);

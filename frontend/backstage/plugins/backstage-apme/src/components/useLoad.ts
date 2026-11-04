@@ -15,26 +15,43 @@ export function useLoad<T>(
     value?: T;
     error?: string;
     loading: boolean;
-  }>({ load, revision, loading: true });
+    enabled: boolean;
+  }>({ load, revision, loading: true, enabled });
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setState({ load, revision, loading: false, enabled: false });
+      return;
+    }
     let active = true;
     const controller = new AbortController();
-    setState({ load, revision, loading: true });
+    setState((previous) => ({
+      load,
+      revision,
+      value:
+        previous.load === load && previous.enabled ? previous.value : undefined,
+      loading: true,
+      enabled: true,
+    }));
     Promise.resolve()
       .then(() => (active ? load(controller.signal) : undefined))
       .then(
         (value) => {
-          if (active) setState({ load, revision, value, loading: false });
+          if (active)
+            setState({ load, revision, value, loading: false, enabled: true });
         },
         (error) => {
           if (active)
-            setState({
+            setState((previous) => ({
               load,
               revision,
+              value:
+                previous.load === load && previous.enabled
+                  ? previous.value
+                  : undefined,
               error: apiErrorMessage(error),
               loading: false,
-            });
+              enabled: true,
+            }));
         },
       );
     return () => {
@@ -44,8 +61,13 @@ export function useLoad<T>(
   }, [load, revision, enabled]);
   // A new project/adapter must not render the old project's data for one frame.
   const current =
-    enabled && state.load === load && state.revision === revision
+    enabled &&
+    state.load === load &&
+    state.enabled &&
+    state.revision === revision
       ? state
-      : { loading: enabled, value: undefined, error: undefined };
+      : enabled && state.load === load && state.enabled
+        ? { loading: true, value: state.value, error: undefined }
+        : { loading: enabled, value: undefined, error: undefined };
   return { ...current, reload };
 }

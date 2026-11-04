@@ -93,11 +93,14 @@ export function ApmeProjectTabs({
 }) {
   const tabs = projectViews.map((view) => apmeProjectViews[view]);
   const canEdit = canManageProject && project !== undefined;
+  const canAccessSettings =
+    project !== undefined && (canManageProject || canDeleteProject);
   const visible = (view: ApmeProjectView) => projectViews.includes(view);
   const activeTab =
-    tabs.some((item) => item.tab === tab) || (tab === "settings" && canEdit)
+    tabs.some((item) => item.tab === tab) ||
+    (tab === "settings" && canAccessSettings)
       ? tab
-      : (tabs[0]?.tab ?? (canEdit ? "settings" : undefined));
+      : (tabs[0]?.tab ?? (canAccessSettings ? "settings" : undefined));
   if (!activeTab)
     return <Text>No project views are enabled by this host.</Text>;
   return (
@@ -114,7 +117,7 @@ export function ApmeProjectTabs({
             {item.label}
           </Tab>
         ))}
-        {canManageProject && project && <Tab id="settings">Settings</Tab>}
+        {canAccessSettings && <Tab id="settings">Settings</Tab>}
       </TabList>
       {visible("workflow") && (
         <TabPanel id="workflow">
@@ -181,7 +184,7 @@ export function ApmeProjectTabs({
           </Suspense>
         </TabPanel>
       )}
-      {canManageProject && project && (
+      {canAccessSettings && project && (
         <TabPanel id="settings">
           <Suspense
             fallback={<Text role="status">Loading project settings…</Text>}

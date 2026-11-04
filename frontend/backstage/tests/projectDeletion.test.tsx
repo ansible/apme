@@ -17,13 +17,30 @@ const project = {
   branch: "main",
   active_operation: null,
 } as ProjectDetail;
-function setup(canDelete = false, denied = false, active = false) {
+function setup(
+  canDelete = false,
+  denied = false,
+  active = false,
+  activeOnConfirm = false,
+) {
   const onDeleted = vi.fn();
-  const fetch = vi.fn(async () =>
-    denied
+  let readCount = 0;
+  const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (method === "GET") {
+      readCount += 1;
+      const operationIsActive = active || (activeOnConfirm && readCount > 1);
+      return new Response(
+        JSON.stringify({
+          ...project,
+          active_operation: operationIsActive ? { status: "running" } : null,
+        }),
+      );
+    }
+    return denied
       ? new Response('{"detail":"Delete denied"}', { status: 403 })
-      : new Response(null, { status: 204 }),
-  );
+      : new Response(null, { status: 204 });
+  });
   render(
     <BUIProvider>
       <ApmeProjectSettings
@@ -58,7 +75,7 @@ it("requires name confirmation, then deletes the canonical project and tells its
     name: "Delete permanently",
   });
   expect((confirm as HTMLButtonElement).disabled).toBe(true);
-  expect(fetch).not.toHaveBeenCalled();
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
   fireEvent.change(screen.getByLabelText("Type Automation to confirm"), {
     target: { value: "Automation" },
   });
@@ -81,14 +98,46 @@ it("keeps denied deletion visible without navigating away", async () => {
 });
 it("prevents deleting a project while an operation is active", () => {
   const { fetch } = setup(true, false, true);
+  fireEvent.click(screen.getByRole("button", { name: "Delete project" }));
   expect(
-    (
-      screen.getByRole("button", {
-        name: "Delete project",
-      }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(true);
-  expect(fetch).not.toHaveBeenCalled();
+    screen.getByRole("button", { name: "Delete permanently" }),
+  ).toBeTruthy();
+  return screen.findByText(/Project operation is active/).then(() => {
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Delete permanently",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toBe("/host/projects/p1");
+  });
+});
+
+it("rechecks operation state immediately before deleting", async () => {
+  const { fetch, onDeleted } = setup(true, false, false, true);
+  fireEvent.click(screen.getByRole("button", { name: "Delete project" }));
+  fireEvent.change(await screen.findByLabelText("Type Automation to confirm"), {
+    target: { value: "Automation" },
+  });
+  await screen.findByRole("button", { name: "Delete permanently" });
+  await waitFor(() =>
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Delete permanently",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+  await screen.findByText(/An operation became active/);
+  expect(onDeleted).not.toHaveBeenCalled();
+  expect(
+    fetch.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+  ).toHaveLength(0);
 });
 it("lets a user retry a failed project load", async () => {
   const fetch = vi

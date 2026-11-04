@@ -166,3 +166,4 @@ the implementation simple and avoids schema changes for transient state.
 | 2026-07-20 | Brad Thornton | Clarified SPA may hold non-authoritative derived UI state; see ADR-065 |
 | 2026-09-22 | Agent | Status clarified — `OperationRegistry` and SSE shipped; `WS /projects/{id}/ws/operate` still present |
 | 2026-09-22 | Agent | Status → Partially Implemented — operation registry and SSE shipped |
+| 2026-11-04 | Codex | Project deletion now shares the operation lock and rejects active work; operation creation rechecks project existence after acquiring the lock |
