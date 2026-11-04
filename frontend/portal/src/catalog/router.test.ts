@@ -555,7 +555,8 @@ describe("catalog-backend-module-apme router", () => {
       authorizeProjectOperation.mockRejectedValue(
         new NotAllowedError("Entitlement denied"),
       );
-      const response = await request(app)[method](route)
+      const response = await request(app)
+        [method](route)
         .send({ scm_token: "untrusted-token", activity_id: "activity-1" });
       expect(response.status).toBe(403);
       expect(authorizeProjectOperation).toHaveBeenCalledWith(

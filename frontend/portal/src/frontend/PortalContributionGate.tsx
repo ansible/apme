@@ -54,9 +54,7 @@ export function withPortalGate<
   T extends (...args: never[]) => Promise<ReactElement>,
 >(loader: T, requiredEntitlements: readonly string[] = ["apme.scanning"]): T {
   return (async (...args: Parameters<T>) => {
-    const entity = (
-      args[0] as { entity?: Entity } | undefined
-    )?.entity;
+    const entity = (args[0] as { entity?: Entity } | undefined)?.entity;
     const entityRef = entity
       ? `${entity.kind.toLowerCase()}:${entity.metadata.namespace ?? "default"}/${entity.metadata.name}`
       : undefined;
