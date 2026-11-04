@@ -214,10 +214,7 @@ export function ApmeWorkbench({
           }
           actions={
             <>
-              <Button
-                variant="secondary"
-                onPress={reload}
-              >
+              <Button variant="secondary" onPress={reload}>
                 Refresh
               </Button>
               {canManageProjects && (
