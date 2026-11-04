@@ -39,12 +39,14 @@ export function createDefaultApmeApiAdapter(
   overrides: Partial<ApmeApiAdapter> = {},
 ): ApmeApiAdapter {
   return {
-    // Always resolve globalThis.fetch at call time so test stubs work.
-    fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
-      globalThis.fetch(input, init)) as ApmeFetch,
-    apiBase: "/api/v1",
-    origin: defaultOrigin(),
     ...overrides,
+    // Always resolve globalThis.fetch at call time so test stubs work.
+    fetch:
+      overrides.fetch ??
+      (((input: RequestInfo | URL, init?: RequestInit) =>
+        globalThis.fetch(input, init)) as ApmeFetch),
+    apiBase: overrides.apiBase ?? "/api/v1",
+    origin: overrides.origin ?? defaultOrigin(),
   };
 }
 
