@@ -63,6 +63,11 @@ jobs:
           APME_PORTAL_CHECKOUT: ${{ github.workspace }}/.portal-sdk
         run: uvx --with-requirements ci/tox-requirements.txt tox -e portal-sdk-install
 
+      - name: Verify Portal packed consumer
+        env:
+          APME_PORTAL_CHECKOUT: ${{ github.workspace }}/.portal-sdk
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e portal-pack-smoke
+
       - name: Pack immutable release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}

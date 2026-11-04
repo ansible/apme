@@ -48,15 +48,15 @@ locally-runnable tox environments; CI just calls them.
    No `actions/setup-python` (uv handles it). No other setup actions without
    explicit justification.
    **Exception:** `test.yml` jobs `ui`, `ui-workflow-pack`,
-   `shared-packages`, and `portal-packages`, plus the `attach-tarball` job in
-   `ui-workflow-release.yml`, use `actions/setup-node`. Their tox environments
-   run the UI tests, package type checks/tests/builds, or package build and
-   smoke checks; the release job verifies the local packed consumer and
-   release-mode package manifests before uploading release artifacts.
-   The `ui` job reads `frontend/package.json`; package workspace, shared
-   package, and release jobs read the root `package.json` because they install
-   from the root. Add jobs to this exception only when they are introduced
-   with `actions/setup-node`.
+   `backstage-packages`, and `portal-packages`, plus the `attach-tarball` job
+   in `ui-workflow-release.yml`, use `actions/setup-node`. Their tox
+   environments run UI tests and package type checks, tests, builds, and smoke
+   checks. The release job verifies both packed consumers and release-mode
+   package manifests before uploading artifacts. The `ui` job reads
+   `frontend/package.json`; the workspace, Backstage, Portal, and release jobs
+   read the root `package.json` because they install from the root. Each uses
+   the engine range in its package manifest. Add jobs to this exception only
+   when they are introduced with `actions/setup-node`.
 
 5. **Pin actions to commit SHAs.** Mutable tags (`@v4`) allow upstream changes
    to affect CI without review. Always pin to a full commit SHA with a comment
