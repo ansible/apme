@@ -85,3 +85,5 @@ proxy:
       proxyTimeout: 0
 apme:
   gatewayBaseUrl: http://127.0.0.1:8080
+  uploads:
+    enabled: true

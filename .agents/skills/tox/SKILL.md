@@ -62,7 +62,8 @@ to restrict the report to production dependencies. Findings produce a nonzero ex
 | `tox -e integration-local` | Disposable PostgreSQL container, then `tox -e integration` | Repeatable local integration setup when PostgreSQL is not already running. |
 | `tox -e e2e` | Full pod lifecycle e2e: rebuild, start pod, scan, assert violations | After container/pod/deployment changes. |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | After AI/remediation changes. |
-| `tox -e ui` | `pytest -m ui` (Playwright, needs running pod) | After Gateway or UI changes. |
+| `tox -e ui` | Playwright checks for the RHDH Local UI (needs `tox -e up`) | After Local host or UI changes. |
+| `tox -e ui-native` | Legacy native UI Playwright checks (needs its separate native UI + Gateway) | Only when changing or checking the legacy native host. |
 | `tox -e ui-workflow-pack` | `npm pack` for `@apme/ui-workflow` (release tarball) | After `frontend/packages/ui-workflow` or TypeScript changes. |
 
 ### Code generation
