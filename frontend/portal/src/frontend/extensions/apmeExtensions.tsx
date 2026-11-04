@@ -70,9 +70,9 @@ import { githubRepoUrlValidation } from "../components/Scaffolder/GitHubRepoUrlF
 // Each import is lazy so APME's bundle only loads when the user navigates to a
 // page that renders one of these contributions. The host wraps each in Suspense.
 
-const EntityQualityTab = lazy(async () => {
-  const { EntityQualityTab: C } =
-    await import("../components/EntityQualityTab/EntityQualityTab");
+const NativeEntityQualityTab = lazy(async () => {
+  const { NativeEntityQualityTab: C } =
+    await import("../components/EntityQualityTab/NativeEntityQualityTab");
   return { default: C };
 });
 
@@ -110,7 +110,6 @@ function buildTabContext(entity: Entity) {
     repoUrl: normalizeRepoUrlFromEntity(entity),
   };
 }
-
 // ── Registration ──────────────────────────────────────────────────────────────
 
 /**
@@ -141,14 +140,7 @@ export function registerApmeExtensions(): void {
     appliesToContentTypes: [CONTENT_TYPES.PLAYBOOK_REPOSITORY],
     component: ({ entity }: { entity?: Entity }) => {
       if (!entity) return null;
-      const { initialRuleFilter, initialCategoryFilter } = getUrlFilterParams();
-      return (
-        <EntityQualityTab
-          entity={entity}
-          initialRuleFilter={initialRuleFilter}
-          initialCategoryFilter={initialCategoryFilter}
-        />
-      );
+      return <NativeEntityQualityTab entity={entity} />;
     },
   });
 
@@ -242,23 +234,4 @@ export function registerApmeExtensions(): void {
     to: "/self-service/create/templates/default/apme-register-git-repository",
     priority: 10,
   });
-}
-
-// ── URL filter params ─────────────────────────────────────────────────────────
-// `EntityQualityTab` supports deep-linked rule/category filters via URL search
-// params. Read them here so the wrapper can pass them in.
-
-function getUrlFilterParams(): {
-  initialRuleFilter?: string;
-  initialCategoryFilter?: string;
-} {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    return {
-      initialRuleFilter: params.get("rule") ?? undefined,
-      initialCategoryFilter: params.get("category") ?? undefined,
-    };
-  } catch {
-    return {};
-  }
 }

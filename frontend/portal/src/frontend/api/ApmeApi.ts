@@ -520,15 +520,15 @@ export class ApmeApiClient implements ApmeApi {
     projectId: string,
     violationIds?: number[],
   ): Promise<ScanResult> {
-    const body: Record<string, unknown> = {};
+    const options: Record<string, unknown> = {};
     if (violationIds && violationIds.length > 0) {
-      body.violation_ids = violationIds;
+      options.violation_ids = violationIds;
     }
     const response = await this.fetch<{ operation_id: string }>(
-      `/projects/${encodeURIComponent(projectId)}/remediate`,
+      `/projects/${encodeURIComponent(projectId)}/operation`,
       {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ action: "remediate", options }),
       },
     );
     return { scanId: response.operation_id, projectId, status: "running" };

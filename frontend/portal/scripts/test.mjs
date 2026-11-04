@@ -22,6 +22,7 @@ try {
                   "<rootDir>/src/catalog/**/*.test.ts",
                   "<rootDir>/src/scaffolder/**/*.test.ts",
                   "<rootDir>/src/common/**/*.test.ts",
+                  "<rootDir>/scripts/**/*.test.cjs",
               ],
         transform: {
             "^.+\\.[cm]?[jt]sx?$": [

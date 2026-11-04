@@ -41,7 +41,13 @@ describe("catalog sync after deregistration", () => {
         scanOnRegister: true,
         maxPerRun: 10,
         orgs: [
-          { env: "development", organization: "acme", scanOnRegister: true },
+          {
+            env: "development",
+            provider: "github",
+            host: "github.com",
+            organization: "acme",
+            scanOnRegister: true,
+          },
         ],
       },
       shouldTrackEntity: () => !stopped,
@@ -94,5 +100,33 @@ describe("catalog sync after deregistration", () => {
     });
     expect(createProject).toHaveBeenCalled();
     expect(triggerScan).toHaveBeenCalledWith("new-project", expect.any(Object));
+  });
+
+  it("throws when the catalog cannot be read so the scheduler records failure", async () => {
+    const catalogError = new Error("catalog unavailable");
+    const logger = mockServices.logger.mock();
+    await expect(
+      runApmeCatalogSyncBatch({
+        auth: mockServices.auth(),
+        logger,
+        catalogClient: {
+          getEntities: async () => {
+            throw catalogError;
+          },
+        } as unknown as CatalogClient,
+        apmeService: {} as IApmeService,
+        offset: 0,
+        syncConfig: {
+          env: "development",
+          enabled: true,
+          scanOnRegister: false,
+          maxPerRun: 10,
+          orgs: [],
+        },
+      }),
+    ).rejects.toThrow("Failed to read catalog entities: catalog unavailable");
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to read catalog entities: catalog unavailable",
+    );
   });
 });

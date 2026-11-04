@@ -104,6 +104,7 @@ function mockGitContentsBlock(options: {
   };
 
   const hostConfig = {
+    getString: jest.fn().mockReturnValue("github.com"),
     has: jest.fn().mockImplementation((key: string) => key === "orgs"),
     getConfigArray: jest.fn().mockReturnValue(orgs),
   };
@@ -228,12 +229,16 @@ describe("readApmeGitContentsSyncConfigs", () => {
         orgs: [
           {
             env: "stage",
+            provider: "github",
+            host: "github.com",
             organization: "org-a",
             scanOnRegister: false,
             labels: ["ansible"],
           },
           {
             env: "stage",
+            provider: "github",
+            host: "github.com",
             organization: "org-b",
             scanOnRegister: true,
             labels: ["ansible"],

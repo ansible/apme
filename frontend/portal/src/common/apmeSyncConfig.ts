@@ -23,6 +23,8 @@ import { isApmeEnabled } from "./config";
 
 export interface ApmeOrgSyncScope {
   env: string;
+  provider: (typeof SCM_PROVIDERS)[number];
+  host: string;
   organization: string;
   scanOnRegister: boolean;
   labels?: string[];
@@ -80,6 +82,8 @@ function collectOrgScopes(
         }
         orgScopes.push({
           env,
+          provider: scmProvider,
+          host: hostConfig.getString("host").toLowerCase(),
           organization: orgConfig.getString("name"),
           scanOnRegister:
             orgApme?.getOptionalBoolean("scanOnRegister") ??

@@ -36,6 +36,12 @@ describe("branchLookup", () => {
 
     it("throws for invalid URLs", () => {
       expect(() => parseGitRepoUrl("not-a-url")).toThrow(InputError);
+      expect(() => parseGitRepoUrl("https://github.bad.test/acme/repo")).toThrow(
+        /configured SCM integration/,
+      );
+      expect(() =>
+        parseGitRepoUrl("http://github.com/acme/repo"),
+      ).toThrow(/HTTPS/);
     });
 
     it("returns an empty last path segment for empty lists", () => {
@@ -71,6 +77,16 @@ describe("branchLookup", () => {
           branch: "master",
         }),
       ).resolves.toBeUndefined();
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        expect.any(String),
+        expect.objectContaining({ redirect: "manual" }),
+      );
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        expect.objectContaining({ redirect: "manual" }),
+      );
     });
 
     it("throws when the branch does not exist", async () => {
@@ -88,12 +104,10 @@ describe("branchLookup", () => {
           repoUrl: "https://github.com/craig-br/ans-tower-devsecops",
           branch: "main",
         }),
-      ).rejects.toThrow(
-        "Branch 'main' was not found in craig-br/ans-tower-devsecops",
-      );
+      ).rejects.toThrow("Requested branch is unavailable");
     });
 
-    it("includes SCM HTTP status when metadata cannot be loaded", async () => {
+    it("does not expose SCM status when metadata cannot be loaded", async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 403,
@@ -106,7 +120,23 @@ describe("branchLookup", () => {
           branch: "main",
           scmToken: "bad-token",
         }),
-      ).rejects.toThrow(/SCM HTTP 403/);
+      ).rejects.toThrow(/Could not validate this repository/);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ redirect: "manual" }),
+      );
+    });
+
+    it("rejects an unconfigured host before making a network request", async () => {
+      await expect(
+        validateRepoBranch({
+          rootConfig,
+          repoUrl: "https://github.evil.test/acme/repo",
+          branch: "main",
+        }),
+      ).rejects.toThrow(/configured SCM integration/);
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 });

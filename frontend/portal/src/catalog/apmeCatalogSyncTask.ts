@@ -92,8 +92,7 @@ export async function runApmeCatalogSyncBatch(
       (error as Error).message
     }`;
     logger.error(message);
-    summary.errors.push(message);
-    return summary;
+    throw new Error(message, { cause: error });
   }
 
   const eligible = selectEntitiesForApmeSync(entities, syncConfig);

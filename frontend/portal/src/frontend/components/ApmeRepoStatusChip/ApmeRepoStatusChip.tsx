@@ -53,7 +53,7 @@ const useStyles = makeStyles((theme) => ({
 export interface ApmeRepoStatusChipProps {
   repoUrl: string;
   branch?: string;
-  projectDetailPath?: string;
+  projectDetailPath: string;
 }
 
 /** Violation status chip for Git Repository catalog rows. */
@@ -156,12 +156,7 @@ export const ApmeRepoStatusChip = ({
   }`;
 
   const handleClick = () => {
-    if (projectDetailPath) {
-      navigate(projectDetailPath);
-      return;
-    }
-    const slug = project.name || project.id;
-    navigate(`/self-service/repositories/${slug}?tab=quality`);
+    navigate(projectDetailPath);
   };
 
   const worst = projectWorstSeverity(project);

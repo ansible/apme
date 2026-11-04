@@ -4,7 +4,7 @@
  * Repo detail Quality activity — SPA project Activity list/detail (US-007).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { configApiRef, useApi } from "@backstage/core-plugin-api";
 import { useEntity } from "@backstage/plugin-catalog-react";
@@ -354,6 +354,7 @@ function QualityActivityBody({ projectId }: Readonly<{ projectId: string }>) {
   const [searchParams, setSearchParams] = useSearchParams();
   const activityId = searchParams.get("activity") ?? undefined;
   const ruleFilter = searchParams.get("rule") ?? undefined;
+  const dismissedAutoOpenRule = useRef<string | null>(null);
 
   const devSpacesUrl = resolveDefaultBranchDevSpacesUrl({
     devSpacesBaseUrl: configApi.getOptionalString("ansible.devSpaces.baseUrl"),
@@ -377,12 +378,13 @@ function QualityActivityBody({ projectId }: Readonly<{ projectId: string }>) {
   );
 
   const backToList = useCallback(() => {
+    dismissedAutoOpenRule.current = ruleFilter ?? null;
     const next = new URLSearchParams(searchParams);
     next.delete("activity");
     setSearchParams(next, { replace: true });
     setDetail(null);
     setDetailError(null);
-  }, [searchParams, setSearchParams]);
+  }, [ruleFilter, searchParams, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -406,7 +408,13 @@ function QualityActivityBody({ projectId }: Readonly<{ projectId: string }>) {
 
   // Fleet drill-down (?rule=): open the latest scan automatically.
   useEffect(() => {
-    if (activityId || !ruleFilter || !activities?.length) return;
+    if (
+      activityId ||
+      !ruleFilter ||
+      dismissedAutoOpenRule.current === ruleFilter ||
+      !activities?.length
+    )
+      return;
     const latest = [...activities].sort(
       (a, b) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),

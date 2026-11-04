@@ -18,6 +18,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import type { LoggerService } from "@backstage/backend-plugin-api";
 import { getApmeConfig } from "../common/index";
 import type { Config } from "@backstage/config";
+import { InputError } from "@backstage/errors";
 
 /**
  * Minimal request/response shapes so we do not depend on a single
@@ -29,6 +30,8 @@ export type OperationProxyRequest = {
   url: string;
   headers: IncomingHttpHeaders;
   body?: unknown;
+  on?: (event: "aborted", listener: () => void) => unknown;
+  off?: (event: "aborted", listener: () => void) => unknown;
 };
 
 export type OperationProxyResponse = {
@@ -36,11 +39,40 @@ export type OperationProxyResponse = {
   setHeader(name: string, value: string): void;
   write(chunk: string | Buffer): unknown;
   end(): void;
-  send(body: string): unknown;
+  once?: (event: "drain", listener: () => void) => unknown;
+  on?: (event: "close", listener: () => void) => unknown;
+  off?: (event: "close", listener: () => void) => unknown;
+  writableEnded?: boolean;
+  destroyed?: boolean;
   /** Present when compression middleware is installed. */
   flushHeaders?: () => void;
   flush?: () => void;
 };
+
+function assertSafeOperationSuffix(suffix: string): void {
+  for (const segment of suffix.split("/")) {
+    let decoded: string;
+    try {
+      decoded = segment;
+      for (let pass = 0; pass < 4; pass += 1) {
+        const next = decodeURIComponent(decoded);
+        if (next === decoded) break;
+        decoded = next;
+      }
+    } catch {
+      throw new InputError("Invalid operation path");
+    }
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      /%(?:2e|2f|5c)/i.test(decoded)
+    ) {
+      throw new InputError("Invalid operation path");
+    }
+  }
+}
 
 /**
  * Transparent proxy of `/apme/projects/:projectId/operation*` to Gateway
@@ -75,6 +107,7 @@ export async function proxyProjectOperation(options: {
     /\/$/,
     "",
   );
+  assertSafeOperationSuffix(operationSuffix);
   const targetPath = `/api/v1/projects/${encodeURIComponent(
     projectId,
   )}/operation${operationSuffix}`;
@@ -109,11 +142,27 @@ export async function proxyProjectOperation(options: {
 
   logger.debug(`APME operation proxy ${req.method} ${targetUrl}`);
 
-  const upstream = await fetch(targetUrl, {
-    method: req.method,
-    headers,
-    body,
-  });
+  const controller = new AbortController();
+  const onRequestAborted = () => controller.abort();
+  const onResponseClosed = () => {
+    if (!res.writableEnded) controller.abort();
+  };
+  req.on?.("aborted", onRequestAborted);
+  res.on?.("close", onResponseClosed);
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, {
+      method: req.method,
+      headers,
+      body,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    req.off?.("aborted", onRequestAborted);
+    res.off?.("close", onResponseClosed);
+    throw error;
+  }
 
   res.status(upstream.status);
   const contentType = upstream.headers.get("content-type");
@@ -125,7 +174,8 @@ export async function proxyProjectOperation(options: {
   // compression (and some proxies) buffer until the Gateway closes the
   // stream, so Portal UI hangs on "Cloning…" until remount re-polls GET
   // /operation (tab switch). Gateway already sets X-Accel-Buffering: no.
-  if (contentType?.includes("text/event-stream")) {
+  const isEventStream = Boolean(contentType?.includes("text/event-stream"));
+  if (isEventStream) {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
@@ -134,23 +184,35 @@ export async function proxyProjectOperation(options: {
       res.end();
       return;
     }
-    const reader = upstream.body.getReader();
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value?.byteLength) {
-          // Write raw bytes so SSE frame boundaries stay intact.
-          res.write(Buffer.from(value));
-          res.flush?.();
-        }
-      }
-    } finally {
-      res.end();
-    }
+  }
+  const reader = upstream.body?.getReader();
+  if (!reader) {
+    res.end();
+    req.off?.("aborted", onRequestAborted);
+    res.off?.("close", onResponseClosed);
     return;
   }
-
-  const text = await upstream.text();
-  res.send(text);
+  const cancelReader = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  controller.signal.addEventListener("abort", cancelReader, { once: true });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      const canContinue = res.write(Buffer.from(value));
+      if (isEventStream) res.flush?.();
+      if (!canContinue && res.once) {
+        await new Promise<void>((resolve) => res.once?.("drain", resolve));
+      }
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) throw error;
+  } finally {
+    controller.signal.removeEventListener("abort", cancelReader);
+    req.off?.("aborted", onRequestAborted);
+    res.off?.("close", onResponseClosed);
+    if (!res.writableEnded && !res.destroyed) res.end();
+  }
 }

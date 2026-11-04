@@ -277,7 +277,9 @@ export class ApmeClient {
   }
 
   async getProject(projectId: string): Promise<Project> {
-    return this.executeRequest<Project>(`/api/v1/projects/${projectId}`);
+    return this.executeRequest<Project>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}`,
+    );
   }
 
   async getProjectByRepoUrl(
@@ -317,7 +319,7 @@ export class ApmeClient {
     const query = params.toString() ? `?${params.toString()}` : "";
     // APME returns violations as a direct array, not wrapped in {items: []}
     const response = await this.executeRequest<Violation[]>(
-      `/api/v1/projects/${projectId}/violations${query}`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/violations${query}`,
     );
     return (response || []).map((v) => ({
       ...v,
@@ -331,7 +333,7 @@ export class ApmeClient {
     projectId: string,
   ): Promise<ProjectDependencies> {
     return this.executeRequest<ProjectDependencies>(
-      `/api/v1/projects/${projectId}/dependencies`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/dependencies`,
     );
   }
 
@@ -450,7 +452,7 @@ export class ApmeClient {
       body.scm_token = options.scmToken;
     }
     const response = await this.executeRequest<{ operation_id: string }>(
-      `/api/v1/projects/${projectId}/operation`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/operation`,
       {
         method: "POST",
         headers,
@@ -467,7 +469,7 @@ export class ApmeClient {
 
   async getScanStatus(projectId: string, scanId: string): Promise<ScanResult> {
     return this.executeRequest<ScanResult>(
-      `/api/v1/projects/${projectId}/scans/${scanId}`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/scans/${encodeURIComponent(scanId)}`,
     );
   }
 
@@ -479,21 +481,24 @@ export class ApmeClient {
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    await this.executeRequest<void>(`/api/v1/projects/${projectId}`, {
+    await this.executeRequest<void>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}`,
+      {
       method: "DELETE",
-    });
+      },
+    );
   }
 
   async getActivity(projectId: string): Promise<Activity[]> {
     const response = await this.executeRequest<{ items: Activity[] }>(
-      `/api/v1/projects/${projectId}/activity`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/activity`,
     );
     return response.items || [];
   }
 
   async getActivityDetail(activityId: string): Promise<ActivityDetail> {
     const detail = await this.executeRequest<ActivityDetail>(
-      `/api/v1/activity/${activityId}`,
+      `/api/v1/activity/${encodeURIComponent(activityId)}`,
     );
     return {
       ...detail,
@@ -509,7 +514,7 @@ export class ApmeClient {
   async getOperationState(projectId: string): Promise<OperationState | null> {
     try {
       return await this.executeRequest<OperationState>(
-        `/api/v1/projects/${projectId}/operation`,
+        `/api/v1/projects/${encodeURIComponent(projectId)}/operation`,
       );
     } catch (error) {
       if (error instanceof NotFoundError) {
@@ -539,7 +544,7 @@ export class ApmeClient {
       body.scm_token = scmToken;
     }
     const response = await this.executeRequest<{ operation_id: string }>(
-      `/api/v1/projects/${projectId}/operation`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/operation`,
       {
         method: "POST",
         body: JSON.stringify(body),
@@ -557,7 +562,7 @@ export class ApmeClient {
     proposalIds: string[],
   ): Promise<void> {
     await this.executeRequest<void>(
-      `/api/v1/projects/${projectId}/operation/approve`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/operation/approve`,
       {
         method: "POST",
         body: JSON.stringify({ approved_ids: proposalIds }),
@@ -571,7 +576,7 @@ export class ApmeClient {
   ): Promise<SubmitRemediationResult> {
     // Large remedia pushes often exceed the default short fetch timeout.
     return this.executeRequest<SubmitRemediationResult>(
-      `/api/v1/projects/${projectId}/operation/submit`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/operation/submit`,
       {
         method: "POST",
         body: JSON.stringify(body),

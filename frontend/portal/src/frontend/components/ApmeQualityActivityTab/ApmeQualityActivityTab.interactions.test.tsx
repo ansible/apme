@@ -383,6 +383,16 @@ describe("ApmeQualityActivityTab interactions and edge cases", () => {
     );
   });
 
+  it("keeps a rule-filtered list open when closing its auto-opened detail", async () => {
+    getActivity.mockResolvedValue([activity("latest")]);
+    renderTab("/?rule=L001&keep=yes");
+    await screen.findByRole("button", { name: "Close activity detail" });
+    fireEvent.click(screen.getByRole("button", { name: "Close activity detail" }));
+    await screen.findByRole("grid");
+    expect(screen.getByTestId("query")).toHaveTextContent("?rule=L001&keep=yes");
+    expect(getActivityDetail).toHaveBeenCalledTimes(1);
+  });
+
   it("honors an explicit activity instead of auto-opening the latest for a rule", async () => {
     getActivity.mockResolvedValue([activity("latest")]);
     renderTab("/?activity=selected&rule=L001");

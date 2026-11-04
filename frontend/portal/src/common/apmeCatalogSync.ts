@@ -29,7 +29,28 @@ export function entityMatchesApmeOrgScope(
   scope: ApmeOrgSyncScope,
 ): boolean {
   const org = scmOrganizationFromEntity(entity);
-  if (org !== scope.organization) {
+  const repoUrl = normalizeRepoUrlFromEntity(entity);
+  let host: string | undefined;
+  try {
+    host = repoUrl ? new URL(repoUrl).hostname.toLowerCase() : undefined;
+  } catch {
+    return false;
+  }
+  const annotations = entity.metadata.annotations ?? {};
+  const annotatedProvider = annotations["ansible.io/scm-provider"];
+  const provider =
+    annotatedProvider === "github" || annotatedProvider === "gitlab"
+      ? annotatedProvider
+      : host === "github.com"
+        ? "github"
+        : host === "gitlab.com"
+          ? "gitlab"
+          : undefined;
+  if (
+    org !== scope.organization ||
+    host !== scope.host.toLowerCase() ||
+    provider !== scope.provider
+  ) {
     return false;
   }
 
@@ -48,20 +69,10 @@ export function selectEntitiesForApmeSync(
   entities: Entity[],
   syncConfig: ApmeGitContentsSyncConfig,
 ): Entity[] {
-  const scopesByOrg = new Map(
-    syncConfig.orgs.map((scope) => [scope.organization, scope]),
-  );
-
   return entities.filter((entity) => {
-    const org = scmOrganizationFromEntity(entity);
-    if (!org) {
-      return false;
-    }
-    const scope = scopesByOrg.get(org);
-    if (!scope) {
-      return false;
-    }
-    return entityMatchesApmeOrgScope(entity, scope);
+    return syncConfig.orgs.some((scope) =>
+      entityMatchesApmeOrgScope(entity, scope),
+    );
   });
 }
 
@@ -93,8 +104,9 @@ export function scanOnRegisterForEntity(
   entity: Entity,
   syncConfig: ApmeGitContentsSyncConfig,
 ): boolean {
-  const org = scmOrganizationFromEntity(entity);
-  const scope = syncConfig.orgs.find((s) => s.organization === org);
+  const scope = syncConfig.orgs.find((candidate) =>
+    entityMatchesApmeOrgScope(entity, candidate),
+  );
   return scope?.scanOnRegister ?? syncConfig.scanOnRegister;
 }
 

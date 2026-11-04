@@ -217,6 +217,71 @@ describe("APME client endpoint contracts", () => {
     );
   });
 
+  it("encodes project, activity, and scan identifiers in every resource path", async () => {
+    const id = "team/repo ?";
+    const encodedId = "team%2Frepo%20%3F";
+    await client.getProject(id);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}`,
+      expect.anything(),
+    );
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => [],
+    });
+    await client.getViolations(id);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/violations`,
+      expect.anything(),
+    );
+    await client.getProjectDependencies(id);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/dependencies`,
+      expect.anything(),
+    );
+    await client.getScanStatus(id, "scan/1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/scans/scan%2F1`,
+      expect.anything(),
+    );
+    await client.getActivity(id);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/activity`,
+      expect.anything(),
+    );
+    await client.getActivityDetail("activity/1");
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "https://gateway.test/api/v1/activity/activity%2F1",
+      expect.anything(),
+    );
+    await client.getOperationState(id);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/operation`,
+      expect.anything(),
+    );
+    await client.triggerRemediate(id);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/operation`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    await client.approveProposals(id, []);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/operation/approve`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    await client.submitRemediation(id, { activity_id: "activity/1" });
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}/operation/submit`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    await client.deleteProject(id);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://gateway.test/api/v1/projects/${encodedId}`,
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("applies late-bound gateway overrides and falls back for empty overrides", async () => {
     client.setResolveBaseUrl(async () => " https://override.test/// ");
     await client.getHealth();

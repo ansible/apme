@@ -69,6 +69,7 @@ function renderChip(
         <ApmeRepoStatusChip
           repoUrl="https://github.com/acme/demo"
           branch="main"
+          projectDetailPath="/self-service/repositories/catalog-demo?tab=quality"
           {...props}
         />
       </ThemeProvider>
@@ -155,7 +156,7 @@ describe("ApmeRepoStatusChip", () => {
     fireEvent.click(await screen.findByText("2 violations"));
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith(
-        "/self-service/repositories/demo-repo?tab=quality",
+        "/self-service/repositories/catalog-demo?tab=quality",
       );
     });
   });

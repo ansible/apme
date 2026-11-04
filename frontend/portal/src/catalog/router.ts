@@ -28,7 +28,15 @@ import {
 } from "@backstage/backend-plugin-api";
 import { Config } from "@backstage/config";
 import { InputError, NotAllowedError } from "@backstage/errors";
-import type { ProjectOperationAuthorizer } from "./projectOperationAuthorization";
+import { AuthorizeResult } from "@backstage/plugin-permission-common";
+import {
+  ansibleSettingsEditPermission,
+  ansibleSettingsViewPermission,
+} from "@ansible/backstage-rhaap-common/permissions";
+import type {
+  ProjectOperationAuthorizer,
+  RepositoryOperationAuthorizer,
+} from "./projectOperationAuthorization";
 import {
   IApmeService,
   getApmeConfig,
@@ -75,6 +83,8 @@ export interface RouterOptions {
   permissions: PermissionsService;
   /** Missing authorizer denies interactive workflow traffic. */
   authorizeProjectOperation?: ProjectOperationAuthorizer;
+  /** Authorizes a catalog repository before SCM metadata lookup or registration. */
+  authorizeRepositoryOperation?: RepositoryOperationAuthorizer;
   /** Dedicated host policy: entitlement, repository access and destructive permission.
    * Omission denies project deletion; scan authorization never grants deletion.
    */
@@ -196,21 +206,61 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
       },
     );
   };
+  const authorizeProject = async (
+    projectId: string,
+    credentials: Awaited<ReturnType<typeof ensureUser>>,
+    mutating: boolean,
+  ) => {
+    if (!options.authorizeProjectOperation) {
+      throw new NotAllowedError(
+        "Project operation authorization is unavailable",
+      );
+    }
+    await options.authorizeProjectOperation(projectId, credentials, mutating);
+  };
   const authorizeWorkflow = async (req: {
     method: string;
     params: { projectId?: string };
   }) => {
     const credentials = await ensureUser(req);
     if (!req.params.projectId) throw new InputError("projectId is required");
-    if (!options.authorizeProjectOperation)
-      throw new NotAllowedError(
-        "Project operation authorization is unavailable",
-      );
-    await options.authorizeProjectOperation(
+    await authorizeProject(
       req.params.projectId,
       credentials,
       !["GET", "HEAD"].includes(req.method),
     );
+  };
+  const authorizeRepository = async (
+    req: unknown,
+    repoUrl: string,
+    branch: string,
+    operation: "read" | "register",
+  ) => {
+    const credentials = await ensureUser(req);
+    if (!options.authorizeRepositoryOperation) {
+      throw new NotAllowedError(
+        "Repository operation authorization is unavailable",
+      );
+    }
+    await options.authorizeRepositoryOperation(
+      repoUrl,
+      branch,
+      credentials,
+      operation,
+    );
+  };
+  const authorizeSettingsPermission = async (
+    req: unknown,
+    permission: typeof ansibleSettingsEditPermission | typeof ansibleSettingsViewPermission,
+  ) => {
+    const credentials = await ensureUser(req);
+    const [decision] = await permissions.authorize(
+      [{ permission, resourceRef: "apme" }],
+      { credentials },
+    );
+    if (decision?.result !== AuthorizeResult.ALLOW) {
+      throw new NotAllowedError("APME settings permission denied");
+    }
   };
 
   const outboundUrlOptions = () => ({
@@ -445,7 +495,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   );
 
   router.get("/apme/projects/:projectId/scan-target", async (req, res) => {
-    await ensureUser(req);
+    await authorizeWorkflow(req);
     const { projectId } = req.params;
     const store = await portalSettingsStore.read();
     res.json(
@@ -461,7 +511,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     "/apme/projects/:projectId/scan-target",
     jsonBody,
     async (req, res) => {
-      await ensureUser(req);
+      await authorizeWorkflow(req);
       const { projectId } = req.params;
       const { targetAnsibleCoreVersion } = req.body ?? {};
       if (
@@ -580,35 +630,49 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   );
 
   router.get("/apme/projects", async (req, res) => {
-    await ensureUser(req);
+    const credentials = await ensureUser(req);
     logger.debug("APME projects list requested");
     const projects = await apmeService.getProjects();
-    const enrichmentCount = projects.filter(
+    const authorizedProjects = await Promise.all(
+      projects.map(async (project) => {
+        try {
+          await authorizeProject(project.id, credentials, false);
+          return project;
+        } catch (error) {
+          if (error instanceof NotAllowedError) return undefined;
+          throw error;
+        }
+      }),
+    );
+    const visibleProjects = authorizedProjects.filter(
+      (project): project is (typeof projects)[number] => project !== undefined,
+    );
+    const enrichmentCount = visibleProjects.filter(
       projectNeedsSeverityEnrichment,
     ).length;
     if (enrichmentCount > 0) {
       logger.info(
-        `Enriching severity breakdown for ${enrichmentCount} of ${projects.length} APME projects`,
+        `Enriching severity breakdown for ${enrichmentCount} of ${visibleProjects.length} accessible APME projects`,
       );
     }
     const items = await enrichProjectsWithSeverityBreakdown(
-      projects,
+      visibleProjects,
       (projectId) => apmeService.getProject(projectId),
     );
     res.json({ items });
   });
 
   router.get("/apme/projects/:projectId", async (req, res) => {
-    await ensureUser(req);
     const { projectId } = req.params;
+    await authorizeWorkflow(req);
     logger.debug(`APME project ${projectId} requested`);
     const project = await apmeService.getProject(projectId);
     res.json(project);
   });
 
   router.get("/apme/projects/:projectId/violations", async (req, res) => {
-    await ensureUser(req);
     const { projectId } = req.params;
+    await authorizeWorkflow(req);
     logger.debug(`APME violations for project ${projectId} requested`);
     const limitRaw = req.query.limit;
     const offsetRaw = req.query.offset;
@@ -636,8 +700,8 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   });
 
   router.get("/apme/projects/:projectId/dependencies", async (req, res) => {
-    await ensureUser(req);
     const { projectId } = req.params;
+    await authorizeWorkflow(req);
     logger.debug(`APME dependencies for project ${projectId} requested`);
     const dependencies = await apmeService.getProjectDependencies(projectId);
     res.json(dependencies);
@@ -744,7 +808,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   );
 
   router.post("/apme/suppressions", jsonBody, async (req, res) => {
-    await ensureUser(req);
+    const credentials = await ensureUser(req);
     const { rule_id, scope } = req.body ?? {};
     if (!rule_id || typeof rule_id !== "string") {
       throw new InputError("rule_id is required in request body");
@@ -752,25 +816,54 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     if (!scope || typeof scope !== "string") {
       throw new InputError("scope is required in request body");
     }
+    const projectScope = /^project:(.+)$/.exec(scope);
+    if (projectScope) {
+      await authorizeProject(projectScope[1], credentials, true);
+    } else {
+      await authorizeSettingsPermission(req, ansibleSettingsEditPermission);
+    }
     logger.info("APME suppression create requested");
     const suppression = await apmeService.createSuppression(req.body);
     res.status(201).json(suppression);
   });
 
   router.get("/apme/suppressions", async (req, res) => {
-    await ensureUser(req);
     const scope = req.query.scope as string | undefined;
+    const projectScope = scope && /^project:(.+)$/.exec(scope);
+    if (projectScope) {
+      await authorizeWorkflow({ method: "GET", params: { projectId: projectScope[1] } });
+    } else {
+      await authorizeSettingsPermission(req, ansibleSettingsViewPermission);
+    }
     logger.debug(`APME suppressions list requested scope=${scope ?? "all"}`);
     const suppressions = await apmeService.getSuppressions(scope);
     res.json(suppressions);
   });
 
   router.delete("/apme/suppressions/:suppressionId", async (req, res) => {
-    await ensureUser(req);
-    const suppressionId = Number.parseInt(req.params.suppressionId, 10);
-    if (Number.isNaN(suppressionId)) {
+    const credentials = await ensureUser(req);
+    const suppressionId = Number(req.params.suppressionId);
+    if (!Number.isSafeInteger(suppressionId) || suppressionId < 0) {
       res.status(400).json({ error: "Invalid suppression id" });
       return;
+    }
+    const suppressions = await apmeService.getSuppressions();
+    const suppression = Array.isArray(suppressions)
+      ? suppressions.find(
+          (item) => (item as { id?: number }).id === suppressionId,
+        )
+      : undefined;
+    if (!suppression) {
+      res.status(404).json({ error: "Suppression not found" });
+      return;
+    }
+    const scope = (suppression as { scope?: unknown }).scope;
+    const projectScope =
+      typeof scope === "string" && /^project:(.+)$/.exec(scope);
+    if (projectScope) {
+      await authorizeProject(projectScope[1], credentials, true);
+    } else {
+      await authorizeSettingsPermission(req, ansibleSettingsEditPermission);
     }
     logger.info(`APME suppression delete ${suppressionId}`);
     await apmeService.deleteSuppression(suppressionId);
@@ -778,7 +871,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   });
 
   router.get("/apme/lookup", async (req, res) => {
-    await ensureUser(req);
+    const credentials = await ensureUser(req);
     const repoUrl = req.query.repo_url as string;
     const branch = req.query.branch as string | undefined;
     if (!repoUrl) {
@@ -795,11 +888,19 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
       res.status(404).json({ error: "Project not found" });
       return;
     }
+    try {
+      await authorizeProject(project.id, credentials, false);
+    } catch (error) {
+      if (error instanceof NotAllowedError) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      throw error;
+    }
     res.json(project);
   });
 
   router.get("/apme/repos/branch-check", async (req, res) => {
-    await ensureUser(req);
     const repoUrl = req.query.repo_url;
     const branch = req.query.branch;
     if (typeof repoUrl !== "string" || !repoUrl.trim()) {
@@ -808,13 +909,13 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     if (typeof branch !== "string" || !branch.trim()) {
       throw new InputError("branch query parameter is required");
     }
+    await authorizeRepository(req, repoUrl, branch, "read");
     const scmToken = scmTokenFromRequest(req);
     await ensureRepoBranchValid(rootConfig, logger, repoUrl, branch, scmToken);
     res.json({ valid: true });
   });
 
   router.post("/apme/projects", jsonBody, async (req, res) => {
-    await ensureUser(req);
     const { name, repo_url, branch } = req.body ?? {};
     if (!name || typeof name !== "string") {
       throw new InputError("name is required in request body");
@@ -822,6 +923,10 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     if (!repo_url || typeof repo_url !== "string") {
       throw new InputError("repo_url is required in request body");
     }
+    if (typeof branch !== "string" || !branch.trim()) {
+      throw new InputError("branch is required");
+    }
+    await authorizeRepository(req, repo_url, branch, "register");
     const scmToken = scmTokenFromRequest(req) ?? scmTokenFromBody(req.body);
     await ensureRepoBranchValid(rootConfig, logger, repo_url, branch, scmToken);
     logger.info("APME create project requested");
@@ -843,8 +948,8 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   });
 
   router.get("/apme/projects/:projectId/activity", async (req, res) => {
-    await ensureUser(req);
     const { projectId } = req.params;
+    await authorizeWorkflow(req);
     logger.debug(`APME activity for project ${projectId} requested`);
     const activity = await apmeService.getActivity(projectId);
     const store = await portalSettingsStore.read();
@@ -856,6 +961,14 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     const { activityId } = req.params;
     logger.debug(`APME activity detail ${activityId} requested`);
     const detail = await apmeService.getActivityDetail(activityId);
+    if (!detail.project_id) {
+      res.status(404).json({ error: "Activity not found" });
+      return;
+    }
+    await authorizeWorkflow({
+      method: "GET",
+      params: { projectId: detail.project_id },
+    });
     const store = await portalSettingsStore.read();
     const [merged] = mergeActivityPortalOutcomes([detail], store.activities);
     res.json(merged);

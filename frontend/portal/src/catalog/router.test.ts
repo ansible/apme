@@ -63,6 +63,7 @@ describe("catalog-backend-module-apme router", () => {
     authorizeConditional: jest.fn().mockResolvedValue([]),
   };
   const authorizeProjectOperation = jest.fn();
+  const authorizeRepositoryOperation = jest.fn();
 
   let app: express.Express;
   let settingsPath: string;
@@ -124,6 +125,7 @@ describe("catalog-backend-module-apme router", () => {
     ]);
     mockPermissions.authorizeConditional.mockResolvedValue([]);
     authorizeProjectOperation.mockReset().mockResolvedValue(undefined);
+    authorizeRepositoryOperation.mockReset().mockResolvedValue(undefined);
     mockApmeService.getProject.mockResolvedValue({
       id: "proj-1",
       name: "terrible-playbook",
@@ -157,6 +159,7 @@ describe("catalog-backend-module-apme router", () => {
       portalSettingsStore,
       permissions: mockPermissions as never,
       authorizeProjectOperation,
+      authorizeRepositoryOperation,
     });
     app = express().use(router);
     app.use(
@@ -335,6 +338,11 @@ describe("catalog-backend-module-apme router", () => {
         .get("/apme/projects/proj-1")
         .expect(200);
       expect(project.body.id).toBe("proj-1");
+      expect(authorizeProjectOperation).toHaveBeenCalledWith(
+        "proj-1",
+        {},
+        false,
+      );
       await request(app).delete("/apme/projects/proj-1").expect(403);
       expect(mockApmeService.deleteProject).not.toHaveBeenCalled();
     });
@@ -355,8 +363,45 @@ describe("catalog-backend-module-apme router", () => {
     it("validates suppression identifiers before removing a suppression", async () => {
       await request(app).delete("/apme/suppressions/invalid").expect(400);
       expect(mockApmeService.deleteSuppression).not.toHaveBeenCalled();
+      mockApmeService.getSuppressions.mockResolvedValueOnce([
+        { id: 3, scope: "global" },
+      ]);
       await request(app).delete("/apme/suppressions/3").expect(204);
       expect(mockApmeService.deleteSuppression).toHaveBeenCalledWith(3);
+    });
+
+    it("authorizes project-scoped suppression changes against that project", async () => {
+      authorizeProjectOperation.mockRejectedValueOnce(
+        new NotAllowedError("Project access denied"),
+      );
+      const create = await request(app).post("/apme/suppressions").send({
+        rule_id: "R001",
+        scope: "project:private-project",
+      });
+      expect(create.status).toBe(403);
+      expect(mockApmeService.createSuppression).not.toHaveBeenCalled();
+
+      mockApmeService.getSuppressions.mockResolvedValueOnce([
+        { id: 7, scope: "project:private-project" },
+      ]);
+      authorizeProjectOperation.mockRejectedValueOnce(
+        new NotAllowedError("Project access denied"),
+      );
+      const remove = await request(app).delete("/apme/suppressions/7");
+      expect(remove.status).toBe(403);
+      expect(mockApmeService.deleteSuppression).not.toHaveBeenCalled();
+    });
+
+    it("requires settings permission for global suppression mutations", async () => {
+      mockPermissions.authorize.mockResolvedValueOnce([
+        { result: AuthorizeResult.DENY },
+      ]);
+      const response = await request(app).post("/apme/suppressions").send({
+        rule_id: "R001",
+        scope: "global",
+      });
+      expect(response.status).toBe(403);
+      expect(mockApmeService.createSuppression).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -499,6 +544,22 @@ describe("catalog-backend-module-apme router", () => {
       "main",
     );
     expect(response.body).toEqual(project);
+  });
+
+  it("conceals a project lookup when its catalog resource is inaccessible", async () => {
+    mockApmeService.getProjectByRepoUrl.mockResolvedValueOnce({
+      id: "private-project",
+      repo_url: "https://github.com/acme/private",
+      branch: "main",
+    });
+    authorizeProjectOperation.mockRejectedValueOnce(
+      new NotAllowedError("Repository access denied"),
+    );
+    const response = await request(app).get(
+      "/apme/lookup?repo_url=https%3A%2F%2Fgithub.com%2Facme%2Fprivate",
+    );
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: "Project not found" });
   });
 
   it("returns 404 when lookup misses", async () => {
@@ -687,6 +748,7 @@ describe("catalog-backend-module-apme router", () => {
 
   it("returns activity detail with proposals", async () => {
     const detail = {
+      project_id: "proj-1",
       scan_id: "scan-1",
       scan_type: "remediate",
       status: "completed",
@@ -710,6 +772,7 @@ describe("catalog-backend-module-apme router", () => {
     });
 
     const detail = {
+      project_id: "proj-1",
       scan_id: "scan-rem-1",
       scan_type: "remediate",
       status: "completed",
@@ -947,8 +1010,14 @@ describe("catalog-backend-module-apme router", () => {
       ok: true,
       status: 201,
       headers: new Headers({ "content-type": "application/json" }),
-      text: async () => JSON.stringify({ operation_id: "scan-1" }),
-      body: null,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(JSON.stringify({ operation_id: "scan-1" })),
+          );
+          controller.close();
+        },
+      }),
     });
 
     const response = await request(app)
@@ -1052,6 +1121,31 @@ describe("catalog-backend-module-apme router", () => {
     });
   });
 
+  it("filters project lists to catalog resources the user can read", async () => {
+    mockApmeService.getProjects.mockResolvedValueOnce([
+      {
+        id: "visible",
+        repo_url: "https://github.com/acme/visible",
+        branch: "main",
+        severity_breakdown: {},
+      },
+      {
+        id: "private",
+        repo_url: "https://github.com/acme/private",
+        branch: "main",
+        severity_breakdown: {},
+      },
+    ]);
+    authorizeProjectOperation.mockImplementation(async (id: string) => {
+      if (id === "private") throw new NotAllowedError("denied");
+    });
+    const response = await request(app).get("/apme/projects");
+    expect(response.status).toBe(200);
+    expect(response.body.items.map((item: { id: string }) => item.id)).toEqual([
+      "visible",
+    ]);
+  });
+
   it("rejects createProject when the branch does not exist", async () => {
     (global.fetch as jest.Mock)
       .mockReset()
@@ -1068,7 +1162,7 @@ describe("catalog-backend-module-apme router", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(response.body.error).toContain("Branch 'main' was not found");
+    expect(response.body.error).toContain("Requested branch is unavailable");
     expect(mockApmeService.createProject).not.toHaveBeenCalled();
   });
 
@@ -1087,6 +1181,56 @@ describe("catalog-backend-module-apme router", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ valid: true });
+    expect(authorizeRepositoryOperation).toHaveBeenCalledWith(
+      "https://github.com/acme/terrible-playbook",
+      "main",
+      {},
+      "read",
+    );
+  });
+
+  it("authorizes repository visibility before branch-check network access", async () => {
+    authorizeRepositoryOperation.mockRejectedValueOnce(
+      new NotAllowedError("Repository access denied"),
+    );
+    (global.fetch as jest.Mock).mockReset();
+    const response = await request(app).get(
+      "/apme/repos/branch-check?repo_url=https%3A%2F%2Fgithub.com%2Facme%2Frepo&branch=main",
+    );
+    expect(response.status).toBe(403);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("requires repository registration permission before creating a project", async () => {
+    authorizeRepositoryOperation.mockRejectedValueOnce(
+      new NotAllowedError("Registration denied"),
+    );
+    (global.fetch as jest.Mock).mockReset();
+    const response = await request(app).post("/apme/projects").send({
+      name: "repo",
+      repo_url: "https://github.com/acme/repo",
+      branch: "main",
+    });
+    expect(response.status).toBe(403);
+    expect(authorizeRepositoryOperation).toHaveBeenCalledWith(
+      "https://github.com/acme/repo",
+      "main",
+      {},
+      "register",
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockApmeService.createProject).not.toHaveBeenCalled();
+  });
+
+  it("does not return activity detail without a project authorization subject", async () => {
+    mockApmeService.getActivityDetail.mockResolvedValueOnce({
+      scan_id: "unknown",
+      violations: [],
+      proposals: [],
+    });
+    const response = await request(app).get("/apme/activity/unknown");
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: "Activity not found" });
   });
 
   // US-016: AI provider CRUD routes

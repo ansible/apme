@@ -53,22 +53,45 @@ export function lastPathSegment(segments: string[]): string {
 }
 
 /** Parses a normalized GitHub/GitLab HTTPS clone URL into SCM coordinates. */
-export function parseGitRepoUrl(repoUrl: string): ParsedGitRepo {
-  const normalized = normalizeRepoUrl(repoUrl);
+export function parseGitRepoUrl(
+  repoUrl: string,
+  rootConfig?: Config,
+): ParsedGitRepo {
   let url: URL;
   try {
-    url = new URL(normalized);
+    url = new URL(repoUrl);
   } catch {
     throw new InputError(`Invalid repository URL: ${repoUrl}`);
   }
-
+  if (url.protocol !== "https:" || url.username || url.password || url.port) {
+    throw new InputError("Repository URL must be an HTTPS SCM URL");
+  }
+  try {
+    url = new URL(normalizeRepoUrl(repoUrl));
+  } catch {
+    throw new InputError("Invalid repository URL");
+  }
   const host = url.hostname.toLowerCase();
   const segments = url.pathname.split("/").filter(Boolean);
   if (segments.length < 2) {
     throw new InputError(`Invalid repository URL: ${repoUrl}`);
   }
 
-  const provider: ScmProvider = host.includes("github") ? "github" : "gitlab";
+  const integrations = rootConfig ? ScmIntegrations.fromConfig(rootConfig) : undefined;
+  const provider: ScmProvider | undefined = integrations
+    ? integrations.github.byHost(host)
+      ? "github"
+      : integrations.gitlab.byHost(host)
+        ? "gitlab"
+        : undefined
+    : host === "github.com"
+      ? "github"
+      : host === "gitlab.com"
+        ? "gitlab"
+        : undefined;
+  if (!provider) {
+    throw new InputError("Repository host has no configured SCM integration");
+  }
   if (provider === "github") {
     return {
       provider,
@@ -167,6 +190,7 @@ async function fetchGithubDefaultBranch(
         Accept: "application/vnd.github+json",
         ...authHeaders(token),
       },
+      redirect: "manual",
     },
   );
   if (!response.ok) {
@@ -193,6 +217,7 @@ async function githubBranchExists(
     {
       method: "HEAD",
       headers: authHeaders(token),
+      redirect: "manual",
     },
   );
   return response.ok;
@@ -209,6 +234,7 @@ async function fetchGitlabDefaultBranch(
     `${apiBaseUrl}/projects/${encodeURIComponent(projectPath)}`,
     {
       headers: authHeaders(token),
+      redirect: "manual",
     },
   );
   if (!response.ok) {
@@ -232,6 +258,7 @@ async function gitlabBranchExists(
     {
       method: "HEAD",
       headers: authHeaders(token),
+      redirect: "manual",
     },
   );
   return response.ok;
@@ -250,7 +277,7 @@ export async function validateRepoBranch(
     throw new InputError("branch is required");
   }
 
-  const { provider, host, owner, repo } = parseGitRepoUrl(repoUrl);
+  const { provider, host, owner, repo } = parseGitRepoUrl(repoUrl, rootConfig);
   const token = await resolveScmAuthToken(
     rootConfig,
     provider,
@@ -267,22 +294,16 @@ export async function validateRepoBranch(
       : gitlabApiBase(rootConfig, host);
 
   let defaultBranch: string | undefined;
-  let metadataStatus: number | undefined;
   if (provider === "github") {
     const meta = await fetchGithubDefaultBranch(apiBase, owner, repo, token);
     defaultBranch = meta.defaultBranch;
-    metadataStatus = meta.status;
   } else {
     defaultBranch = await fetchGitlabDefaultBranch(apiBase, owner, repo, token);
   }
 
   if (!defaultBranch) {
-    const statusHint =
-      metadataStatus !== undefined ? ` (SCM HTTP ${metadataStatus})` : "";
     throw new InputError(
-      `Could not load repository metadata for ${owner}/${repo}${statusHint}. ` +
-        "Check the repository URL and Backstage SCM integration credentials " +
-        "(GitHub App installation or PAT under integrations.github).",
+      "Could not validate this repository with the configured SCM integration.",
     );
   }
 
@@ -295,13 +316,7 @@ export async function validateRepoBranch(
     return;
   }
 
-  logger?.warn(
-    `APME branch validation failed: branch '${branch}' not found in ${owner}/${repo} ` +
-      `(default '${defaultBranch}')`,
-  );
+  logger?.warn("APME branch validation failed: requested branch unavailable");
 
-  throw new InputError(
-    `Branch '${branch}' was not found in ${owner}/${repo}. ` +
-      `Use the repository default branch '${defaultBranch}' or verify the branch name in your SCM.`,
-  );
+  throw new InputError("Requested branch is unavailable for this repository.");
 }

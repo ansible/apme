@@ -3,7 +3,10 @@ import { mockServices } from "@backstage/backend-test-utils";
 import type { CatalogClient } from "@backstage/catalog-client";
 import { AuthorizeResult } from "@backstage/plugin-permission-common";
 import type { IApmeService } from "../common/index";
-import { createProjectOperationAuthorizer } from "./projectOperationAuthorization";
+import {
+  createProjectOperationAuthorizer,
+  createRepositoryOperationAuthorizer,
+} from "./projectOperationAuthorization";
 import { ManualGitRepositoryProvider } from "./providers/ManualGitRepositoryProvider";
 
 describe("interactive APME project authorization", () => {
@@ -34,6 +37,22 @@ describe("interactive APME project authorization", () => {
     manualProvider = new ManualGitRepositoryProvider(),
   ) {
     return createProjectOperationAuthorizer({
+      userInfo,
+      organizations,
+      entitlements,
+      permissions,
+      auth: mockServices.auth(),
+      catalogClient: { getEntities } as unknown as CatalogClient,
+      apmeService: { getProject } as unknown as IApmeService,
+      rootConfig: config,
+      manualProvider,
+    });
+  }
+  function authorizeRepository(
+    config = new ConfigReader({}),
+    manualProvider = new ManualGitRepositoryProvider(),
+  ) {
+    return createRepositoryOperationAuthorizer({
       userInfo,
       organizations,
       entitlements,
@@ -225,5 +244,71 @@ describe("interactive APME project authorization", () => {
     await expect(authorize()("project-1", credentials, true)).rejects.toThrow(
       "not accessible",
     );
+  });
+
+  it("requires registration permission and catalog access for a new project", async () => {
+    await expect(
+      authorizeRepository()(
+        "https://github.com/acme/repo",
+        "main",
+        credentials,
+        "register",
+      ),
+    ).resolves.toBeUndefined();
+    expect(permissions.authorize).toHaveBeenNthCalledWith(
+      1,
+      [
+        {
+          permission: expect.objectContaining({
+            name: "ansible.apme.repository.register",
+          }),
+        },
+      ],
+      { credentials },
+    );
+    expect(permissions.authorize).toHaveBeenNthCalledWith(
+      2,
+      [
+        {
+          permission: expect.objectContaining({ name: "catalog.entity.read" }),
+          resourceRef: "component:engineering/repo",
+        },
+      ],
+      { credentials },
+    );
+  });
+
+  it("requires catalog access before exposing branch metadata", async () => {
+    permissions.authorize.mockResolvedValueOnce([
+      { result: AuthorizeResult.DENY },
+    ]);
+    await expect(
+      authorizeRepository()(
+        "https://github.com/acme/repo",
+        "feature",
+        credentials,
+        "read",
+      ),
+    ).rejects.toThrow("not accessible");
+    expect(getEntities).toHaveBeenCalled();
+    expect(permissions.authorize).toHaveBeenCalledTimes(1);
+    expect(permissions.authorize.mock.calls[0][0][0].permission.name).toBe(
+      "catalog.entity.read",
+    );
+  });
+
+  it("denies project registration before catalog or SCM access when permission is absent", async () => {
+    permissions.authorize.mockResolvedValueOnce([
+      { result: AuthorizeResult.DENY },
+    ]);
+    await expect(
+      authorizeRepository()(
+        "https://github.com/acme/repo",
+        "main",
+        credentials,
+        "register",
+      ),
+    ).rejects.toThrow("registration permission denied");
+    expect(getEntities).not.toHaveBeenCalled();
   });
 });

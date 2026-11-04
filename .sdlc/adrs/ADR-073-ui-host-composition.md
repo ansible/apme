@@ -163,6 +163,7 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 | 2026-11-04 | Codex | Clarified that the RHDH Local image contract takes effect after the final staged PR; intermediate merges retain the native deployment. |
 | 2026-11-04 | Codex | Kept plugin capabilities explicit, retained rule data during refresh, preserved independent project deletion permission, and required a supported user-selected severity when Portal omits numeric severity. Live two-host acceptance remains in #833. |
 | 2026-11-04 | Codex | Clarified that Local upload capability is disabled until the host opts in after installing the authenticated backend. |
+| 2026-11-04 | Codex | Hardened Portal's inherited project/repository routes with host entitlement and catalog authorization, protected SCM branch lookup against untrusted origins and redirects, and added focused authorization/transport regressions. Overall host acceptance remains in progress under #833. |
 
 ## Staged delivery
 
@@ -177,8 +178,12 @@ ADR-074 defines the security boundary; Local activation still follows later.
 Stage 4 transfers Portal source ownership and verifies six-artifact release
 delivery. Portal adoption requires a release; the Local switch remains stage 5.
 
-Split review identified an inherited Portal project-deletion authorization gap.
-The catalog module now denies direct deletion unless its router receives a
-separate host deletion policy covering entitlement, repository access and
+Split review identified inherited Portal project-deletion, project-read,
+repository-operation and SCM branch-lookup authorization gaps. Portal adapters
+now gate project operations and reads on host entitlements/permissions and
+catalog access, require registration permission before adding repositories,
+and constrain branch checks to configured HTTPS SCM origins without following
+redirects. The catalog module denies direct deletion unless its router receives
+a separate host deletion policy covering entitlement, repository access and
 independent destructive permission. Existing repository deregistration is
 unchanged. Sign-in and scan authorization do not grant deletion.

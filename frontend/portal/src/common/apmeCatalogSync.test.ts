@@ -23,7 +23,13 @@ import {
 } from "./apmeCatalogSync";
 import { ApmeGitContentsSyncConfig } from "./apmeSyncConfig";
 
-const baseEntity = (org: string, name: string, tags: string[] = []): Entity =>
+const baseEntity = (
+  org: string,
+  name: string,
+  tags: string[] = [],
+  host = "github.com",
+  provider = "github",
+): Entity =>
   ({
     apiVersion: "backstage.io/v1alpha1",
     kind: "Component",
@@ -32,8 +38,9 @@ const baseEntity = (org: string, name: string, tags: string[] = []): Entity =>
       uid: name,
       tags,
       annotations: {
-        "backstage.io/source-location": `url:https://github.com/${org}/${name}`,
+        "backstage.io/source-location": `url:https://${host}/${org}/${name}`,
         "ansible.io/scm-organization": org,
+        "ansible.io/scm-provider": provider,
       },
     },
     spec: {
@@ -49,9 +56,17 @@ describe("apmeCatalogSync helpers", () => {
     scanOnRegister: false,
     maxPerRun: 2,
     orgs: [
-      { env: "development", organization: "acme-scm", scanOnRegister: true },
       {
         env: "development",
+        provider: "github",
+        host: "github.com",
+        organization: "acme-scm",
+        scanOnRegister: true,
+      },
+      {
+        env: "development",
+        provider: "github",
+        host: "github.com",
         organization: "ansible-demo",
         scanOnRegister: false,
         labels: ["github"],
@@ -83,6 +98,32 @@ describe("apmeCatalogSync helpers", () => {
     ];
 
     expect(selectEntitiesForApmeSync(entities, syncConfig)).toHaveLength(2);
+  });
+
+  it("matches organization names only within the configured provider and host", () => {
+    const scopedConfig: ApmeGitContentsSyncConfig = {
+      ...syncConfig,
+      orgs: [
+        {
+          env: "development",
+          provider: "github",
+          host: "github.com",
+          organization: "same-org",
+          scanOnRegister: false,
+        },
+      ],
+    };
+    const selected = selectEntitiesForApmeSync(
+      [
+        baseEntity("same-org", "github-repo"),
+        baseEntity("same-org", "gitlab-repo", [], "gitlab.com", "gitlab"),
+        baseEntity("same-org", "enterprise-repo", [], "git.example.com", "gitlab"),
+      ],
+      scopedConfig,
+    );
+    expect(selected.map((entity) => entity.metadata.name)).toEqual([
+      "github-repo",
+    ]);
   });
 
   it("sliceApmeSyncBatch rotates cursor across runs", () => {

@@ -253,10 +253,13 @@ describe("APME frontend HTTP contracts", () => {
         status: "running",
       });
       expect(fetchApi.fetch).toHaveBeenCalledWith(
-        "/catalog/apme/projects/repo/remediate",
+        "/catalog/apme/projects/repo/operation",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify(ids?.length ? { violation_ids: ids } : {}),
+          body: JSON.stringify({
+            action: "remediate",
+            options: ids?.length ? { violation_ids: ids } : {},
+          }),
         }),
       );
     },

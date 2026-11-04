@@ -27,7 +27,10 @@ import {
 } from "@ansible/portal-plugin-node";
 import { registerApmeOperations } from "./operations";
 import { registerSettingsOperations } from "./settingsOperations";
-import { createProjectOperationAuthorizer } from "./projectOperationAuthorization";
+import {
+  createProjectOperationAuthorizer,
+  createRepositoryOperationAuthorizer,
+} from "./projectOperationAuthorization";
 import { ManualGitRepositoryProvider } from "./providers/ManualGitRepositoryProvider";
 import { ApmeRegistrationTemplateProvider } from "./providers/ApmeRegistrationTemplateProvider";
 import { createManualRepositoriesRouter } from "./manualRepositories/router";
@@ -199,6 +202,17 @@ export const catalogModuleApme = createBackendModule({
           portalSettingsStore,
           permissions,
           authorizeProjectOperation: createProjectOperationAuthorizer({
+            userInfo,
+            organizations,
+            entitlements,
+            permissions,
+            auth,
+            catalogClient,
+            apmeService,
+            rootConfig,
+            manualProvider,
+          }),
+          authorizeRepositoryOperation: createRepositoryOperationAuthorizer({
             userInfo,
             organizations,
             entitlements,

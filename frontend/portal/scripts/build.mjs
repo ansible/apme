@@ -8,13 +8,16 @@ import {
     cpSync,
     writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve, relative, sep } from "node:path";
+import { dirname, join, resolve, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { createRequire } from "node:module";
 import { build } from "esbuild";
 import { prepareSdk } from "./sdk.mjs";
+
+const require = createRequire(import.meta.url);
+const { commonAncestorPath } = require("./portalPath.cjs");
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const source = join(root, "frontend/portal");
@@ -27,9 +30,7 @@ rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 const staging = mkdtempSync(join(tmpdir(), "apme-portal-build-"));
 try {
-    let ancestor = root;
-    while (!portal.startsWith(ancestor + sep) && portal !== ancestor)
-        ancestor = dirname(ancestor);
+    const ancestor = commonAncestorPath(root, portal);
     const config = {
         compilerOptions: {
             target: "ES2022",
