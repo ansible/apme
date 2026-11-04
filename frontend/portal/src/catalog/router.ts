@@ -229,6 +229,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
       credentials,
       !["GET", "HEAD"].includes(req.method),
     );
+    return credentials.principal.userEntityRef;
   };
   const authorizeRepository = async (
     req: unknown,
@@ -724,7 +725,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
     "/apme/projects/:projectId/operation",
     jsonBodyUnlessGet,
     async (req, res) => {
-      await authorizeWorkflow(req);
+      const userEntityRef = await authorizeWorkflow(req);
       const { projectId } = req.params;
       const scmToken = await resolveScmTokenForProject(req, projectId);
       await proxyProjectOperation({
@@ -735,6 +736,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
         projectId,
         operationSuffix: "",
         scmToken,
+        userEntityRef,
         gatewayBaseUrl: await resolveEffectiveGatewayBaseUrl(),
       });
     },
@@ -748,7 +750,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
       // Normalize the positional capture before the existing project authorizer.
       const projectId = req.params[0];
       req.params.projectId = projectId;
-      await authorizeWorkflow(req);
+      const userEntityRef = await authorizeWorkflow(req);
       const scmToken = await resolveScmTokenForProject(req, projectId);
       const splat = req.params[1];
       const rest = splat ? `/${splat}` : "";
@@ -760,6 +762,7 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
         projectId,
         operationSuffix: rest,
         scmToken,
+        userEntityRef,
         gatewayBaseUrl: await resolveEffectiveGatewayBaseUrl(),
       });
     },

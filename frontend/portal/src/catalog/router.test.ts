@@ -68,6 +68,9 @@ describe("catalog-backend-module-apme router", () => {
     authorizeConditional: jest.fn().mockResolvedValue([]),
   };
   const mockHttpAuthCredentials = jest.fn().mockResolvedValue({});
+  const userCredentials = {
+    principal: { type: "user" as const, userEntityRef: "user:default/test" },
+  };
   const authorizeProjectOperation = jest.fn();
   const authorizeRepositoryOperation = jest.fn();
 
@@ -84,7 +87,11 @@ describe("catalog-backend-module-apme router", () => {
       "/apme/shared/projects/proj-1/graph",
     );
     expect(response.status).toBe(403);
-    expect(authorizeProjectOperation).toHaveBeenCalledWith("proj-1", {}, false);
+    expect(authorizeProjectOperation).toHaveBeenCalledWith(
+      "proj-1",
+      userCredentials,
+      false,
+    );
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
@@ -121,12 +128,16 @@ describe("catalog-backend-module-apme router", () => {
     );
     expect(response.status).toBe(404);
     expect(response.body).not.toHaveProperty("scan_id");
-    expect(authorizeProjectOperation).toHaveBeenCalledWith("proj-1", {}, false);
+    expect(authorizeProjectOperation).toHaveBeenCalledWith(
+      "proj-1",
+      userCredentials,
+      false,
+    );
   });
 
   beforeEach(async () => {
     jest.resetAllMocks();
-    mockHttpAuthCredentials.mockResolvedValue({});
+    mockHttpAuthCredentials.mockResolvedValue(userCredentials);
     mockDnsLookup.mockResolvedValue([
       { address: "93.184.216.34", family: 4 },
     ] as never);
@@ -350,7 +361,7 @@ describe("catalog-backend-module-apme router", () => {
       expect(project.body.id).toBe("proj-1");
       expect(authorizeProjectOperation).toHaveBeenCalledWith(
         "proj-1",
-        {},
+        userCredentials,
         false,
       );
       await request(app).delete("/apme/projects/proj-1").expect(403);
@@ -389,7 +400,7 @@ describe("catalog-backend-module-apme router", () => {
       );
       expect(authorizeProjectOperation).toHaveBeenCalledWith(
         "proj-1",
-        {},
+        userCredentials,
         false,
       );
     });
@@ -1042,6 +1053,12 @@ describe("catalog-backend-module-apme router", () => {
   });
 
   it("passes resolved ansible_version when triggering scan", async () => {
+    mockHttpAuthCredentials.mockResolvedValueOnce({
+      principal: {
+        type: "user",
+        userEntityRef: "user:default/trusted-user",
+      },
+    });
     await portalSettingsStore.updateProjectTarget("proj-1", "2.16");
     (global.fetch as jest.Mock)
       .mockReset()
@@ -1068,6 +1085,7 @@ describe("catalog-backend-module-apme router", () => {
 
     const response = await request(app)
       .post("/apme/projects/proj-1/operation")
+      .set("X-User", "user:default/browser-user")
       .send({ action: "check" });
 
     expect(response.status).toBe(201);
@@ -1078,6 +1096,7 @@ describe("catalog-backend-module-apme router", () => {
         method: "POST",
         headers: expect.objectContaining({
           "X-SCM-Token": "test-token",
+          "X-User": "user:default/trusted-user",
         }),
       }),
     );
@@ -1230,7 +1249,7 @@ describe("catalog-backend-module-apme router", () => {
     expect(authorizeRepositoryOperation).toHaveBeenCalledWith(
       "https://github.com/acme/terrible-playbook",
       "main",
-      {},
+      userCredentials,
       "read",
     );
   });
@@ -1261,7 +1280,7 @@ describe("catalog-backend-module-apme router", () => {
     expect(authorizeRepositoryOperation).toHaveBeenCalledWith(
       "https://github.com/acme/repo",
       "main",
-      {},
+      userCredentials,
       "register",
     );
     expect(global.fetch).not.toHaveBeenCalled();

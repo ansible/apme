@@ -79,7 +79,9 @@ function assertSafeOperationSuffix(suffix: string): void {
  * `/api/v1/projects/:projectId/operation*` for `@apme/ui-workflow`.
  *
  * Injects `scm_token` into JSON bodies when the portal resolved one, so
- * Gateway can own commit/push (ADR-056). Never forwards `file_overrides`.
+ * Gateway can own commit/push (ADR-056). Injects the authenticated Portal
+ * user as `X-User`; never trusts a browser-supplied identity or forwards
+ * `file_overrides`.
  */
 export async function proxyProjectOperation(options: {
   req: OperationProxyRequest;
@@ -90,6 +92,8 @@ export async function proxyProjectOperation(options: {
   /** Path after `/operation` (e.g. ``, `/approve`, `/events`). */
   operationSuffix: string;
   scmToken?: string;
+  /** User identity derived from Portal-authenticated credentials. */
+  userEntityRef?: string;
   /** Effective Gateway URL (portal-settings override, else app-config). */
   gatewayBaseUrl?: string;
 }): Promise<void> {
@@ -101,6 +105,7 @@ export async function proxyProjectOperation(options: {
     projectId,
     operationSuffix,
     scmToken,
+    userEntityRef,
     gatewayBaseUrl,
   } = options;
   const baseUrl = (gatewayBaseUrl ?? getApmeConfig(rootConfig).baseUrl).replace(
@@ -122,6 +127,9 @@ export async function proxyProjectOperation(options: {
   }
   if (scmToken) {
     headers["X-SCM-Token"] = scmToken;
+  }
+  if (userEntityRef) {
+    headers["X-User"] = userEntityRef;
   }
 
   let body: string | undefined;

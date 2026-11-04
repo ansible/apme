@@ -287,7 +287,7 @@ describe("ApmeApiClient", () => {
       );
     });
 
-    it("forwards AI overrides and SCM tokens through the authenticated Portal route", async () => {
+    it("forwards scan options without trusting browser-supplied identity", async () => {
       mockFetchApi.fetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ operation_id: "op-789" }),
@@ -309,6 +309,9 @@ describe("ApmeApiClient", () => {
             options: { enable_ai: true },
           }),
         }),
+      );
+      expect(mockFetchApi.fetch.mock.calls[0][1]).not.toHaveProperty(
+        "headers.X-User",
       );
     });
   });

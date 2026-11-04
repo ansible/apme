@@ -471,7 +471,7 @@ export class ApmeApiClient implements ApmeApi {
     const headers = options?.scmToken?.trim()
       ? { "X-SCM-Token": options.scmToken.trim() }
       : undefined;
-    // Portal establishes the caller identity from its authenticated request;
+    // The Portal backend derives X-User from authenticated credentials;
     // browser-supplied userIdentity is intentionally not trusted here.
     const response = await this.fetch<{ operation_id: string }>(
       `/projects/${encodeURIComponent(projectId)}/operation`,
