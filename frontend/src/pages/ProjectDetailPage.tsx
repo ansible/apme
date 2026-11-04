@@ -578,7 +578,7 @@ export function ProjectDetailPage() {
                           />
                         </td>
                         <td role="cell" style={{ opacity: 0.7 }}>{timeAgo(scan.created_at)}</td>
-                        <td role="cell" onClick={(e) => e.stopPropagation()}>
+                        <td role="cell">
                           {isResumable ? (
                             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                               <Button

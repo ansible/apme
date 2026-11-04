@@ -182,10 +182,19 @@ export function PlaygroundPage() {
             <CardBody>
               <div
                 className={`apme-drop-zone ${isDragOver ? 'drag-over' : ''}`}
+                role="button"
+                tabIndex={0}
+                aria-label="Choose Ansible files to analyze"
                 onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
                 onDragLeave={() => setIsDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
               >
                 <div className="apme-drop-icon">+</div>
                 <div className="apme-drop-text">

@@ -74,7 +74,16 @@ export function ReviewFilterBar({ groups }: ReviewFilterBarProps) {
                 isCompact
                 variant={opt.selected ? 'filled' : 'outline'}
                 color={opt.color}
+                role="button"
+                tabIndex={0}
+                aria-pressed={opt.selected}
                 onClick={opt.onToggle}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    opt.onToggle();
+                  }
+                }}
               >
                 {opt.count != null ? `${opt.label} (${opt.count})` : opt.label}
               </Label>

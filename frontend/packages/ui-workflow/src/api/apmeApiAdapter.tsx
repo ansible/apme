@@ -18,9 +18,10 @@ export function ApmeApiProvider({
   adapter?: Partial<ApmeApiAdapter>;
   children: ReactNode;
 }) {
+  const { fetch, apiBase, origin, openSessionSocket } = adapter ?? {};
   const value = useMemo(
-    () => createDefaultApmeApiAdapter(adapter ?? {}),
-    [adapter?.fetch, adapter?.apiBase, adapter?.origin, adapter?.openSessionSocket],
+    () => createDefaultApmeApiAdapter({ fetch, apiBase, origin, openSessionSocket }),
+    [fetch, apiBase, origin, openSessionSocket],
   );
 
   return (

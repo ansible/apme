@@ -462,7 +462,6 @@ export function ProposalReviewPanel({
     };
   }, [
     acceptedIds,
-    actionable.length,
     declinedCount,
     isAiGate,
     onApprove,

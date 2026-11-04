@@ -332,12 +332,13 @@ export function ProjectsPage() {
                   <td role="cell" style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>
                     {proj.last_scanned_at ? timeAgo(proj.last_scanned_at) : 'Never'}
                   </td>
-                  <td role="cell" onClick={(e) => e.stopPropagation()}>
+                  <td role="cell">
                     <Dropdown
                       isOpen={openKebab === proj.id}
                       onSelect={() => setOpenKebab(null)}
                       onOpenChange={(open) => { if (!open) setOpenKebab(null); }}
                       toggle={(toggleRef) => (
+                        /* eslint-disable-next-line a11y/click-events-have-key-events -- PatternFly MenuToggle handles keyboard activation */
                         <MenuToggle
                           ref={toggleRef}
                           variant="plain"
@@ -354,10 +355,18 @@ export function ProjectsPage() {
                       popperProps={{ position: 'right' }}
                     >
                       <DropdownList>
-                        <DropdownItem key="edit" onClick={() => navigate(`/projects/${proj.id}?tab=settings`)}>
+                        {/* eslint-disable-next-line a11y/click-events-have-key-events -- PatternFly DropdownItem handles keyboard activation */}
+                        <DropdownItem key="edit" onClick={(event) => {
+                          event.stopPropagation();
+                          navigate(`/projects/${proj.id}?tab=settings`);
+                        }}>
                           Edit
                         </DropdownItem>
-                        <DropdownItem key="delete" onClick={() => handleDelete(proj)} isDanger>
+                        {/* eslint-disable-next-line a11y/click-events-have-key-events -- PatternFly DropdownItem handles keyboard activation */}
+                        <DropdownItem key="delete" onClick={(event) => {
+                          event.stopPropagation();
+                          handleDelete(proj);
+                        }} isDanger>
                           Delete
                         </DropdownItem>
                       </DropdownList>

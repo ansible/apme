@@ -12,10 +12,11 @@
   "scripts": {
     "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow",
     "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json",
+    "lint:ui": "eslint . --ext .ts,.tsx",
     "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",
     "pack": "node frontend/backstage/scripts/pack.mjs",
-    "format": "prettier --write frontend/backstage frontend/packages/apme-client",
-    "format:check": "prettier --check frontend/backstage frontend/packages/apme-client",
+    "format": "prettier --write eslint.config.mjs frontend/backstage frontend/packages/apme-client",
+    "format:check": "prettier --check eslint.config.mjs frontend/backstage frontend/packages/apme-client",
     "pack:verify": "node frontend/backstage/scripts/verify-pack.mjs"
   },
   "dependencies": {
@@ -26,20 +27,26 @@
     "react-router-dom": "6.30.6"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.0.0",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "^6.0.5",
+    "esbuild": "0.28.2",
+    "eslint": "10.14.0",
+    "eslint-plugin-a11y": "1.4.0",
+    "eslint-plugin-react-hooks": "7.1.1",
     "jsdom": "^30.1.1",
     "prettier": "^3.9.6",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1",
     "vite": "8.3.5",
-    "vitest": "5.0.5",
-    "esbuild": "0.28.2"
+    "vitest": "5.0.5"
   },
   "overrides": {
+    "minimatch": "11.0.1",
     "@module-federation/dts-plugin": {
       "undici": "7.30.1"
     },
