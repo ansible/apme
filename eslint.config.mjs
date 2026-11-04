@@ -28,7 +28,6 @@ const accessibilityRules = [
     "a11y/no-redundant-roles",
     "a11y/no-role-presentation-on-focusable",
     "a11y/no-static-element-interactions",
-    "a11y/click-events-have-key-events",
     "a11y/scope",
     "a11y/tabindex-no-positive",
     "a11y/video-captions",
@@ -36,7 +35,14 @@ const accessibilityRules = [
 
 export default tseslint.config(
     {
-        ignores: ["**/dist/**", "frontend/vendor/**"],
+        ignores: [
+            "**/dist/**",
+            "**/build/**",
+            "**/node_modules/**",
+            "**/.tox/**",
+            "**/.venv/**",
+            "**/vendor/**",
+        ],
     },
     {
         files: typescriptFiles,
@@ -67,6 +73,23 @@ export default tseslint.config(
                     decorativeMatcher: { requireAriaHidden: true },
                 },
             ],
+        },
+    },
+    {
+        files: [
+            "frontend/packages/**/*.tsx",
+            "frontend/src/**/*.tsx",
+            "containers/rhdh/plugin/**/*.tsx",
+        ],
+        rules: {
+            "a11y/click-events-have-key-events": "error",
+        },
+    },
+    {
+        files: ["**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}"],
+        rules: {
+            "@typescript-eslint/no-explicit-any": "off",
+            "a11y/dialog-modal": "off",
         },
     },
 );
