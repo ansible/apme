@@ -193,11 +193,14 @@ export class ApmeApiClient implements ApmeApi {
       const name = err instanceof Error ? err.name : "";
       const message = err instanceof Error ? err.message : String(err);
       if (name === "AbortError" || /aborted/i.test(message)) {
-        throw new Error(`APME API request timed out or was aborted: ${url}`);
+        throw new Error(`APME API request timed out or was aborted: ${url}`, {
+          cause: err,
+        });
       }
       if (err instanceof TypeError || /Failed to fetch/i.test(message)) {
         throw new Error(
           `Could not reach APME catalog API at ${url}. Check that the portal backend is available.`,
+          { cause: err },
         );
       }
       throw err;

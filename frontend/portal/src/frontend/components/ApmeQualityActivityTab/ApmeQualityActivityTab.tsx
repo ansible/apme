@@ -116,7 +116,7 @@ function ActivityList({
 
   const sorted = useMemo(() => {
     return [...activities].sort((a, b) => {
-      let cmp = 0;
+      let cmp: number;
       switch (sortCol) {
         case "type":
           cmp = displayType(a.scan_type).localeCompare(

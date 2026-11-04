@@ -39,6 +39,8 @@ export const apmeApiFactory: ApiFactory<
     const mockMode =
       configApi.getOptionalBoolean("ansible.apme.mockMode") ?? false;
     if (mockMode) {
+      // Keep the optional mock client out of the production bundle.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy CommonJS load avoids bundling mock-only code.
       const { MockApmeApiClient } =
         require("./mock/MockApmeApiClient") as typeof import("./mock/MockApmeApiClient");
       return new MockApmeApiClient();

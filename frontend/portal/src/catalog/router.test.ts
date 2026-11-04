@@ -555,8 +555,7 @@ describe("catalog-backend-module-apme router", () => {
       authorizeProjectOperation.mockRejectedValue(
         new NotAllowedError("Entitlement denied"),
       );
-      const response = await request(app)
-        [method](route)
+      const response = await request(app)[method](route)
         .send({ scm_token: "untrusted-token", activity_id: "activity-1" });
       expect(response.status).toBe(403);
       expect(authorizeProjectOperation).toHaveBeenCalledWith(
@@ -1648,12 +1647,12 @@ describe("project deletion authorization", () => {
       projectId: string,
       credentials: unknown,
     ) => Promise<void>,
+    deleteProject: jest.Mock = jest.fn().mockResolvedValue(undefined),
   ) {
     const credentials = {
       principal: { type: "user", userEntityRef: "user:default/owner" },
     };
     const authenticate = jest.fn().mockResolvedValue(credentials);
-    const deleteProject = jest.fn().mockResolvedValue(undefined);
     const logger = {
       info: jest.fn(),
       debug: jest.fn(),
@@ -1712,13 +1711,12 @@ describe("project deletion authorization", () => {
   });
 
   it("awaits the dedicated policy before forwarding an authorized deletion", async () => {
-    let deleteProject: jest.Mock;
+    const deleteProject = jest.fn().mockResolvedValue(undefined);
     const authorize = jest.fn(async () => {
       await Promise.resolve();
       expect(deleteProject).not.toHaveBeenCalled();
     });
-    const state = await setupDeletion(authorize);
-    deleteProject = state.deleteProject;
+    const state = await setupDeletion(authorize, deleteProject);
     await request(state.app).delete("/apme/projects/proj-1").expect(204);
     expect(authorize).toHaveBeenCalledWith("proj-1", state.credentials);
     expect(deleteProject).toHaveBeenCalledWith("proj-1");

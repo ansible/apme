@@ -535,8 +535,8 @@ export const ApmeAiProvidersSection = ({
     }
     // Normalize: handle both {config:{providers}} and {providers} response shapes.
     const root =
-      raw && typeof raw === "object" && "config" in raw && (raw as any).config
-        ? (raw as any).config
+      raw && typeof raw === "object" && "config" in raw
+        ? (raw as { config?: unknown }).config
         : raw;
     const config: Record<string, unknown> =
       root && typeof root === "object" ? { ...(root as object) } : {};

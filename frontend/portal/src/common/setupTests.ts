@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-// eslint-disable-next-line no-restricted-imports
 import { TextEncoder, TextDecoder } from "node:util";
 import { ReadableStream, WritableStream } from "web-streams-polyfill";
 

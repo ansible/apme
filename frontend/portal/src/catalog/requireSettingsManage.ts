@@ -4,13 +4,14 @@ import {
 } from "@backstage/backend-plugin-api";
 import { AuthorizeResult } from "@backstage/plugin-permission-common";
 import { ansibleSettingsEditPermission } from "@ansible/backstage-rhaap-common/permissions";
+import type { RequestHandler } from "express";
 
 export function createRequireSettingsManageMiddleware(deps: {
   httpAuth: HttpAuthService;
   permissions: PermissionsService;
-}): any {
+}): RequestHandler {
   const { httpAuth, permissions } = deps;
-  return async (req: any, res: any, next: any) => {
+  return async (req, res, next) => {
     const credentials = await httpAuth.credentials(
       req as unknown as Parameters<HttpAuthService["credentials"]>[0],
       { allow: ["user"] },
