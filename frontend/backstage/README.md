@@ -131,11 +131,13 @@ tox -e frontend-pack-smoke
 
 `frontend-pack` builds and stages packages without editing source manifests.
 The output directory `dist/ui-packages` contains `apme-client-VERSION.tgz`,
-`apme-ui-workflow-VERSION.tgz`, `apme-backstage-plugin-VERSION.tgz`, SHA256SUMS
-and a source-commit artifact manifest. Release manifests pin package dependencies
-to same-version GitHub Release URLs. The smoke check uses local tarball references
-and verifies a clean install, Node client import, public declarations and browser bundle outside this
-checkout. It does not publish anything or require a Portal repository.
+`apme-ui-workflow-VERSION.tgz`, `apme-backstage-plugin-VERSION.tgz`,
+`apme-backstage-plugin-backend-VERSION.tgz`, SHA256SUMS and a source-commit
+artifact manifest. Release manifests pin package dependencies to same-version
+GitHub Release URLs. The smoke check uses local tarball references and verifies
+a clean install, Node client import, public declarations and browser bundle
+outside this checkout. It does not publish anything or require a Portal
+repository.
 
 ## Initial coverage and remaining work
 

@@ -6,7 +6,7 @@ import {
 } from "@backstage/core-components";
 import type { NavContentComponentProps } from "@backstage/plugin-app-react";
 import { LocalThemeControl } from "./LocalThemeControl";
-import { useState, type MouseEvent } from "react";
+import { useState } from "react";
 
 const productIcon = new URL(
   "../../../../frontend/public/apme.svg",
@@ -30,43 +30,43 @@ function ApmeNavigation({ navItems }: NavContentComponentProps) {
   };
   return (
     <>
-      <SidebarItem
-        icon={ProductIcon}
-        text="APME"
-        to="/"
-        end
-        role="button"
-        aria-current="false"
-        aria-label="APME"
-        aria-expanded={isOpen && expanded}
-        aria-controls="apme-local-sections"
-        onClick={(event: MouseEvent) => {
-          event.preventDefault();
-          toggle();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === " ") {
-            event.preventDefault();
-            toggle();
+      <div className="apme-local-nav-heading">
+        <SidebarItem
+          className="apme-local-nav-brand"
+          icon={ProductIcon}
+          text="APME"
+          to="/"
+          end
+        />
+        <button
+          className="apme-local-nav-toggle"
+          type="button"
+          aria-label={
+            isOpen && expanded
+              ? "Collapse APME sections"
+              : "Expand APME sections"
           }
-        }}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="currentColor"
-          aria-hidden
+          aria-expanded={isOpen && expanded}
+          aria-controls="apme-local-sections"
+          onClick={toggle}
         >
-          <path
-            d={
-              expanded
-                ? "m7 9 5 5 5-5-1.4-1.4-3.6 3.6-3.6-3.6L7 9Z"
-                : "m9 7 5 5-5 5-1.4-1.4 3.6-3.6-3.6-3.6L9 7Z"
-            }
-          />
-        </svg>
-      </SidebarItem>
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              d={
+                expanded
+                  ? "m7 9 5 5 5-5-1.4-1.4-3.6 3.6-3.6-3.6L7 9Z"
+                  : "m9 7 5 5-5 5-1.4-1.4 3.6-3.6-3.6-3.6L9 7Z"
+              }
+            />
+          </svg>
+        </button>
+      </div>
       <div id="apme-local-sections" hidden={!isOpen || !expanded}>
         {apmeItems.map((item) => (
           <SidebarItem
