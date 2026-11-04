@@ -55,6 +55,7 @@ export function ApmeUploadWorkbench({
 /** Drives the resumable Gateway upload session and proposal review workflow. */
 function UploadContent() {
   const session = useSessionStream();
+  const { resumeSession } = session;
   const [files, setFiles] = useState<File[]>([]);
   const [paste, setPaste] = useState("");
   const [filename, setFilename] = useState("playbook.yml");
@@ -72,8 +73,8 @@ function UploadContent() {
     if (attemptedResume.current) return;
     attemptedResume.current = true;
     const saved = getPersistedSession();
-    if (saved) void session.resumeSession(saved.sessionId, saved.scanId);
-  }, [session.resumeSession]);
+    if (saved) void resumeSession(saved.sessionId, saved.scanId);
+  }, [resumeSession]);
   /** Validates selected paths and sends the current upload through FixSession. */
   async function start() {
     setInputError(undefined);
