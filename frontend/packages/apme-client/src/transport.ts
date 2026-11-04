@@ -35,6 +35,7 @@ function defaultOrigin(): string {
   return "";
 }
 
+/** Build a host adapter while filling omitted fields with native defaults. */
 export function createDefaultApmeApiAdapter(
   overrides: Partial<ApmeApiAdapter> = {},
 ): ApmeApiAdapter {

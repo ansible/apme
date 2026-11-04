@@ -646,7 +646,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
         </>}
       </div>
 
-      <details className="graph-legend">
+      <details className="graph-legend" open={variant === 'content'}>
         <summary>Legend</summary>
         {variant === 'dependencies' ? <>
           <div className="li"><div className="sw" style={{background: NODE_COLORS.python_package}} />Python package</div>

@@ -139,6 +139,10 @@ artifact type, translate it:
    For fetch-based transports, trace response bodies on success, non-2xx,
    cancellation and cleanup requests. Consuming a main stream does not dispose
    separate creation, message or deletion responses.
+   For published package APIs, give each exported function or hook a
+   concise JSDoc description of its purpose and any non-obvious behavior;
+   enforce this on public exports rather than requiring boilerplate for
+   private callbacks.
    Trace async entry points through helpers to every filesystem operation,
    including discovery, metadata probes, and parsing. Blocking storage must
    stay off the event loop, and unchanged hot paths should avoid repeated

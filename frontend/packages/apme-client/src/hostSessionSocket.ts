@@ -5,6 +5,7 @@ import {
   type ApmeSessionSocket,
 } from "./transport.js";
 
+/** Adapt the Gateway's HTTP upload channel to the session socket interface. */
 export function createHostSessionSocket(
   adapter: ApmeApiAdapter,
   sessionUrl: string,
@@ -55,7 +56,10 @@ export function createHostSessionSocket(
             await discard(response);
           }
         })
-        .catch(fail);
+        .catch((error: unknown) => {
+          fail();
+          throw error;
+        });
       return writes;
     },
     close() {
@@ -136,10 +140,12 @@ export function createHostSessionSocket(
               new MessageEvent("message", { data: frame.data }),
             );
           else if (frame.event === "close") {
-            state = 3;
-            socket.onclose?.(
-              new CloseEvent("close", { code: frame.code ?? 1000 }),
-            );
+            if (state !== 3) {
+              socket.close();
+              socket.onclose?.(
+                new CloseEvent("close", { code: frame.code ?? 1000 }),
+              );
+            }
           } else throw new Error("Invalid upload stream frame");
         }
       }

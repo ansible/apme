@@ -63,7 +63,7 @@ class ApiError extends Error {
   }
 }
 
-/** Extract a user-facing message from a failed API request. */
+/** Convert an API error into UI feedback, preferring useful Gateway details. */
 export function apiErrorMessage(
   err: unknown,
   fallback = "Request failed",
@@ -108,6 +108,10 @@ async function apiFetch(
   return doFetch(apmeApiUrl(path, adapter), init);
 }
 
+async function discardResponse(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
 async function request<T>(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
@@ -129,12 +133,18 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+/** Fetch Gateway health and reject responses that do not report `status: ok`. */
 export function getHealth(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<HealthStatus> {
-  return request("/health", undefined, adapter);
+  return request<HealthStatus>("/health", undefined, adapter).then((health) => {
+    if (!health || typeof health !== "object" || health.status !== "ok")
+      throw new Error("Gateway health check did not report ok");
+    return health;
+  });
 }
 
+/** List scan sessions using limit and offset pagination. */
 export function listSessions(
   limit = 50,
   offset = 0,
@@ -147,6 +157,7 @@ export function listSessions(
   );
 }
 
+/** List activity records, optionally restricted to one session. */
 export function listActivity(
   limit = 50,
   offset = 0,
@@ -158,6 +169,7 @@ export function listActivity(
   return request(url, undefined, adapter);
 }
 
+/** Fetch the activity detail for a scan. */
 export function getActivity(
   scanId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -165,6 +177,7 @@ export function getActivity(
   return request(`/activity/${encodeURIComponent(scanId)}`, undefined, adapter);
 }
 
+/** Delete an activity record by scan ID. */
 export async function deleteActivity(
   scanId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -174,9 +187,14 @@ export async function deleteActivity(
     { method: "DELETE" },
     adapter,
   );
-  if (!res.ok) throw new Error(`${res.status}`);
+  try {
+    if (!res.ok) throw new Error(`${res.status}`);
+  } finally {
+    await discardResponse(res);
+  }
 }
 
+/** Submit an activity to its project's operation workflow. */
 export function submitActivity(
   projectId: string,
   activityId: string,
@@ -193,6 +211,7 @@ export function submitActivity(
   );
 }
 
+/** Fetch one session and its current scan state. */
 export function getSession(
   sessionId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -200,6 +219,7 @@ export function getSession(
   return request(`/sessions/${sessionId}`, undefined, adapter);
 }
 
+/** Fetch the highest-frequency violations for the selected scope. */
 export function getTopViolations(
   limit = 20,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -207,6 +227,7 @@ export function getTopViolations(
   return request(`/violations/top?limit=${limit}`, undefined, adapter);
 }
 
+/** Fetch the time series used by the session trend view. */
 export function getSessionTrend(
   sessionId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -214,6 +235,7 @@ export function getSessionTrend(
   return request(`/sessions/${sessionId}/trend`, undefined, adapter);
 }
 
+/** Fetch remediation success and completion rates. */
 export function getRemediationRates(
   limit = 20,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -221,19 +243,21 @@ export function getRemediationRates(
   return request(`/stats/remediation-rates?limit=${limit}`, undefined, adapter);
 }
 
+/** Fetch AI proposal acceptance metrics. */
 export function getAiAcceptance(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<AiAcceptanceEntry[]> {
   return request(`/stats/ai-acceptance`, undefined, adapter);
 }
 
+/** List models available from configured AI providers. */
 export function listAiModels(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<AiModelInfo[]> {
   return request(`/ai/models`, undefined, adapter);
 }
 
-/** Only public provider metadata leaves this function; config may contain secrets. */
+/** Fetch provider settings, returning only public metadata because config may contain secrets. */
 export async function getAiProviderSettings(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ) {
@@ -247,6 +271,7 @@ export async function getAiProviderSettings(
   );
 }
 
+/** List AI engines supported by the Gateway. */
 export function getAiEngines(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ApmeAiEnginesResponse> {
@@ -282,8 +307,12 @@ export async function saveAiProvider(
     },
     adapter,
   );
-  if (!configured.ok)
-    throw new ApiError(configured.status, await configured.text());
+  try {
+    if (!configured.ok)
+      throw new ApiError(configured.status, await configured.text());
+  } finally {
+    await discardResponse(configured);
+  }
   try {
     const config = configRecord(
       await request<unknown>("/ai/config", undefined, adapter),
@@ -337,13 +366,18 @@ export async function saveAiProvider(
       },
       adapter,
     );
-  } catch {
-    throw new Error(
-      "Provider credentials were saved, but model configuration could not be saved. Refresh and retry the model update.",
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw Object.assign(
+      new Error(
+        "Provider credentials were saved, but model configuration could not be saved. Refresh and retry the model update.",
+      ),
+      { cause: error },
     );
   }
 }
 
+/** Delete a configured AI provider and release its response body. */
 export async function deleteAiProvider(
   id: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -353,11 +387,17 @@ export async function deleteAiProvider(
     { method: "DELETE" },
     adapter,
   );
-  if (!response.ok) throw new ApiError(response.status, await response.text());
+  try {
+    if (!response.ok)
+      throw new ApiError(response.status, await response.text());
+  } finally {
+    await discardResponse(response);
+  }
 }
 
 // ── Project API (ADR-037) ────────────────────────────────────────────
 
+/** Register a repository as an APME project. */
 export function createProject(
   body: CreateProjectRequest,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -373,6 +413,7 @@ export function createProject(
   );
 }
 
+/** List registered projects with optional pagination and filters. */
 export function listProjects(
   limit = 50,
   offset = 0,
@@ -387,6 +428,7 @@ export function listProjects(
   );
 }
 
+/** Fetch one project by its catalog ID. */
 export function getProject(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -398,6 +440,7 @@ export function getProject(
   );
 }
 
+/** Update the repository settings for an existing project. */
 export function updateProject(
   projectId: string,
   body: UpdateProjectRequest,
@@ -414,6 +457,7 @@ export function updateProject(
   );
 }
 
+/** Remove a project and consume the Gateway's mutation response. */
 export async function deleteProject(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -427,6 +471,7 @@ export async function deleteProject(
   await res.text();
 }
 
+/** List activity records associated with a project. */
 export function listProjectActivity(
   projectId: string,
   limit = 50,
@@ -440,6 +485,7 @@ export function listProjectActivity(
   );
 }
 
+/** List violations found in a project's scans. */
 export function listProjectViolations(
   projectId: string,
   limit = 50,
@@ -462,6 +508,7 @@ export function listProjectViolations(
   );
 }
 
+/** Fetch scan and remediation trends for one project. */
 export function getProjectTrend(
   projectId: string,
   limit = 20,
@@ -474,6 +521,7 @@ export function getProjectTrend(
   );
 }
 
+/** Fetch aggregate counts and health for the dashboard. */
 export function getDashboardSummary(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<DashboardSummary> {
@@ -490,12 +538,14 @@ export interface ActiveOperation {
   started_at: string;
 }
 
+/** List currently running Gateway operations. */
 export function getActiveOperations(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ActiveOperation[]> {
   return request("/operations/active", undefined, adapter);
 }
 
+/** Fetch project rankings for the dashboard. */
 export function getDashboardRankings(
   sortBy = "health_score",
   order = "desc",
@@ -511,6 +561,7 @@ export function getDashboardRankings(
 
 // ── Dependencies (ADR-040) ─────────────────────────────────────────────
 
+/** Fetch dependency inventory for a project. */
 export function getProjectDependencies(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -536,6 +587,7 @@ export interface GraphData {
   execution_edges?: Array<{ source: string; target: string }>;
 }
 
+/** Fetch the content graph for a project. */
 export function getProjectGraph(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -547,6 +599,7 @@ export function getProjectGraph(
   );
 }
 
+/** Download a project's software bill of materials. */
 export async function getProjectSbom(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -563,6 +616,7 @@ export async function getProjectSbom(
   return res.blob();
 }
 
+/** List Ansible collections known to the Gateway. */
 export function listCollections(
   limit = 200,
   offset = 0,
@@ -575,6 +629,7 @@ export function listCollections(
   );
 }
 
+/** Fetch metadata and project usage for one collection. */
 export function getCollectionDetail(
   fqcn: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -586,6 +641,7 @@ export function getCollectionDetail(
   );
 }
 
+/** List projects that use a collection. */
 export function listCollectionProjects(
   fqcn: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -597,6 +653,7 @@ export function listCollectionProjects(
   );
 }
 
+/** List Python packages known to the Gateway. */
 export function listPythonPackages(
   limit = 200,
   offset = 0,
@@ -609,6 +666,7 @@ export function listPythonPackages(
   );
 }
 
+/** Fetch metadata and project usage for one Python package. */
 export function getPythonPackageDetail(
   name: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -622,12 +680,14 @@ export function getPythonPackageDetail(
 
 // ── Dependency health (ADR-051) ─────────────────────────────────────────
 
+/** Fetch aggregate dependency health counts. */
 export function getDepHealthSummary(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<DepHealthSummary> {
   return request("/dep-health", undefined, adapter);
 }
 
+/** Fetch dependency health findings for one project. */
 export function getProjectDepHealth(
   projectId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -641,12 +701,14 @@ export function getProjectDepHealth(
 
 // ── Galaxy server settings (ADR-045) ────────────────────────────────────
 
+/** List configured Galaxy servers. */
 export function listGalaxyServers(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<GalaxyServer[]> {
   return request("/settings/galaxy-servers", undefined, adapter);
 }
 
+/** Add a Galaxy server configuration. */
 export function createGalaxyServer(
   body: CreateGalaxyServerRequest,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -662,6 +724,7 @@ export function createGalaxyServer(
   );
 }
 
+/** Update a Galaxy server configuration. */
 export function updateGalaxyServer(
   serverId: number,
   body: UpdateGalaxyServerRequest,
@@ -678,6 +741,7 @@ export function updateGalaxyServer(
   );
 }
 
+/** Delete a Galaxy server and dispose of the mutation response body. */
 export async function deleteGalaxyServer(
   serverId: number,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -687,11 +751,16 @@ export async function deleteGalaxyServer(
     { method: "DELETE" },
     adapter,
   );
-  if (!res.ok) throw new Error(`${res.status}`);
+  try {
+    if (!res.ok) throw new Error(`${res.status}`);
+  } finally {
+    await discardResponse(res);
+  }
 }
 
 // ── Suppressions (ADR-055) ──────────────────────────────────────────────
 
+/** List suppression records, optionally filtered by scope. */
 export function listSuppressions(
   scope?: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -700,6 +769,7 @@ export function listSuppressions(
   return request(`/suppressions${params}`, undefined, adapter);
 }
 
+/** Create a suppression record. */
 export function createSuppression(
   body: CreateSuppressionRequest,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -715,6 +785,7 @@ export function createSuppression(
   );
 }
 
+/** Delete a suppression record by its numeric ID. */
 export async function deleteSuppression(
   id: number,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -724,14 +795,19 @@ export async function deleteSuppression(
     { method: "DELETE" },
     adapter,
   );
-  if (!res.ok) {
-    const text = await res.text();
-    throw new ApiError(res.status, text);
+  try {
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(res.status, text);
+    }
+  } finally {
+    await discardResponse(res);
   }
 }
 
 // ── Feedback (POC) ─────────────────────────────────────────────────────
 
+/** Check whether user feedback collection is enabled. */
 export function getFeedbackEnabled(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<{ enabled: boolean }> {
@@ -780,6 +856,7 @@ function mapRuleApiToDetail(r: RuleApiRow): RuleDetail {
   };
 }
 
+/** List rules with their configured severity and enablement state. */
 export function listRules(
   params?: {
     category?: string;
@@ -800,6 +877,7 @@ export function listRules(
   ).then((rows) => rows.map(mapRuleApiToDetail));
 }
 
+/** Fetch a rule and its current override configuration. */
 export function getRule(
   ruleId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -811,6 +889,7 @@ export function getRule(
   ).then(mapRuleApiToDetail);
 }
 
+/** Save an override for one rule. */
 export async function updateRuleConfig(
   ruleId: string,
   config: RuleOverrideRequest,
@@ -835,6 +914,7 @@ export async function updateRuleConfig(
   await res.text();
 }
 
+/** Remove the override for one rule. */
 export async function deleteRuleConfig(
   ruleId: string,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -851,6 +931,7 @@ export async function deleteRuleConfig(
   await res.text();
 }
 
+/** Fetch rule statistics for the current reporting period. */
 export function getRuleStats(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<RuleStats> {
@@ -859,6 +940,7 @@ export function getRuleStats(
 
 // ── Notifications ───────────────────────────────────────────────────────
 
+/** List notifications, optionally limited to unread entries. */
 export function listNotifications(
   limit = 50,
   offset = 0,
@@ -870,6 +952,7 @@ export function listNotifications(
   return request(url, undefined, adapter);
 }
 
+/** Mark a notification as read. */
 export async function markNotificationRead(
   id: number,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -879,9 +962,14 @@ export async function markNotificationRead(
     { method: "PATCH" },
     adapter,
   );
-  if (!res.ok) throw new Error(`${res.status}`);
+  try {
+    if (!res.ok) throw new Error(`${res.status}`);
+  } finally {
+    await discardResponse(res);
+  }
 }
 
+/** Mark every notification as read. */
 export async function markAllNotificationsRead(
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<void> {
@@ -890,9 +978,14 @@ export async function markAllNotificationsRead(
     { method: "POST" },
     adapter,
   );
-  if (!res.ok) throw new Error(`${res.status}`);
+  try {
+    if (!res.ok) throw new Error(`${res.status}`);
+  } finally {
+    await discardResponse(res);
+  }
 }
 
+/** Delete one notification. */
 export async function deleteNotification(
   id: number,
   adapter: ApmeApiAdapter = getApmeApiAdapter(),
@@ -902,5 +995,9 @@ export async function deleteNotification(
     { method: "DELETE" },
     adapter,
   );
-  if (!res.ok) throw new Error(`${res.status}`);
+  try {
+    if (!res.ok) throw new Error(`${res.status}`);
+  } finally {
+    await discardResponse(res);
+  }
 }

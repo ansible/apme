@@ -22,9 +22,17 @@ try {
     };
     for (const artifact of record.artifacts)
         dependencies[artifact.name] = `file:${join(artifacts, artifact.file)}`;
+    const reactTypes = JSON.parse(
+        readFileSync(join(root, "package.json"), "utf8"),
+    ).devDependencies["@types/react"];
     writeFileSync(
         join(temp, "package.json"),
-        JSON.stringify({ private: true, type: "module", dependencies }),
+        JSON.stringify({
+            private: true,
+            type: "module",
+            dependencies,
+            devDependencies: { "@types/react": reactTypes },
+        }),
     );
     execFileSync(
         "npm",
@@ -50,7 +58,6 @@ try {
             join(root, "node_modules/typescript/bin/tsc"),
             "--noEmit",
             "--strict",
-            "--skipLibCheck",
             "--moduleResolution",
             "bundler",
             "--module",

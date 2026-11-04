@@ -1,4 +1,4 @@
-# Attach client/workflow/Backstage tarballs to the main release (ADR-066/073).
+# Attach client and workflow tarballs to the main release (ADR-066/073).
 # Runs after a GitHub Release is published; derives version from the tag.
 name: UI package artifacts
 
@@ -47,13 +47,18 @@ jobs:
       - name: Verify standard packages
         run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-build,frontend-lint,frontend-unit
 
-      - name: Verify packed consumer
+      - name: Verify local packed consumer
         run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-pack-smoke
 
       - name: Pack immutable release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-pack -- --version "${VERSION}"
+
+      - name: Verify release package manifests
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-release-verify -- --version "${VERSION}"
 
       - name: Upload packages and checksums to release
         env:

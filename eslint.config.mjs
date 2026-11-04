@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import a11y from "eslint-plugin-a11y";
+import jsdoc from "eslint-plugin-jsdoc";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
@@ -9,6 +10,7 @@ const accessibilityRules = [
     "a11y/anchor-is-valid",
     "a11y/aria-activedescendant-has-tabindex",
     "a11y/audio-captions",
+    "a11y/click-events-have-key-events",
     "a11y/dialog-modal",
     "a11y/fieldset-legend",
     "a11y/heading-has-content",
@@ -41,7 +43,8 @@ export default tseslint.config(
             "**/node_modules/**",
             "**/.tox/**",
             "**/.venv/**",
-            "**/vendor/**",
+            // This is an upstream Ansible UI framework snapshot, not APME-owned source.
+            "frontend/vendor/ansible-ui-framework/**",
         ],
     },
     {
@@ -76,13 +79,13 @@ export default tseslint.config(
         },
     },
     {
-        files: [
-            "frontend/packages/**/*.tsx",
-            "frontend/src/**/*.tsx",
-            "containers/rhdh/plugin/**/*.tsx",
-        ],
+        files: ["frontend/packages/apme-client/src/**/*.ts"],
+        plugins: { jsdoc },
         rules: {
-            "a11y/click-events-have-key-events": "error",
+            "jsdoc/require-jsdoc": [
+                "error",
+                { contexts: ["FunctionDeclaration"], publicOnly: true },
+            ],
         },
     },
     {

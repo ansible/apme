@@ -70,12 +70,56 @@ it.each([200, 403])(
       "ws://gateway/session",
     );
     await vi.waitFor(() => expect(socket.readyState).toBe(1));
-    await socket.send('{"type":"files_done"}');
+    if (status === 200) {
+      await expect(
+        socket.send('{"type":"files_done"}'),
+      ).resolves.toBeUndefined();
+    } else {
+      await expect(socket.send('{"type":"files_done"}')).rejects.toThrow(
+        "Upload message rejected by host",
+      );
+    }
     expect(message.cancel).toHaveBeenCalledOnce();
-    socket.close();
+    if (status === 200) socket.close();
     await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
   },
 );
+
+it("aborts the event reader and deletes the channel on a server close frame", async () => {
+  const eventsCancelled = vi.fn();
+  const deleted = openBody(200);
+  let eventSignal: AbortSignal | undefined;
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "POST") return new Response('{"id":"channel"}');
+    if (init?.method === "DELETE") return deleted.response;
+    if (String(input).endsWith("/events")) {
+      eventSignal = init?.signal ?? undefined;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode('{"event":"close","code":1000}\n'),
+            );
+          },
+          cancel: eventsCancelled,
+        }),
+      );
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const socket = createHostSessionSocket(
+    createDefaultApmeApiAdapter({ apiBase: "http://host", fetch }),
+    "ws://gateway/session",
+  );
+  const onclose = vi.fn();
+  socket.onclose = onclose;
+
+  await vi.waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
+  expect(onclose.mock.calls[0]?.[0].code).toBe(1000);
+  expect(eventSignal?.aborted).toBe(true);
+  expect(eventsCancelled).toHaveBeenCalledOnce();
+});
 
 it("disposes a channel that arrives after the client has already closed", async () => {
   let finish!: (response: Response) => void;

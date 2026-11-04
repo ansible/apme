@@ -6,7 +6,9 @@ import {
   apmeWsUrl,
   createDefaultApmeApiAdapter,
   setApmeApiAdapter,
+  type ApmeApiAdapter,
 } from '../api/apmeApiAdapter';
+import type { ApmeSessionSocket } from '@apme/client';
 import { useSessionStream, getPersistedSession } from './useSessionStream';
 
 /** Minimal WebSocket stand-in capturing instances and close calls. */
@@ -41,7 +43,8 @@ function lastSocket(): MockWebSocket {
 }
 
 /** Mutable provider props so rerender() can switch gateway identity. */
-let providerProps: { apiBase: string; origin?: string };
+let providerProps: Pick<ApmeApiAdapter, 'apiBase'> &
+  Partial<Omit<ApmeApiAdapter, 'apiBase'>>;
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
@@ -105,6 +108,63 @@ describe('useSessionStream gateway invalidation (#447)', () => {
         'Gateway changed — reconnect to continue your session.',
       );
       expect(result.current.canReconnect).toBe(true);
+    } finally {
+      unmount();
+    }
+  });
+
+  it('starts uploads when the host socket is already open before handlers attach', async () => {
+    providerProps = { apiBase: '/api/v1' };
+    const { result, unmount } = renderHook(() => useSessionStream(), {
+      wrapper,
+    });
+    try {
+      await act(async () => {
+        await result.current.startSession([], {});
+      });
+      const ws = lastSocket();
+      await vi.waitFor(() => expect(ws.send).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        ws.onopen?.(new Event('open'));
+      });
+      expect(ws.send).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(ws.send.mock.calls[0]?.[0] ?? '{}').type).toBe('start');
+      expect(JSON.parse(ws.send.mock.calls[1]?.[0] ?? '{}').type).toBe('files_done');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('closes a socket that resolves after its host endpoint changed', async () => {
+    providerProps = { apiBase: '/api/v1' };
+    let resolveSocket!: (socket: ApmeSessionSocket) => void;
+    const delayedSocket = new Promise<ApmeSessionSocket>((resolve) => {
+      resolveSocket = resolve;
+    });
+    providerProps.openSessionSocket = vi.fn(() => delayedSocket);
+    const { result, rerender, unmount } = renderHook(() => useSessionStream(), {
+      wrapper,
+    });
+    try {
+      let starting!: Promise<void>;
+      act(() => {
+        starting = result.current.startSession([], {});
+      });
+      providerProps = {
+        apiBase: 'https://gw-b.example/api/v1',
+        origin: 'https://gw-b.example',
+      };
+      act(() => rerender());
+
+      const staleSocket = new MockWebSocket('ws://gw-a.example/session');
+      await act(async () => {
+        resolveSocket(staleSocket as unknown as ApmeSessionSocket);
+        await starting;
+      });
+
+      expect(staleSocket.close).toHaveBeenCalledOnce();
+      expect(staleSocket.send).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('error');
     } finally {
       unmount();
     }

@@ -36,11 +36,11 @@ Constraints and drivers:
 ~~**We will publish `@apme/ui-workflow` as an `npm pack` `.tgz` attached to
 dedicated GitHub Releases tagged `ui-workflow-vX.Y.Z`.**~~
 
-**Revised:** The `@apme/ui-workflow` tarball is attached as an asset to the
-main APME product release (`vX.Y.Z`). There is no separate versioning or tag
-convention — the package version is derived from the release tag at build time.
-Portal (and other hosts) pin the HTTPS release asset URL on the product release.
-npmjs and GitHub Packages remain deferred.
+**Revised:** The `@apme/client` and `@apme/ui-workflow` tarballs are attached as
+assets to the main APME product release (`vX.Y.Z`). There is no separate
+versioning or tag convention — package versions are derived from the release
+tag at build time. Portal (and other hosts) pin the HTTPS release asset URLs on
+the product release. npmjs and GitHub Packages remain deferred.
 
 ## Alternatives Considered
 
@@ -129,20 +129,20 @@ enough and the UI package tracks them naturally.
 
 ## Implementation Notes
 
-- Package: not `private`; `prepack` runs `tsc` + copies CSS into `dist/`;
-  `files` includes `dist/` and README. `package.json` version is `0.0.0-dev`
-  (placeholder); the real version is injected from the release tag at build
-  time via `npm version --no-git-tag-version`.
+- Packages: `@apme/client` and `@apme/ui-workflow` are packed from the built
+  workspace. The packer stages manifests and injects the release-tag version
+  without modifying the source manifests.
 - CI: `.github/workflows/ui-workflow-release.yml` triggers on
-  `release: published` (main `vX.Y.Z` releases). Derives version from the
-  tag, stamps package.json, runs `npm pack`, and uploads the `.tgz` to the
-  existing release.
+  stable `release: published` events with `vX.Y.Z` tags. It runs the local
+  packed-consumer smoke check, packs release-mode artifacts, verifies their
+  manifest dependency URLs and checksums, then uploads the tarballs,
+  `manifest.json`, and `SHA256SUMS` to the existing release.
 - Portal: depend on
   `https://github.com/ansible/apme/releases/download/vX.Y.Z/apme-ui-workflow-X.Y.Z.tgz`
   and `--embed-package @apme/ui-workflow` for dynamic plugin export.
 - Release steps: create the main APME release as usual — the workflow
-  automatically attaches the tarball. No manual version bump needed for the
-  UI package.
+  automatically attaches the client/workflow tarballs, manifest, and checksums.
+  No manual package version bump is needed.
 
 ## Retry behavior
 

@@ -728,8 +728,10 @@ export function useSessionStream() {
       if (generation !== connectionGeneration.current) { ws.close(); return; }
       wsRef.current = ws;
 
+      let openHandled = false;
       ws.onopen = async () => {
-        if (wsRef.current !== ws) return;
+        if (openHandled || wsRef.current !== ws) return;
+        openHandled = true;
         updateStatus("uploading");
 
         const startOptions: Record<string, unknown> = {
@@ -741,23 +743,46 @@ export function useSessionStream() {
         if (options.aiModel) {
           startOptions.ai_model = options.aiModel;
         }
-        await ws.send(JSON.stringify({ type: "start", options: startOptions }));
+        try {
+          await ws.send(JSON.stringify({ type: "start", options: startOptions }));
 
-        for (const file of files) {
-          let content: string;
-          try { content = await fileToBase64(file); }
-          catch { if (wsRef.current === ws) { setError('Could not read an uploaded file.'); updateStatus('error'); ws.close(); } return; }
-          if (wsRef.current !== ws || ws.readyState !== 1) return;
-          const path =
-            (file as File & { webkitRelativePath?: string })
-              .webkitRelativePath || file.name;
-          await ws.send(JSON.stringify({ type: "file", path, content }));
+          for (const file of files) {
+            let content: string;
+            try {
+              content = await fileToBase64(file);
+            } catch {
+              if (wsRef.current === ws) {
+                setError("Could not read an uploaded file.");
+                updateStatus("error");
+                ws.close();
+              }
+              return;
+            }
+            if (wsRef.current !== ws || ws.readyState !== 1) return;
+            const path =
+              (file as File & { webkitRelativePath?: string })
+                .webkitRelativePath || file.name;
+            await ws.send(JSON.stringify({ type: "file", path, content }));
+          }
+
+          if (wsRef.current === ws && ws.readyState === 1)
+            await ws.send(JSON.stringify({ type: "files_done" }));
+        } catch {
+          if (
+            wsRef.current === ws &&
+            statusRef.current !== "error" &&
+            statusRef.current !== "disconnected"
+          ) {
+            setError("Could not send the uploaded session data.");
+            errorSourceRef.current = null;
+            updateStatus("error");
+            ws.close();
+          }
         }
-
-        if (wsRef.current === ws && ws.readyState === 1) await ws.send(JSON.stringify({ type: "files_done" }));
       };
 
       wireHandlers(ws);
+      if (ws.readyState === WebSocket.OPEN) ws.onopen?.(new Event("open"));
     },
     [api, reset, updateStatus, wireHandlers],
   );
@@ -787,11 +812,15 @@ export function useSessionStream() {
       if (generation !== connectionGeneration.current) { ws.close(); return; }
       wsRef.current = ws;
 
+      let openHandled = false;
       ws.onopen = () => {
+        if (openHandled || wsRef.current !== ws) return;
+        openHandled = true;
         updateStatus("checking");
       };
 
       wireHandlers(ws);
+      if (ws.readyState === WebSocket.OPEN) ws.onopen?.(new Event("open"));
     },
     [api, updateStatus, wireHandlers],
   );
@@ -850,6 +879,7 @@ export function useSessionStream() {
       return;
     }
 
+    connectionGeneration.current += 1;
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
@@ -868,6 +898,10 @@ export function useSessionStream() {
       errorSourceRef.current = null;
       setCanReconnect(true);
       updateStatus("disconnected");
+    } else if (current === "connecting") {
+      setError("Gateway changed while the session was opening. Try again.");
+      errorSourceRef.current = null;
+      updateStatus("error");
     }
   }, [api.apiBase, api.origin, updateStatus]);
 
