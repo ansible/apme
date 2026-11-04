@@ -1151,9 +1151,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         for _guard_attempt in range(_VENV_GUARD_ACQUIRE_RETRIES):
             try:
                 async with (
+                    # Wait for equivalent Galaxy configuration before
+                    # occupying a per-venv write guard or global build slot.
+                    self._activate_galaxy_proxy_config(galaxy_cfg_path) as galaxy_env,
                     venv_write_guard(sid, core_version),
                     limit_venv_builds() as release_on,
-                    self._activate_galaxy_proxy_config(galaxy_cfg_path) as galaxy_env,
                 ):
                     loop = asyncio.get_event_loop()
 

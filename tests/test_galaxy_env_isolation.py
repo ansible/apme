@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -220,6 +221,69 @@ async def test_galaxy_cfg_lock_all_held_grows_over_capacity(tmp_path: Path, monk
         first.release()
         second.release()
         servicer._clear_galaxy_cfg_locks()
+
+
+async def test_galaxy_cfg_lock_wait_precedes_build_resources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A same-config wait does not hold the venv guard or build slot.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    import contextvars
+    from types import SimpleNamespace
+
+    import apme_engine.daemon.engine_server as engine_server
+    from apme_engine.daemon.engine_server import EngineServicer
+    from apme_engine.venv_manager.session import clear_generation_locks
+
+    cfg = tmp_path / "ansible.cfg"
+    cfg.write_text("[galaxy]\nserver_list = hub\n")
+    servicer = EngineServicer()
+    servicer._clear_galaxy_cfg_locks()
+    clear_generation_locks()
+    config_lock = servicer._get_galaxy_proxy_cfg_lock_for(cfg)
+    await config_lock.acquire()
+    write_guard_entered = asyncio.Event()
+    build_slot_entered = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def _write_guard(*_args: object, **_kwargs: object) -> AsyncIterator[None]:
+        write_guard_entered.set()
+        yield
+
+    @contextlib.asynccontextmanager
+    async def _build_slot() -> AsyncIterator[object]:
+        build_slot_entered.set()
+        yield lambda _future: None
+
+    monkeypatch.setattr(engine_server, "venv_write_guard", _write_guard)
+    monkeypatch.setattr(engine_server, "limit_venv_builds", _build_slot)
+    monkeypatch.setattr(servicer, "_get_venv_manager", lambda: SimpleNamespace(acquire=lambda *_args: object()))
+
+    try:
+        task = asyncio.create_task(
+            servicer._acquire_venv_session_with_retries(
+                sid="cfg-lock-order",
+                core_version="2.19",
+                collection_specs=[],
+                galaxy_cfg_path=cfg,
+                scan_id="cfg-lock-order-scan",
+                ctx=contextvars.copy_context(),
+            )
+        )
+        await asyncio.sleep(0)
+        assert not write_guard_entered.is_set()
+        assert not build_slot_entered.is_set()
+        config_lock.release()
+        await asyncio.wait_for(task, timeout=2.0)
+        assert write_guard_entered.is_set()
+        assert build_slot_entered.is_set()
+    finally:
+        if config_lock.locked():
+            config_lock.release()
+        servicer._clear_galaxy_cfg_locks()
+        clear_generation_locks()
 
 
 async def test_concurrent_public_galaxy_no_read_wedge() -> None:
