@@ -400,6 +400,57 @@ async def test_submit_claim_failure_stops_before_scm(client: AsyncClient) -> Non
     assert state.error == "Submit claim outcome is uncertain"
 
 
+async def test_duplicate_project_token_claim_conflicts_before_scm(client: AsyncClient) -> None:
+    """A DB uniqueness collision from a racing Gateway is a safe 409.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    project_id = "proj-submit-duplicate-claim"
+    token = "c" * 32
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id="scan-submit-duplicate-claim-current",
+        operation_id="op-submit-duplicate-claim",
+    )
+    async with get_session() as db:
+        db.add(
+            Scan(
+                scan_id="scan-submit-duplicate-claim-prior",
+                session_id="sess-submit",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:01Z",
+                scan_type="remediate",
+                submit_token=token,
+            )
+        )
+        await db.commit()
+
+    with (
+        patch("apme_gateway.api.operation_router.q.get_scan_by_submit_token", new=AsyncMock(return_value=None)),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={
+                "activity_id": "scan-submit-duplicate-claim-current",
+                "submit_token": token,
+            },
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+
+
 async def test_replay_with_different_branch_is_409(client: AsyncClient) -> None:
     """Same token with a different branch_name returns 409 conflict.
 

@@ -1189,6 +1189,8 @@ async def _submit_operation_impl(
         # gets an explicit 409 (retry with a fresh token) instead of
         # silently pushing a duplicate commit and opening a duplicate PR.
         if idempotency_token is not None:
+            from sqlalchemy.exc import IntegrityError as _IntegrityError
+
             try:
                 from sqlalchemy import update as _sa_claim_update
 
@@ -1213,6 +1215,26 @@ async def _submit_operation_impl(
                             "use a new token only after confirming that no prior publish occurred.",
                         ),
                     )
+            except _IntegrityError as exc:
+                logger.info("Submit-token claim already exists for project %s", project_id)
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.debug("Rollback after duplicate claim also failed", exc_info=True)
+                if state:
+                    get_operation_registry().transition(
+                        state.operation_id,
+                        OperationStatus.COMPLETED,
+                        error="Submit token is already claimed for this project",
+                    )
+                raise HTTPException(
+                    status_code=409,
+                    detail=_coded_detail(
+                        "idempotency_conflict",
+                        "This submit token is already claimed for this project. Verify SCM state before retrying; "
+                        "use a new token only after confirming that no prior publish occurred.",
+                    ),
+                ) from exc
             except HTTPException:
                 raise
             except Exception as exc:

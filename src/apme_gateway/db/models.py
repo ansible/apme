@@ -115,6 +115,8 @@ class Scan(Base):
 
     __tablename__ = "scans"
 
+    __table_args__ = (Index("uq_scans_project_submit_token", "project_id", "submit_token", unique=True),)
+
     scan_id: Mapped[str] = mapped_column(Text, primary_key=True)
     session_id: Mapped[str] = mapped_column(Text, ForeignKey("sessions.session_id"), nullable=False)
     project_id: Mapped[str | None] = mapped_column(Text, ForeignKey("projects.id"), nullable=True)

@@ -210,6 +210,7 @@ def _migrate_violations_table(conn: object) -> None:
 
     Args:
         conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+
     """
     from sqlalchemy.engine import Connection  # noqa: PLC0415
 
@@ -301,14 +302,19 @@ def _migrate_proposals_table(conn: object) -> None:
 
 
 def _migrate_scans_table(conn: object) -> None:
-    """Add SCM publish columns to ``scans`` (ADR-050).
+    """Add SCM publish columns and enforce project-scoped token uniqueness (ADR-050).
 
     ``create_all`` only creates missing *tables* — it does not add columns
-    to existing tables.  This function inspects the ``scans`` table and
-    issues ``ALTER TABLE ADD COLUMN`` for any that are missing.
+    or indexes to existing tables. This migration adds any missing columns
+    and a unique index so concurrent Gateway instances cannot claim the same
+    submit token on different scans for one project. Existing duplicate
+    claims fail startup with an actionable error instead of being discarded.
 
     Args:
         conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+
+    Raises:
+        RuntimeError: If existing project/token claims contain duplicates.
     """
     from sqlalchemy.engine import Connection  # noqa: PLC0415
 
@@ -326,9 +332,33 @@ def _migrate_scans_table(conn: object) -> None:
         migrations.append("ALTER TABLE scans ADD COLUMN branch_name TEXT DEFAULT NULL")
     if "commit_sha" not in existing:
         migrations.append("ALTER TABLE scans ADD COLUMN commit_sha TEXT DEFAULT NULL")
+    if "submit_token" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN submit_token TEXT DEFAULT NULL")
+    if "scm_provider" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN scm_provider TEXT DEFAULT NULL")
 
     for stmt in migrations:
         conn.execute(text(stmt))
+
+    index_name = "uq_scans_project_submit_token"
+    indexes = {index["name"] for index in inspect(conn).get_indexes("scans")}
+    if index_name not in indexes:
+        duplicate = conn.execute(
+            text(
+                "SELECT project_id, submit_token, COUNT(*) "
+                "FROM scans WHERE project_id IS NOT NULL AND submit_token IS NOT NULL "
+                "GROUP BY project_id, submit_token HAVING COUNT(*) > 1 LIMIT 1"
+            )
+        ).first()
+        if duplicate is not None:
+            raise RuntimeError(
+                "Cannot enforce unique (project_id, submit_token) claims: "
+                f"duplicate token exists for project {duplicate[0]!r}. "
+                "Resolve duplicate submit claims before starting the Gateway."
+            )
+        conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS uq_scans_project_submit_token ON scans (project_id, submit_token)")
+        )
 
 
 def _migrate_projects_table(conn: Connection) -> None:
