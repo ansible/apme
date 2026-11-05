@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextvars
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -22,7 +21,7 @@ def _log_from_worker(message: str) -> None:
     logging.getLogger("apme.test_bridge").info(message)
 
 
-async def test_executor_propagates_collector_sink_via_copy_context() -> None:
+def test_executor_propagates_collector_sink_via_copy_context() -> None:
     """Worker-thread logs are collected when executor uses ``ctx.run``."""
     logger = logging.getLogger("apme.test_bridge")
     handler = RequestLogHandler()
@@ -43,12 +42,11 @@ async def test_executor_propagates_collector_sink_via_copy_context() -> None:
             attach_collector() as sink,
         ):
             ctx = contextvars.copy_context()
-            await asyncio.get_running_loop().run_in_executor(
-                executor,
+            executor.submit(
                 ctx.run,
                 _log_from_worker,
                 "executor-log-message",
-            )
+            ).result()
             entries = sink.entries
     finally:
         logger.removeHandler(handler)
