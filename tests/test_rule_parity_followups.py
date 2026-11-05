@@ -60,6 +60,37 @@ def test_r118_git_source_classification(source: str, remote: bool) -> None:
         assert location["type"] == "url"
 
 
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("source", "expected_source"),
+    [
+        ("https://u:p@host:8080/x", "https://[REDACTED]@host:8080/x"),
+        ("https://user@host:8080/x", "https://[REDACTED]@host:8080/x"),
+    ],
+)
+def test_r118_url_userinfo_preserves_scheme_and_type(source: str, expected_source: str) -> None:
+    """Redacted URL userinfo must not turn an HTTP URL into SCP syntax.
+
+    Args:
+        source: URL with userinfo, with or without a password.
+        expected_source: URL after userinfo redaction.
+    """
+    node = ContentNode(
+        identity=NodeIdentity(path="task", node_type=NodeType.TASK),
+        module="ansible.builtin.git",
+        module_options={"repo": source, "dest": "/tmp/checkout"},
+    )
+
+    annotations = content_node_to_opa_dict(node)["annotations"]
+
+    assert isinstance(annotations, list) and len(annotations) == 1
+    annotation = annotations[0]
+    assert isinstance(annotation, dict)
+    location = annotation["src"]
+    assert isinstance(location, dict)
+    assert location["type"] == "url"
+    assert location["value"] == expected_source
+
+
 def test_r118_and_argspec_payload_include_task_level_args() -> None:
     """Task-level args feed both inbound risk and runtime argspec checks."""
     node = ContentNode(

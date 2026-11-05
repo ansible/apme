@@ -51,13 +51,18 @@ _OPAQUE_TOKEN_RE = re.compile(
 )
 _WORD_BOUNDARY_RE = re.compile(r"(?:^|[_.'\"\[])({})(?:[_.'\"\[\]]|$)".format("|".join(_SENSITIVE_WORDS)))
 _URL_USERINFO_RE = re.compile(r"^([^:/?#]+)://([^/?#]*)@")
-_URL_LITERAL_RE = re.compile(
-    r"(?i)\b[a-z][a-z0-9+.-]*://"
+_URL_LITERAL_PATTERN = (
+    r"\b[a-z][a-z0-9+.-]*://"
     r"(?:\{\{(?:(?!\}\})[^\n])*\}\}|\{%[^\n]*?%\}|(?!\{\{|\{%)[^\s\"'<>])+"
 )
+_URL_LITERAL_RE = re.compile(_URL_LITERAL_PATTERN, re.IGNORECASE)
 _SCP_LITERAL_RE = re.compile(
     r"(?<![\w.-])(?:([^@\s\"'<>]+)@)?([^:/\s\"'<>]+):"
     r"((?:\{\{(?:(?!\}\})[^\n])*\}\}|\{%[^\n]*?%\}|(?!\{\{|\{%)[^\s\"'<>])+)"
+)
+_URL_OR_SCP_LITERAL_RE = re.compile(
+    "(?P<url>" + _URL_LITERAL_PATTERN + ")|(?P<scp>" + _SCP_LITERAL_RE.pattern + ")",
+    re.IGNORECASE,
 )
 _JINJA_TEMPLATE_RE = re.compile(r"\{\{(?:(?!\}\})[^\n])*\}\}|\{%[^\n]*?%\}")
 
@@ -99,18 +104,52 @@ def redact_url_query(url: str) -> str:
     return f"{url[:query_start]}?[REDACTED]#[REDACTED]"
 
 
-def _redact_query_fragment_preserving_templates(value: str) -> str:
-    """Redact query and fragment data outside embedded Jinja templates.
+def _redact_query_fragment_preserving_templates(value: str, *, outer_url: bool = False) -> str:
+    """Redact query and fragment data outside embedded protected regions.
 
-    Mask template regions while stripping URL or SCP query and fragment data
-    so delimiters inside Jinja cannot truncate its syntax or a path suffix.
+    Mask Jinja templates and sanitize nested URL literals before stripping URL
+    or SCP query and fragment data, so inner delimiters cannot truncate syntax
+    or a following path suffix.
 
     Args:
         value: URL or SCP-style source path to sanitize.
+        outer_url: Whether ``value`` itself is the URL whose query to redact.
 
     Returns:
-        The value with query and fragment data outside templates redacted.
+        The value with query and fragment data outside templates and nested
+        URLs redacted.
     """
+    protected_regions: list[str] = []
+    markers: list[str] = []
+
+    def mask_region(region: str, kind: str) -> str:
+        marker = f"\x00APME_{kind}_{len(protected_regions)}\x00"
+        while marker in value or marker in markers:
+            marker += "_"
+        protected_regions.append(region)
+        markers.append(marker)
+        return marker
+
+    def redact_nested_url(match: re.Match[str]) -> str:
+        embedded_url = match.group(0)
+        is_entire_value = match.span() == (0, len(value))
+        if is_entire_value:
+            if outer_url:
+                return embedded_url
+            # Avoid equal-size recursion when an SCP path is itself a URL.
+            # The common query pass below will redact its query after userinfo.
+            return redact_url_userinfo(embedded_url)
+
+        # Every recursive URL call is strictly smaller than the containing
+        # source, so nested URL/template combinations terminate.
+        redacted_url = _redact_query_fragment_preserving_templates(
+            redact_url_userinfo(embedded_url),
+            outer_url=True,
+        )
+        return mask_region(redacted_url, "URL")
+
+    # Protect nested URL query delimiters while preserving the enclosing path.
+    value = _URL_LITERAL_RE.sub(redact_nested_url, value)
 
     def redact_urls_in_template(match: re.Match[str]) -> str:
         template = match.group(0)
@@ -121,7 +160,10 @@ def _redact_query_fragment_preserving_templates(value: str) -> str:
             # template, so nested templates cannot recurse on the same input.
             if len(embedded_url) >= len(template):
                 return redact_url_query(redact_url_userinfo(embedded_url))
-            return _redact_query_fragment_preserving_templates(redact_url_userinfo(embedded_url))
+            return _redact_query_fragment_preserving_templates(
+                redact_url_userinfo(embedded_url),
+                outer_url=True,
+            )
 
         return _URL_LITERAL_RE.sub(redact_embedded_url, template)
 
@@ -129,22 +171,13 @@ def _redact_query_fragment_preserving_templates(value: str) -> str:
     # the outer URL query pass. Otherwise nested credentials and tokens survive.
     value = _JINJA_TEMPLATE_RE.sub(redact_urls_in_template, value)
 
-    templates: list[str] = []
-    markers: list[str] = []
-
     def mask_template(match: re.Match[str]) -> str:
-        template = match.group(0)
-        marker = f"\x00APME_JINJA_{len(templates)}\x00"
-        while marker in value:
-            marker += "_"
-        templates.append(template)
-        markers.append(marker)
-        return marker
+        return mask_region(match.group(0), "JINJA")
 
     masked_value = _JINJA_TEMPLATE_RE.sub(mask_template, value)
     redacted_value = redact_url_query(masked_value)
-    for marker, template in zip(markers, templates, strict=True):
-        redacted_value = redacted_value.replace(marker, template)
+    for marker, region in reversed(list(zip(markers, protected_regions, strict=True))):
+        redacted_value = redacted_value.replace(marker, region)
     return redacted_value
 
 
@@ -157,20 +190,26 @@ def redact_urls_in_text(value: str) -> str:
     Returns:
         Text with URL credentials, queries, and fragments redacted.
     """
-    sanitized = _URL_LITERAL_RE.sub(
-        lambda match: _redact_query_fragment_preserving_templates(redact_url_userinfo(match.group(0))),
-        value,
-    )
 
-    def redact_scp_source(match: re.Match[str]) -> str:
-        userinfo, host, path = match.groups()
+    def redact_source(match: re.Match[str]) -> str:
+        url = match.group("url")
+        if url is not None:
+            return _redact_query_fragment_preserving_templates(redact_url_userinfo(url), outer_url=True)
+
+        scp_match = _SCP_LITERAL_RE.fullmatch(match.group("scp") or "")
+        if scp_match is None:
+            return match.group(0)
+        userinfo, host, path = scp_match.groups()
         safe_source = f"{host}:{_redact_query_fragment_preserving_templates(path)}"
         if userinfo is None:
             return safe_source
         safe_userinfo = "[REDACTED]" if ":" in userinfo else userinfo
         return f"{safe_userinfo}@{safe_source}"
 
-    return _SCP_LITERAL_RE.sub(redact_scp_source, sanitized)
+    # re.sub scans from left to right, so the URL branch wins equal-start
+    # matches and preserves URL schemes. An SCP match starting earlier still
+    # owns its credential prefix and is redacted as SCP-style source data.
+    return _URL_OR_SCP_LITERAL_RE.sub(redact_source, value)
 
 
 def var_looks_sensitive(var_name: str) -> bool:

@@ -41,6 +41,21 @@ def test_redact_scp_source_query() -> None:
     assert redact_urls_in_text(raw) == "git@github.com:org/repo.git?[REDACTED]"
 
 
+def test_redact_scp_credentials_containing_url_scheme_delimiter() -> None:
+    """Redact SCP credentials before a later URL-like substring is scanned."""
+    raw = "alice:secret://[REDACTED]@host:repo"
+
+    assert redact_urls_in_text(raw) == "[REDACTED]@host:repo"
+
+
+def test_redact_url_inside_scp_path() -> None:
+    """Redact nested URL credentials and query values in an SCP path."""
+    raw = "git@host:path/https://user:secret@other/path?token=hidden"
+    expected = "git@host:path/https://[REDACTED]@other/path?[REDACTED]"
+
+    assert redact_urls_in_text(raw) == expected
+
+
 def test_redact_scp_source_preserves_template_and_path_after_inner_url_query() -> None:
     """Redact a URL query inside Jinja without truncating its source path."""
     raw = "git@host:{{ lookup('url', 'https://x?token=secret') }}/artifact"
