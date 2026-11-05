@@ -60,6 +60,41 @@ def test_r118_git_source_classification(source: str, remote: bool) -> None:
         assert location["type"] == "url"
 
 
+def test_r118_and_argspec_payload_include_task_level_args() -> None:
+    """Task-level args feed both inbound risk and runtime argspec checks."""
+    node = ContentNode(
+        identity=NodeIdentity(path="task", node_type=NodeType.TASK),
+        module="ansible.builtin.get_url",
+        options={"args": {"url": "https://host/file?token=secret", "dest": "/tmp/file"}},
+    )
+
+    payload = content_node_to_opa_dict(node)
+
+    assert payload["module_options"] == {"url": "https://host/file?token=secret", "dest": "/tmp/file"}
+    annotations = payload["annotations"]
+    assert isinstance(annotations, list) and len(annotations) == 1
+    annotation = annotations[0]
+    assert isinstance(annotation, dict)
+    src = annotation["src"]
+    assert isinstance(src, dict)
+    assert src["value"] == "https://host/file?[REDACTED]"
+
+
+def test_task_level_args_have_lower_precedence_than_module_options() -> None:
+    """Module-mapping values override colliding task-level args as in Ansible."""
+    node = ContentNode(
+        identity=NodeIdentity(path="task", node_type=NodeType.TASK),
+        module="ansible.builtin.get_url",
+        module_options={"url": "file:///tmp/local"},
+        options={"args": {"url": "https://host/file", "dest": "/tmp/file"}},
+    )
+
+    payload = content_node_to_opa_dict(node)
+
+    assert payload["module_options"] == {"url": "file:///tmp/local", "dest": "/tmp/file"}
+    assert payload["annotations"] == []
+
+
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     "remote_src", [True, "yes", "on", 1, False, "false", None]
 )
@@ -132,6 +167,40 @@ def test_l112_vcs_defaults(module: str, options: YAMLDict, collections: list[str
     )
     graph.add_node(node)
     result = LatestVCSVersionGraphRule().process(graph, node.node_id)
+    assert bool(result and result.verdict) is violation
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("module_options", "task_args", "violation"),
+    [
+        ({}, {"version": "v1.0.0"}, False),
+        ({}, {"version": "HEAD"}, True),
+        ({"version": "HEAD"}, {"version": "v1.0.0"}, True),
+    ],
+)
+def test_l112_uses_task_args_with_module_option_precedence(
+    module_options: YAMLDict,
+    task_args: YAMLDict,
+    violation: bool,
+) -> None:
+    """Read task-level args while preserving Ansible's merge precedence.
+
+    Args:
+        module_options: Arguments specified directly on the module.
+        task_args: Arguments from the task-level ``args`` mapping.
+        violation: Whether the moving revision should be reported.
+    """
+    graph = ContentGraph()
+    node = ContentNode(
+        identity=NodeIdentity(path="task", node_type=NodeType.TASK),
+        module="ansible.builtin.git",
+        module_options=module_options,
+        options={"args": task_args},
+    )
+    graph.add_node(node)
+
+    result = LatestVCSVersionGraphRule().process(graph, node.node_id)
+
     assert bool(result and result.verdict) is violation
 
 

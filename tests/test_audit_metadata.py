@@ -41,6 +41,46 @@ def test_redact_scp_source_query() -> None:
     assert redact_urls_in_text(raw) == "git@github.com:org/repo.git?[REDACTED]"
 
 
+def test_redact_scp_source_preserves_template_and_path_after_inner_url_query() -> None:
+    """Redact a URL query inside Jinja without truncating its source path."""
+    raw = "git@host:{{ lookup('url', 'https://x?token=secret') }}/artifact"
+    expected = "git@host:{{ lookup('url', 'https://x?[REDACTED]') }}/artifact"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_scp_source_redacts_outer_query_after_template() -> None:
+    """Redact an SCP query outside Jinja while preserving the template."""
+    raw = "git@host:{{ {'k': 'v'} }}/artifact?token=secret"
+    expected = "git@host:{{ {'k': 'v'} }}/artifact?[REDACTED]"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_url_preserves_template_and_path_before_outer_query() -> None:
+    """Redact a URL query outside Jinja without truncating the path."""
+    raw = "https://host/{{ repo | default('x?y') }}/suffix?token=secret#fragment"
+    expected = "https://host/{{ repo | default('x?y') }}/suffix?[REDACTED]#[REDACTED]"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_url_credentials_and_query_inside_template() -> None:
+    """Redact nested URL credentials and tokens inside an outer URL template."""
+    raw = "https://host/{{ lookup('url', 'https://u:secret@x?token=hidden') }}/artifact"
+    expected = "https://host/{{ lookup('url', 'https://[REDACTED]@x?[REDACTED]') }}/artifact"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_scp_source_nested_url_credentials_and_query_inside_template() -> None:
+    """Redact nested URL credentials and tokens inside an SCP source template."""
+    raw = "git@host:{{ lookup('url', 'https://u:secret@x?token=hidden') }}/artifact"
+    expected = "git@host:{{ lookup('url', 'https://[REDACTED]@x?[REDACTED]') }}/artifact"
+
+    assert redact_urls_in_text(raw) == expected
+
+
 def test_value_looks_sensitive_openssh_private_key() -> None:
     """OPENSSH and EC PEM private-key headers are detected."""
     openssh = "-----BEGIN OPENSSH PRIVATE KEY-----\ndata\n-----END OPENSSH PRIVATE KEY-----"

@@ -494,6 +494,20 @@ class ContentNode:
         """Return the node's stable string identifier."""
         return str(self.identity)
 
+    @property
+    def effective_module_options(self) -> YAMLDict:
+        """Return task arguments with Ansible's task-level ``args`` applied.
+
+        Ansible treats the task-level ``args`` mapping as lower priority than
+        arguments specified directly in the module mapping. Return a fresh
+        mapping so callers can normalize the two sources without changing the
+        node's authored data.
+        """
+        task_args = self.options.get("args")
+        effective_options = dict(task_args) if isinstance(task_args, dict) else {}
+        effective_options.update(self.module_options)
+        return effective_options
+
     MAX_PROGRESSION: ClassVar[int] = 20
 
     def record_state(

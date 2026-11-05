@@ -81,7 +81,7 @@ class LatestVCSVersionGraphRule(GraphRule):
         if configured is None:
             return None
         option, default = configured
-        value = node.module_options.get(option)
+        value = node.effective_module_options.get(option)
         is_default = value is None or (isinstance(value, str) and (not value.strip() or value.strip() == default))
         if not is_default or (isinstance(value, str) and is_templated(value)):
             return GraphRuleResult(

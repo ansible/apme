@@ -59,6 +59,7 @@ _SCP_LITERAL_RE = re.compile(
     r"(?<![\w.-])(?:([^@\s\"'<>]+)@)?([^:/\s\"'<>]+):"
     r"((?:\{\{(?:(?!\}\})[^\n])*\}\}|\{%[^\n]*?%\}|(?!\{\{|\{%)[^\s\"'<>])+)"
 )
+_JINJA_TEMPLATE_RE = re.compile(r"\{\{(?:(?!\}\})[^\n])*\}\}|\{%[^\n]*?%\}")
 
 
 def redact_url_userinfo(url: str) -> str:
@@ -98,6 +99,55 @@ def redact_url_query(url: str) -> str:
     return f"{url[:query_start]}?[REDACTED]#[REDACTED]"
 
 
+def _redact_query_fragment_preserving_templates(value: str) -> str:
+    """Redact query and fragment data outside embedded Jinja templates.
+
+    Mask template regions while stripping URL or SCP query and fragment data
+    so delimiters inside Jinja cannot truncate its syntax or a path suffix.
+
+    Args:
+        value: URL or SCP-style source path to sanitize.
+
+    Returns:
+        The value with query and fragment data outside templates redacted.
+    """
+
+    def redact_urls_in_template(match: re.Match[str]) -> str:
+        template = match.group(0)
+
+        def redact_embedded_url(url_match: re.Match[str]) -> str:
+            embedded_url = url_match.group(0)
+            # Recursion only follows a URL strictly smaller than its containing
+            # template, so nested templates cannot recurse on the same input.
+            if len(embedded_url) >= len(template):
+                return redact_url_query(redact_url_userinfo(embedded_url))
+            return _redact_query_fragment_preserving_templates(redact_url_userinfo(embedded_url))
+
+        return _URL_LITERAL_RE.sub(redact_embedded_url, template)
+
+    # Sanitize URL literals embedded in Jinja before masking the template from
+    # the outer URL query pass. Otherwise nested credentials and tokens survive.
+    value = _JINJA_TEMPLATE_RE.sub(redact_urls_in_template, value)
+
+    templates: list[str] = []
+    markers: list[str] = []
+
+    def mask_template(match: re.Match[str]) -> str:
+        template = match.group(0)
+        marker = f"\x00APME_JINJA_{len(templates)}\x00"
+        while marker in value:
+            marker += "_"
+        templates.append(template)
+        markers.append(marker)
+        return marker
+
+    masked_value = _JINJA_TEMPLATE_RE.sub(mask_template, value)
+    redacted_value = redact_url_query(masked_value)
+    for marker, template in zip(markers, templates, strict=True):
+        redacted_value = redacted_value.replace(marker, template)
+    return redacted_value
+
+
 def redact_urls_in_text(value: str) -> str:
     """Redact URL credentials, query, and fragment contents in text.
 
@@ -108,13 +158,13 @@ def redact_urls_in_text(value: str) -> str:
         Text with URL credentials, queries, and fragments redacted.
     """
     sanitized = _URL_LITERAL_RE.sub(
-        lambda match: redact_url_query(redact_url_userinfo(match.group(0))),
+        lambda match: _redact_query_fragment_preserving_templates(redact_url_userinfo(match.group(0))),
         value,
     )
 
     def redact_scp_source(match: re.Match[str]) -> str:
         userinfo, host, path = match.groups()
-        safe_source = f"{host}:{redact_url_query(path)}"
+        safe_source = f"{host}:{_redact_query_fragment_preserving_templates(path)}"
         if userinfo is None:
             return safe_source
         safe_userinfo = "[REDACTED]" if ":" in userinfo else userinfo

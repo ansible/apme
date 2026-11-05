@@ -1,7 +1,9 @@
 """L058: Argspec validation (docstring-based).
 
 Parses the module's DOCUMENTATION string to extract the argument spec.
-Safe (no code execution), fast, but may drift from the actual argument_spec in code.
+The target module is not imported, but resolving documentation fragments can
+import fragment plugin code. Fast, but may drift from the actual
+argument_spec in code. Do not use with untrusted collections.
 """
 
 import json

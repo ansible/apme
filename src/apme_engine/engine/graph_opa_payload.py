@@ -85,7 +85,7 @@ _REMOTE_URL_SCHEMES = frozenset(
 _SCP_SOURCE_MODULES = frozenset({"git", "subversion"})
 
 
-def _inbound_risk_annotation(node: ContentNode) -> YAMLDict | None:
+def _inbound_risk_annotation(node: ContentNode, module_options: YAMLDict) -> YAMLDict | None:
     """Build the inbound transfer annotation consumed by R118, when applicable.
 
     The graph serializer is the active risk annotation boundary. It derives
@@ -94,6 +94,7 @@ def _inbound_risk_annotation(node: ContentNode) -> YAMLDict | None:
 
     Args:
         node: Task or handler node being serialized.
+        module_options: Effective module options including task-level args.
 
     Returns:
         Serialized inbound risk annotation, or ``None`` when the task is not
@@ -106,7 +107,6 @@ def _inbound_risk_annotation(node: ContentNode) -> YAMLDict | None:
     if profile is None or profile.risk_type != "inbound":
         return None
 
-    module_options = node.module_options
     src = resolve_field(module_options, profile, "src")
     dest = resolve_field(module_options, profile, "dest")
     if not src or not _is_remote_source(src, module_name):
@@ -402,6 +402,7 @@ def content_node_to_opa_dict(
                 d["line"] = [max(1, play_index + 1), max(1, play_index + 1)]
 
     elif opa_type == "taskcall":
+        module_options = node.effective_module_options
         d["module"] = node.module
         d["original_module"] = node.module
         d["name"] = node.name if node.name else None
@@ -416,7 +417,7 @@ def content_node_to_opa_dict(
             except Exception:
                 logger.debug("annotation_to_dict failed on %s", node.node_id)
         if not has_inbound_annotation:
-            inbound_annotation = _inbound_risk_annotation(node)
+            inbound_annotation = _inbound_risk_annotation(node, module_options)
             if inbound_annotation is not None:
                 anns.append(inbound_annotation)
         d["annotations"] = anns
@@ -431,7 +432,7 @@ def content_node_to_opa_dict(
         d["options"] = task_opts
 
         mo: YAMLDict = {}
-        for k, v in node.module_options.items():
+        for k, v in module_options.items():
             try:
                 mo[str(k)] = json_safe(v)
             except Exception:
