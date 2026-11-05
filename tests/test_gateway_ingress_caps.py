@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 
 from apme.v1 import engine_pb2, engine_pb2_grpc
 from apme.v1.common_pb2 import File as ProtoFile
-from apme_gateway.api.submit_idempotency import _is_valid_submit_token
+from apme_gateway.api.submit_idempotency import _effective_submit_token, _is_valid_submit_token
 from apme_gateway.app import create_app
 from apme_gateway.db import get_session
 from apme_gateway.db.models import Project, Scan, Session, Violation
@@ -103,7 +103,30 @@ def test_submit_token_length_is_bounded() -> None:
     assert _is_valid_submit_token("00000000-0000-0000-0000-000000000000")
     assert _is_valid_submit_token("a" * 128)
     assert not _is_valid_submit_token("a" * 129)
+    assert not _is_valid_submit_token(" " * 129 + "a" * 32)
     assert not _is_valid_submit_token("-" * 97 + "a" * 32)
+    from starlette.requests import Request
+
+    padded_header = " " * 129 + "a" * 32
+    request = Request({"type": "http", "headers": [(b"idempotency-key", padded_header.encode())]})
+    effective_token = _effective_submit_token(request, None)
+    assert effective_token == padded_header
+    assert effective_token is not None and not _is_valid_submit_token(effective_token)
+
+
+async def test_prior_submit_claim_check_releases_read_transaction() -> None:
+    """A read after a lost submit claim must release its transaction."""
+    from types import SimpleNamespace
+
+    from apme_gateway.api.operation_router import _prior_submit_claim_is_incomplete
+
+    db = AsyncMock()
+    claimed = SimpleNamespace(submit_token="a" * 32, pr_url=None, branch_name=None)
+    with patch("apme_gateway.api.operation_router.q.get_scan", new=AsyncMock(return_value=claimed)):
+        incomplete = await _prior_submit_claim_is_incomplete(db, "scan-id", "a" * 32)
+
+    assert incomplete
+    db.rollback.assert_awaited_once()
 
 
 def _ws_msg(msg_type: str, **fields: object) -> dict[str, object]:
@@ -853,6 +876,13 @@ class TestImportScanCaps:
         assert "ghp_abcdefghij1234567890" not in ghp
         assert "[REDACTED]" in ghp
 
+    def test_redact_many_unterminated_pem_headers(self) -> None:
+        """Unterminated PEM headers preserve their text without backtracking."""
+        from apme_gateway.api.router import _redact_import_secrets
+
+        message = "-----BEGIN RSA PRIVATE KEY-----\n" * 120
+        assert _redact_import_secrets(message) == message
+
     def test_redact_keyed_pem_block_before_key_value_redaction(self) -> None:
         """A keyed PEM private key is removed as a complete block."""
         from apme_gateway.api.router import _redact_import_secrets
@@ -1412,12 +1442,20 @@ class TestImportScanHandler:
         )
         assert resp.status_code == 404
 
-    async def test_truncation(self) -> None:
-        """Over-length message/file values are truncated before persistence."""
+    async def test_truncation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Over-length fields are offloaded, redacted, and truncated before persistence.
+
+        Args:
+            monkeypatch: Test monkeypatch fixture.
+        """
         from sqlalchemy import select as sa_select
 
+        from apme_gateway.api import router as api_router
         from apme_gateway.api.router import import_external_scan
         from apme_gateway.api.schemas import ImportScanRequest, ImportViolationSchema
+
+        to_thread = AsyncMock(wraps=asyncio.to_thread)
+        monkeypatch.setattr(asyncio, "to_thread", to_thread)
 
         body = ImportScanRequest.model_construct(
             project_id=None,
@@ -1437,6 +1475,9 @@ class TestImportScanHandler:
             ],
         )
         result = await import_external_scan(body)
+        to_thread.assert_awaited_once()
+        assert to_thread.await_args is not None
+        assert to_thread.await_args.args[0] is api_router._prepare_import_violation_rows
         assert result.violation_count == 1
         async with get_session() as db:
             rows = list(

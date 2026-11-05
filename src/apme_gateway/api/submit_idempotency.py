@@ -73,6 +73,7 @@ _SUBMIT_IDEMPOTENCY_MAX = 1000
 _SUBMIT_IDEMPOTENCY_TTL_S = 24 * 3600
 _SUBMIT_INFLIGHT_MAX = 1000
 _SCAN_LOCKS_MAX = 1000
+_SUBMIT_TOKEN_MAX_CHARS = 128
 # #29: bound same-token / same-scan waits so a hung submit fails fast.
 _SUBMIT_LOCK_TIMEOUT_S = 30.0
 
@@ -283,11 +284,13 @@ def _is_valid_submit_token(token: str) -> bool:
         token: Candidate idempotency token.
 
     Returns:
-        True when the trimmed token is at most 128 chars and its dash-stripped
-        form is all hex with at least 32 chars.
+        True when both the unmodified and trimmed token are at most 128 chars
+        and its dash-stripped form is all hex with at least 32 chars.
     """
+    if len(token) > _SUBMIT_TOKEN_MAX_CHARS:
+        return False
     trimmed = token.strip()
-    if len(trimmed) > 128:
+    if len(trimmed) > _SUBMIT_TOKEN_MAX_CHARS:
         return False
     stripped = trimmed.replace("-", "")
     if len(stripped) < 32:
@@ -564,18 +567,20 @@ def _effective_submit_token(request: Request | None, body_token: str | None) -> 
         body_token: ``submit_token`` from the request body.
 
     Returns:
-        Stripped token string, or None when neither is provided.
+        Normalized token string, or None when neither is provided. An
+        over-limit raw value is preserved so validation can reject it before
+        trimming hides its original size.
     """
     header_token: str | None = None
     if request is not None:
         with contextlib.suppress(Exception):
             raw = request.headers.get("Idempotency-Key") or request.headers.get("idempotency-key")
-            if raw and raw.strip():
-                header_token = raw.strip()
+            if raw:
+                header_token = raw if len(raw) > _SUBMIT_TOKEN_MAX_CHARS else raw.strip()
     if header_token:
         return header_token
     if body_token and body_token.strip():
-        return body_token.strip()
+        return body_token if len(body_token) > _SUBMIT_TOKEN_MAX_CHARS else body_token.strip()
     return None
 
 

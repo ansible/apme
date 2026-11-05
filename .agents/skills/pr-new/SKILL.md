@@ -607,9 +607,10 @@ response; repeating the request can produce a different result even if each
 individual response includes a revision. When policy or metadata is keyed by
 canonicalizable identifiers, normalize both the candidate IDs and every map
 key before intersections and lookups, and construct alias-collision cases.
-For caller-controlled cache, lock, or database keys, cap the trimmed raw value
-before normalization as well as validating the normalized form; test padding
-and repeated delimiters around the minimum valid identity.
+For caller-controlled cache, lock, or database keys, cap the unmodified input
+before trimming, then validate and cap the normalized key before use; test
+padded over-limit inputs and repeated delimiters around the minimum valid
+identity.
 
 When embedding one structured value inside another (for example, a URL as a
 PURL qualifier), encode the inner value according to the outer format before

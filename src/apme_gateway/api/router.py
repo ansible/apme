@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -49,6 +50,7 @@ from apme_gateway.api.schemas import (
     HealthStatus,
     ImportScanRequest,
     ImportScanResponse,
+    ImportViolationSchema,
     LogEntry,
     NotificationSchema,
     PaginatedResponse,
@@ -1639,6 +1641,32 @@ def _check_import_rate_limit(key: str, *, unlinked: bool = False) -> None:
 _SECRET_REDACT_RE = None  # compiled lazily in _redact_import_secrets
 _SECRET_REDACT_JSON_RE = None  # compiled lazily in _redact_import_secrets
 _SECRET_REDACT_SPACE_RE = None  # compiled lazily in _redact_import_secrets
+_PEM_BEGIN_RE = re.compile(r"-----BEGIN[^-]*PRIVATE KEY-----")
+_PEM_END_RE = re.compile(r"-----END[^-]*PRIVATE KEY-----")
+
+
+def _redact_pem_blocks(text: str) -> str:
+    """Replace complete PEM private-key blocks with one linear scan.
+
+    Args:
+        text: Raw violation field text.
+
+    Returns:
+        Text with complete PEM private-key blocks replaced by ``[REDACTED]``.
+    """
+    parts: list[str] = []
+    cursor = 0
+    while True:
+        begin = _PEM_BEGIN_RE.search(text, cursor)
+        if begin is None:
+            break
+        end = _PEM_END_RE.search(text, begin.end())
+        if end is None:
+            break
+        parts.extend((text[cursor : begin.start()], "[REDACTED]"))
+        cursor = end.end()
+    parts.append(text[cursor:])
+    return "".join(parts)
 
 
 def _redact_import_secrets(message: str) -> str:
@@ -1670,11 +1698,7 @@ def _redact_import_secrets(message: str) -> str:
         )
     # Remove complete PEM blocks before the keyed expression consumes the
     # ``-----BEGIN`` prefix and leaves the key body behind.
-    redacted = _re.sub(
-        r"-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----",
-        "[REDACTED]",
-        message,
-    )
+    redacted = _redact_pem_blocks(message)
     redacted = _SECRET_REDACT_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", redacted)
     # Bare high-entropy credential shapes with no key (AKIA IDs, ghp_/xox-
     # tokens, PEM blocks, glpat/sk/JWT) are redacted best-effort; keyed
@@ -1728,6 +1752,39 @@ def _import_remediation_class_to_int(label: str | None) -> int:
         Proto ``RemediationClass`` int, or 0 (unspecified) when unknown.
     """
     return _IMPORT_REMEDIATION_CLASS_TO_INT.get((label or "").strip().lower(), 0)
+
+
+_PreparedImportViolation = tuple[str, str, str, str, int | None, str, int]
+
+
+def _prepare_import_violation_rows(
+    violations: Sequence[ImportViolationSchema],
+) -> list[_PreparedImportViolation]:
+    """Bound and redact imported violation fields before database persistence.
+
+    Args:
+        violations: Validated violation rows from the import request.
+
+    Returns:
+        Tuples of rule ID, level, message, file, line, path, and remediation class.
+    """
+    rows: list[_PreparedImportViolation] = []
+    for violation in violations:
+        remediation_class = (violation.remediation_class or "")[:_IMPORT_MAX_REMEDIATION_CLASS_CHARS]
+        rows.append(
+            (
+                (violation.rule_id or "")[:_IMPORT_MAX_RULE_ID_CHARS],
+                (violation.level or "warning")[:_IMPORT_MAX_LEVEL_CHARS],
+                _redact_import_secrets((violation.message or "")[:_IMPORT_MAX_MESSAGE_CHARS])[
+                    :_IMPORT_MAX_MESSAGE_CHARS
+                ],
+                _redact_import_secrets((violation.file or "")[:_IMPORT_MAX_FILE_CHARS])[:_IMPORT_MAX_FILE_CHARS],
+                violation.line,
+                _redact_import_secrets((violation.path or "")[:_IMPORT_MAX_PATH_CHARS])[:_IMPORT_MAX_PATH_CHARS],
+                _import_remediation_class_to_int(remediation_class),
+            )
+        )
+    return rows
 
 
 @router.post(
@@ -1791,6 +1848,7 @@ async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
     # shared "external" session).
     session_id = _uuid.uuid4().hex[:16]
     now = _datetime.now(_UTC).isoformat()
+    prepared_rows = await asyncio.to_thread(_prepare_import_violation_rows, body.violations)
     auto_fixable = sum(
         1
         for v in body.violations
@@ -1838,21 +1896,17 @@ async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
         )
         db.add(scan)
         await db.flush()
-        for v in body.violations:
+        for rule_id, level, message, file, line, path, remediation_class in prepared_rows:
             db.add(
                 _Violation(
                     scan_id=scan_id,
-                    rule_id=(v.rule_id or "")[:_IMPORT_MAX_RULE_ID_CHARS],
-                    level=(v.level or "warning")[:_IMPORT_MAX_LEVEL_CHARS],
-                    message=_redact_import_secrets((v.message or "")[:_IMPORT_MAX_MESSAGE_CHARS])[
-                        :_IMPORT_MAX_MESSAGE_CHARS
-                    ],
-                    file=_redact_import_secrets((v.file or "")[:_IMPORT_MAX_FILE_CHARS])[:_IMPORT_MAX_FILE_CHARS],
-                    line=v.line,
-                    path=_redact_import_secrets((v.path or "")[:_IMPORT_MAX_PATH_CHARS])[:_IMPORT_MAX_PATH_CHARS],
-                    remediation_class=_import_remediation_class_to_int(
-                        (v.remediation_class or "")[:_IMPORT_MAX_REMEDIATION_CLASS_CHARS]
-                    ),
+                    rule_id=rule_id,
+                    level=level,
+                    message=message,
+                    file=file,
+                    line=line,
+                    path=path,
+                    remediation_class=remediation_class,
                 )
             )
         await db.commit()
