@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import * as dagre from 'dagre';
 import type { GraphData } from '@apme/client';
+import { SvgExportButtons } from './SvgExportButtons';
 
 const NODE_COLORS: Record<string, string> = {
   playbook: '#f85149',
@@ -67,6 +68,7 @@ interface Props {
   variant?: 'content' | 'dependencies';
 }
 
+/** Renders an interactive content or dependency graph with branded image exports. */
 export function GraphVisualization({ data, variant = 'content' }: Props) {
   const title = variant === 'dependencies' ? 'Dependency graph' : 'Content graph';
   const markerPrefix = `apme-graph-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}-`;
@@ -165,7 +167,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
 
     dagre.layout(g);
 
-    const container = svg.append('g');
+    const container = svg.append('g').attr('class', 'graph-content');
     const zoomBehavior = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.02, 4])
       .on('zoom', (ev) => container.attr('transform', ev.transform));
@@ -362,6 +364,40 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
   const zoomOut = useCallback(() => {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
     d3.select(svgRef.current).transition().duration(300).call(zoomBehaviorRef.current.scaleBy, 0.7);
+  }, []);
+
+  const prepareGraphExport = useCallback((svg: SVGSVGElement) => {
+    const graph = graphRef.current;
+    const clonedContent = svg.querySelector('.graph-content');
+    clonedContent?.removeAttribute('transform');
+
+    const liveContent = svgRef.current?.querySelector('.graph-content') as SVGGElement | null;
+    if (!liveContent) {
+      const { width = 800, height = 600 } = graph?.graph() ?? {};
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      return;
+    }
+
+    const transform = liveContent.getAttribute('transform');
+    liveContent.removeAttribute('transform');
+    try {
+      const bounds = liveContent.getBBox();
+      if (bounds.width > 0 && bounds.height > 0) {
+        const padding = 32;
+        svg.setAttribute(
+          'viewBox',
+          `${bounds.x - padding} ${bounds.y - padding} ${bounds.width + padding * 2} ${bounds.height + padding * 2}`,
+        );
+        return;
+      }
+    } catch {
+      // Fall back to Dagre's layout dimensions when SVG bounds are unavailable.
+    } finally {
+      if (transform) liveContent.setAttribute('transform', transform);
+    }
+
+    const { width = 800, height = 600 } = graph?.graph() ?? {};
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   }, []);
 
   const renderGroups = useCallback(
@@ -644,6 +680,13 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
           Includes
         </button>
         </>}
+        <div className="sep" />
+        <SvgExportButtons
+          svgRef={svgRef}
+          filename={title}
+          backgroundColor="#0d1117"
+          prepareSvg={prepareGraphExport}
+        />
       </div>
 
       <details className="graph-legend" open={variant === 'content'}>
