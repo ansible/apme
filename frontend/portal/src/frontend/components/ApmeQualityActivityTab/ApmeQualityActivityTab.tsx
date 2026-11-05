@@ -294,7 +294,7 @@ function ActivityList({
                 }}
                 style={{ cursor: "pointer" }}
               >
-                <td data-row-click-ignore>
+                <td>
                   <span
                     className={classes.typeChip}
                     style={scanTypeChipStyle(isFix, isDark)}
@@ -313,7 +313,7 @@ function ActivityList({
                 <td style={{ color: theme.palette.text.secondary }}>
                   {timeAgo(scan.created_at)}
                 </td>
-                <td>
+                <td data-row-click-ignore>
                   <ActivityPublishedCell
                     pr_url={scan.pr_url}
                     branch_name={scan.branch_name}
