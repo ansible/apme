@@ -158,6 +158,7 @@ export function createUploadSessionRouter(options: UploadRouterOptions) {
       return false;
     }
     if (channel.messageInFlight || messageInFlight) {
+      res.setHeader("Retry-After", "1");
       res.status(429).json({ error: "Too many upload messages in flight" });
       return false;
     }

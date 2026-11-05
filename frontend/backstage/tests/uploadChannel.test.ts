@@ -304,6 +304,7 @@ it("reserves the process message budget before parsing request bodies", async ()
       body: JSON.stringify({ data: JSON.stringify({ type: "start" }) }),
     });
     expect(blocked.status).toBe(429);
+    expect(blocked.headers.get("Retry-After")).toBe("1");
     await blocked.body?.cancel();
   } finally {
     first.destroy();

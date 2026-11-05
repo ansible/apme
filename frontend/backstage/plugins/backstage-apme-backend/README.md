@@ -38,8 +38,11 @@ transport keeps at most 64 live channels (4 per user), accepts payloads up to
 70 MiB (the Gateway's 50 MiB messages plus base64 overhead), caps pre-stream
 buffering at 256 KiB, and parses/sends only one upload message at a time per
 backend process. This bounds concurrent request-body buffering to one 70 MiB
-envelope; competing messages receive HTTP 429 rather than queueing in memory.
-It closes channels not attached to a reader within 30 s.
+envelope; competing messages receive HTTP 429 with `Retry-After`. The client
+retries contention at most five times when the requested delay fits its bounded
+wait; longer delays are terminal rather than retried early. Request bodies are
+not queued or parsed while waiting. It closes channels not attached to a reader
+within 30 s.
 Streaming uses backpressure. Cleanup releases sockets and timers on disconnect
 and shutdown. Resource and real-host acceptance remain required.
 

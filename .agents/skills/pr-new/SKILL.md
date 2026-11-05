@@ -456,6 +456,10 @@ sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
 and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
 have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
+For bounded shared capacity that responds with 429/503, trace two
+independent callers: verify the client retries transient contention within
+a finite budget, unrelated long-lived sessions do not fail immediately, and
+request bodies are not queued or parsed while waiting for capacity.
 When adding a new error return after a status-machine transition
 (``SUBMITTING_PR``, ``APPLYING``, etc.), construct the failure *after*
 that transition — both explicit raises *and* exceptions from helpers
@@ -553,6 +557,10 @@ critical/high/medium/low.
   unknown ids into hard 400s) is a semantic break even if the
   OpenAPI shape is unchanged — prefer log+ignore / intersection
   unless an ADR explicitly hardens the contract.
+- Configuration schema exposure is per key path: verify that the
+  generator recognizes the annotation syntax and that each frontend
+  setting, including nested leaf keys, appears in the host-visible
+  schema. Do not assume a parent's visibility annotation exposes children.
 - Cross-artifact parity (proto RPC ↔ daemon servicer; rule IDs ADR-008;
   _DEFAULT_PORTS ↔ started services; operator manifests ↔ Podman
   ``pod.yaml`` for the same in-pod env/volume/probe wiring — if the operator

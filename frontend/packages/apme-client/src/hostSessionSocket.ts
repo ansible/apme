@@ -5,6 +5,45 @@ import {
   type ApmeSessionSocket,
 } from "./transport.js";
 
+const MAX_CONTENTION_RETRIES = 5;
+const MAX_RETRY_AFTER_MS = 5_000;
+
+/** Parse Retry-After values only when the requested delay fits the retry bound. */
+function retryAfterMilliseconds(value: string | null): number | undefined {
+  if (value?.trim()) {
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      const delay = seconds * 1_000;
+      return delay <= MAX_RETRY_AFTER_MS ? delay : undefined;
+    }
+    const date = Date.parse(value);
+    if (!Number.isNaN(date)) {
+      const delay = Math.max(0, date - Date.now());
+      return delay <= MAX_RETRY_AFTER_MS ? delay : undefined;
+    }
+  }
+  return 250;
+}
+
+/** Wait for contention to clear, while allowing socket closure to cancel the wait. */
+function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    function abort() {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    }
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
 /** Adapt the Gateway's HTTP upload channel to the session socket interface. */
 export function createHostSessionSocket(
   adapter: ApmeApiAdapter,
@@ -40,20 +79,34 @@ export function createHostSessionSocket(
       writes = writes
         .then(async () => {
           if (state !== 1) return;
-          const response = await adapter.fetch(
-            `${base}/${encodeURIComponent(target)}/messages`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ data }),
-              signal: controller.signal,
-            },
-          );
-          try {
-            if (!response.ok)
-              throw new Error("Upload message rejected by host");
-          } finally {
-            await discard(response);
+          for (let attempt = 0; ; attempt++) {
+            const response = await adapter.fetch(
+              `${base}/${encodeURIComponent(target)}/messages`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ data }),
+                signal: controller.signal,
+              },
+            );
+            if (response.status === 429 && attempt < MAX_CONTENTION_RETRIES) {
+              const delay = retryAfterMilliseconds(
+                response.headers.get("Retry-After"),
+              );
+              if (delay !== undefined) {
+                await discard(response);
+                await waitForRetry(delay, controller.signal);
+                if (state !== 1) return;
+                continue;
+              }
+            }
+            try {
+              if (!response.ok)
+                throw new Error("Upload message rejected by host");
+            } finally {
+              await discard(response);
+            }
+            return;
           }
         })
         .catch((error: unknown) => {

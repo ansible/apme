@@ -14,10 +14,19 @@ export interface Config {
      * @visibility frontend
      */
     apiBase?: string;
-    /** Authenticated upload backend when uploads are enabled; defaults to discovery('apme'). @visibility frontend */
+    /**
+     * Authenticated upload backend when uploads are enabled; defaults to discovery('apme').
+     * @visibility frontend
+     */
     uploadApiBase?: string;
-    /** Explicitly enable Local uploads when the authenticated backend plugin is installed. Defaults off. @visibility frontend */
+    /**
+     * Explicitly enable Local uploads when the authenticated backend plugin is installed. Defaults off.
+     * @visibility frontend
+     */
     uploads?: {
+      /**
+       * @visibility frontend
+       */
       enabled?: boolean;
     };
   };

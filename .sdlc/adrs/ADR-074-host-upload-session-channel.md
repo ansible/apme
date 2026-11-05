@@ -49,10 +49,13 @@ creation requests with an 8 KiB limit after authorization; message requests keep
 the bounded 70 MiB envelope. Reserve a single process-wide message slot before
 parsing and hold it until the Gateway socket send completes, so concurrent
 messages do not accumulate parsed bodies or queued sends in memory. Competing
-messages receive HTTP 429. The default quota is 6000 requests per minute per
-client IP per backend process and can be lowered by the host. Hosts must configure
-trusted proxy handling correctly. Dispose rate-limit storage on shutdown and
-consume or cancel every HTTP response body on success, denial and cleanup paths.
+messages receive HTTP 429 with `Retry-After`; clients retry contention a bounded
+number of times before treating it as terminal. Retries do not queue or parse
+request bodies, preserving the single-message memory bound. The default quota
+is 6000 requests per minute per client IP per backend process and can be lowered
+by the host. Hosts must configure trusted proxy handling correctly. Dispose
+rate-limit storage on shutdown and consume or cancel every HTTP response body on
+success, denial and cleanup paths.
 
 ## Alternatives Considered
 
@@ -80,6 +83,7 @@ ADR-028, ADR-029, ADR-039, ADR-060 and ADR-073 remain authoritative.
 |------|--------|--------|
 | 2026-11-02 | Codex | Clarified the external Gateway client boundary, pre-parse authorization, request rate limits and response-body cleanup; two-host runtime acceptance remains in progress |
 | 2026-11-04 | Codex | Bound concurrent message parsing and socket sends process-wide; clarified shutdown/session and early stream-disconnect cleanup; Local uploads require explicit host opt-in |
+| 2026-11-05 | Codex | Added bounded client retries for upload-message contention and a `Retry-After` response while preserving pre-parse capacity reservation |
 
 ## Concurrent channel creation
 
