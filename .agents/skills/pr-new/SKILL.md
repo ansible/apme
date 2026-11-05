@@ -638,6 +638,10 @@ success result. Distinguish an absent claim from an incomplete durable claim,
 and do not treat a missing hash as proof of equality; test explicit
 cross-activity replay, incomplete claims across fresh attempts, and
 verification failures that reach a secondary replay path.
+Apply incomplete-claim checks to every request path that can trigger the same
+external side effect, including retries that omit the idempotency token. Keep
+claim/CAS writes inside an explicit session context that closes before the
+external call; test that execute or commit failures stop before that call.
 
 For trust-boundary address checks, require destinations to be globally
 routable and inspect embedded address forms such as mapped or well-known

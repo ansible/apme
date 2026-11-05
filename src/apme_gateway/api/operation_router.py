@@ -1108,6 +1108,25 @@ async def _submit_operation_impl(
                     )
                 raise HTTPException(status_code=404, detail="No patched files found")
 
+            # A tokened attempt may have committed its durable claim before
+            # an SCM timeout. Block tokenless retries while the claim has no
+            # published branch, or they could push to a different branch.
+            if idempotency_token is None and scan.submit_token is not None and not scan.branch_name:
+                if state:
+                    get_operation_registry().transition(
+                        state.operation_id,
+                        OperationStatus.COMPLETED,
+                        error="A prior tokened submit claim is incomplete",
+                    )
+                raise HTTPException(
+                    status_code=409,
+                    detail=_coded_detail(
+                        "idempotency_conflict",
+                        "A prior tokened submit claimed this scan but did not complete. "
+                        "Verify SCM state; if no publish occurred, start a new operation with a new token.",
+                    ),
+                )
+
         if state:
             get_operation_registry().transition(
                 state.operation_id,
@@ -1195,13 +1214,15 @@ async def _submit_operation_impl(
             try:
                 from sqlalchemy import update as _sa_claim_update
 
-                _claim_result = await db.execute(
-                    _sa_claim_update(Scan)
-                    .where(Scan.scan_id == scan_id, Scan.submit_token.is_(None))
-                    .values(submit_token=idempotency_token)
-                )
-                await db.commit()
-                if _claim_result.rowcount == 0:
+                async with get_session() as claim_db:
+                    claim_result = await claim_db.execute(
+                        _sa_claim_update(Scan)
+                        .where(Scan.scan_id == scan_id, Scan.submit_token.is_(None))
+                        .values(submit_token=idempotency_token)
+                    )
+                    await claim_db.commit()
+                    claim_rows = claim_result.rowcount
+                if claim_rows == 0:
                     if state:
                         get_operation_registry().transition(
                             state.operation_id,
@@ -1218,10 +1239,6 @@ async def _submit_operation_impl(
                     )
             except _IntegrityError as exc:
                 logger.info("Submit-token claim already exists for project %s", project_id)
-                try:
-                    await db.rollback()
-                except Exception:
-                    logger.debug("Rollback after duplicate claim also failed", exc_info=True)
                 if state:
                     get_operation_registry().transition(
                         state.operation_id,
@@ -1240,10 +1257,6 @@ async def _submit_operation_impl(
                 raise
             except Exception as exc:
                 logger.warning("Submit-token claim failed for scan %s", scan_id, exc_info=True)
-                try:
-                    await db.rollback()
-                except Exception:
-                    logger.debug("Rollback after claim failure also failed", exc_info=True)
                 if state:
                     get_operation_registry().transition(
                         state.operation_id,

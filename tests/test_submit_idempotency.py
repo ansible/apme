@@ -946,6 +946,48 @@ async def test_incomplete_durable_claim_blocks_cross_scan_retry(client: AsyncCli
     push_mock.assert_not_called()
 
 
+async def test_untokened_submit_blocks_incomplete_scan_claim(client: AsyncClient) -> None:
+    """A tokenless retry cannot bypass an unfinished claim on the same scan.
+
+    Args:
+        client: Async test client.
+
+    Returns:
+        None: Assert-only test.
+    """
+    project_id = "proj-submit-untokened-incomplete-claim"
+    scan_id = "scan-submit-untokened-incomplete-claim"
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-untokened-incomplete-claim",
+    )
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        scan.submit_token = "5c6d7e8f90a1b2c3d4e5f60718293a4b"  # notsecret
+        await db.commit()
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+
+
 async def test_concurrent_same_token_submit_pushes_once(client: AsyncClient) -> None:
     """Concurrent same-token submits serialize; the duplicate replays.
 

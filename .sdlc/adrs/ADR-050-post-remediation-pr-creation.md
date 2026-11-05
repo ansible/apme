@@ -163,7 +163,10 @@ When `create_pr` is `false`, `pr_url` is `null`.
 Error responses:
 - `404` — operation/activity not found, project not found, or no patched files
 - `409` — PR already created (idempotency guard), operation not completed,
-  operation is not a remediate scan, or no patches available
+  operation is not a remediate scan, no patches available, or a previous
+  submit claim is incomplete. An incomplete claim blocks tokened and tokenless
+  retries until SCM state is verified; if nothing was published, start a new
+  operation with a new token.
 - `422` — no SCM token configured (project or global), or SCM provider
   cannot be detected
 - `502` — SCM provider API error (upstream failure)
@@ -373,6 +376,9 @@ globally via `APME_GITHUB_API_URL`.
   each token once per project across Gateway instances; a reservation conflict
   returns `409` before making SCM calls. Existing duplicate non-null claims
   must be resolved before the index migration can complete.
+  The claim is committed in its own session before SCM mutation. If a claimed
+  scan has no recorded branch, tokenless retries also return `409` to prevent
+  a second branch from being created after an uncertain SCM outcome.
   All three are returned on activity list and detail REST responses.
   Patched file content is stored in a related `patched_files` table with
   columns `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML
@@ -433,3 +439,4 @@ globally via `APME_GITHUB_API_URL`.
 | 2026-09-22 | Agent | Status → Partially Implemented — PR creation and multi-provider SCM shipped |
 | 2026-10-23 | Agent | Treat empty and whitespace-only inline, project, and global SCM tokens as unset during fallback selection |
 | 2026-11-05 | Agent | Enforce project-scoped submit-token claims in the database for cross-instance idempotency |
+| 2026-11-05 | Agent | Block tokenless retries of incomplete claims and scope the claim write to its own session |
