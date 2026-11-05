@@ -12,45 +12,27 @@ from unittest.mock import patch
 from apme_engine.log_bridge import RequestLogHandler, attach_collector
 
 
-def _log_from_worker(message: str) -> None:
-    """Emit an info log from a worker thread.
-
-    Args:
-        message: Log message text.
-    """
-    logging.getLogger("apme.test_bridge").info(message)
-
-
 def test_executor_propagates_collector_sink_via_copy_context() -> None:
-    """Worker-thread logs are collected when executor uses ``ctx.run``."""
-    logger = logging.getLogger("apme.test_bridge")
+    """Worker-thread records reach the collector under ``ctx.run``."""
     handler = RequestLogHandler()
-    previous_level = logger.level
-    previous_propagate = logger.propagate
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = False
-    logger.addHandler(handler)
-    try:
-        # Use a private stream and handler so an unrelated test's global
-        # logging configuration or pytest's captured stderr cannot block the
-        # executor worker while this test checks context propagation. A
-        # dedicated executor also keeps unrelated default-pool work from
-        # starving this context propagation check.
-        with (
-            ThreadPoolExecutor(max_workers=1) as executor,
-            patch("apme_engine.log_bridge.sys", SimpleNamespace(stderr=StringIO())),
-            attach_collector() as sink,
-        ):
-            ctx = contextvars.copy_context()
-            executor.submit(
-                ctx.run,
-                _log_from_worker,
-                "executor-log-message",
-            ).result()
-            entries = sink.entries
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)
-        logger.propagate = previous_propagate
+    record = logging.LogRecord(
+        name="apme.test_bridge",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="executor-log-message",
+        args=(),
+        exc_info=None,
+    )
+    # Use a private stream and executor so this check doesn't touch pytest's
+    # captured stderr or a process-wide logger/executor configuration.
+    with (
+        ThreadPoolExecutor(max_workers=1) as executor,
+        patch("apme_engine.log_bridge.sys", SimpleNamespace(stderr=StringIO())),
+        attach_collector() as sink,
+    ):
+        ctx = contextvars.copy_context()
+        executor.submit(ctx.run, handler.handle, record).result(timeout=5)
+        entries = sink.entries
 
     assert any(e.message == "executor-log-message" for e in entries)

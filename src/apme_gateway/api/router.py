@@ -2352,6 +2352,7 @@ class RuleListItem(BaseModel):  # type: ignore[misc]
         resolved_severity_label: Label for resolved_severity.
         enabled: Catalog default enabled flag.
         resolved_enabled: Effective enabled state after override.
+        ansible_core_version: PEP 440 specifier for applicable ansible-core versions.
         registered_at: ISO 8601 registration timestamp.
         override: Active override row, if any.
     """
@@ -2367,6 +2368,7 @@ class RuleListItem(BaseModel):  # type: ignore[misc]
     resolved_severity_label: str
     enabled: bool
     resolved_enabled: bool
+    ansible_core_version: str = ""
     registered_at: str
     override: RuleOverrideOut | None
 
@@ -2386,6 +2388,7 @@ class RuleDetailOut(BaseModel):  # type: ignore[misc]
         resolved_severity_label: Label for resolved_severity.
         enabled: Catalog default enabled flag.
         resolved_enabled: Effective enabled state after override.
+        ansible_core_version: PEP 440 specifier for applicable ansible-core versions.
         registered_at: ISO 8601 registration timestamp.
         override: Active override row, if any.
     """
@@ -2401,6 +2404,7 @@ class RuleDetailOut(BaseModel):  # type: ignore[misc]
     resolved_severity_label: str
     enabled: bool
     resolved_enabled: bool
+    ansible_core_version: str = ""
     registered_at: str
     override: RuleOverrideOut | None
 
@@ -2524,6 +2528,7 @@ def _to_rule_list_item(rule: Rule) -> RuleListItem:
         resolved_severity_label=_severity_label_from_int(rs),
         enabled=rule.enabled,
         resolved_enabled=_resolved_enabled(rule),
+        ansible_core_version=rule.ansible_core_version,
         registered_at=rule.registered_at,
         override=_override_out(_primary_override(rule)),
     )
@@ -2543,6 +2548,7 @@ def _to_rule_detail(rule: Rule) -> RuleDetailOut:
         resolved_severity_label=_severity_label_from_int(rs),
         enabled=rule.enabled,
         resolved_enabled=_resolved_enabled(rule),
+        ansible_core_version=rule.ansible_core_version,
         registered_at=rule.registered_at,
         override=_override_out(_primary_override(rule)),
     )
