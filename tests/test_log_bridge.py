@@ -7,6 +7,7 @@ import contextvars
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from apme_engine.log_bridge import RequestLogHandler, attach_collector
@@ -38,7 +39,7 @@ async def test_executor_propagates_collector_sink_via_copy_context() -> None:
         # starving this context propagation check.
         with (
             ThreadPoolExecutor(max_workers=1) as executor,
-            patch("apme_engine.log_bridge.sys.stderr", StringIO()),
+            patch("apme_engine.log_bridge.sys", SimpleNamespace(stderr=StringIO())),
             attach_collector() as sink,
         ):
             ctx = contextvars.copy_context()
