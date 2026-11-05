@@ -11,7 +11,7 @@
     "frontend/backstage/plugins/*"
   ],
   "scripts": {
-    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin",
+    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin && npm run build -w @apme/backstage-plugin-backend",
     "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json",
     "lint:ui": "node frontend/backstage/scripts/check-eslint-minimatch.mjs && eslint . --ext .ts,.tsx",
     "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",

@@ -30,4 +30,7 @@ Apache-2.0 header preserved. Public summaries never include credential fields.
 `createHostSessionSocket` carries the unchanged FixSession session protocol over
 an authenticated host HTTP channel. Hosts explicitly inject it through
 `openSessionSocket`; ordinary client requests never choose another backend after
-an authorization or transport failure.
+an authorization or transport failure. A transient 429 response is retried at
+most five times when the requested `Retry-After` delay fits the bounded wait;
+closing the socket cancels that wait. Longer retry delays fail the send instead
+of retrying earlier than requested.

@@ -14,6 +14,7 @@ import {
   createDefaultApmeApiAdapter,
   type ApmeApiAdapter,
 } from "@apme/client/transport";
+import { createHostSessionSocket } from "@apme/client";
 import { allApmeProjectViews, type ApmeProjectView } from "../capabilities";
 
 export interface ApmeHostApi {
@@ -29,6 +30,8 @@ export interface ApmeHostApi {
   canViewSettings?: boolean;
   canManageSettings?: boolean;
   supportsGalaxyCertificateSettings?: boolean;
+  /** Local uploads require explicit opt-in and the authenticated backend plugin. */
+  canUpload?: boolean;
   /** Host-authorized project-scoped dependency triage; defaults to read-only. */
   canAcknowledgeFindings?: boolean;
 }
@@ -53,28 +56,48 @@ export const apmeHostApiFactory: ApiFactory<
     fetchApi: fetchApiRef,
     configApi: configApiRef,
   },
-  factory: ({ discoveryApi, fetchApi, configApi }): ApmeHostApi => ({
-    projectViews: allApmeProjectViews,
-    canManageRules: true,
-    canManageProjects: true,
-    canDeleteProjects: true,
-    canViewSettings: true,
-    canManageSettings: true,
-    supportsGalaxyCertificateSettings: true,
-    canAcknowledgeFindings: true,
-    async getAdapter() {
-      const configured = configApi.getOptionalString("apme.apiBase");
-      const apiBase =
-        configured ??
-        `${(await discoveryApi.getBaseUrl("proxy")).replace(/\/$/, "")}/apme`;
-      // Both REST and fetch-based SSE must use the authenticated host fetch.
-      return createDefaultApmeApiAdapter({
-        apiBase,
-        fetch: fetchApi.fetch.bind(fetchApi),
-        origin: /^https?:\/\//i.test(apiBase)
-          ? new URL(apiBase).origin
-          : window.location.origin,
-      });
-    },
-  }),
+  factory: ({ discoveryApi, fetchApi, configApi }): ApmeHostApi => {
+    const canUpload =
+      configApi.getOptionalBoolean("apme.uploads.enabled") === true;
+    return {
+      projectViews: allApmeProjectViews,
+      canManageRules: true,
+      canManageProjects: true,
+      canDeleteProjects: true,
+      canViewSettings: true,
+      canManageSettings: true,
+      supportsGalaxyCertificateSettings: true,
+      canUpload,
+      canAcknowledgeFindings: true,
+      async getAdapter() {
+        const configured = configApi.getOptionalString("apme.apiBase");
+        const apiBase =
+          configured ??
+          `${(await discoveryApi.getBaseUrl("proxy")).replace(/\/$/, "")}/apme`;
+        // Both REST and fetch-based SSE must use the authenticated host fetch.
+        const adapterOptions = {
+          apiBase,
+          fetch: fetchApi.fetch.bind(fetchApi),
+          origin: /^https?:\/\//i.test(apiBase)
+            ? new URL(apiBase).origin
+            : window.location.origin,
+        };
+        if (!canUpload) return createDefaultApmeApiAdapter(adapterOptions);
+        const uploadApiBase =
+          configApi.getOptionalString("apme.uploadApiBase") ??
+          (await discoveryApi.getBaseUrl("apme"));
+        return createDefaultApmeApiAdapter({
+          ...adapterOptions,
+          openSessionSocket: (url) =>
+            createHostSessionSocket(
+              createDefaultApmeApiAdapter({
+                apiBase: uploadApiBase,
+                fetch: fetchApi.fetch.bind(fetchApi),
+              }),
+              url,
+            ),
+        });
+      },
+    };
+  },
 });

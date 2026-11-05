@@ -1,10 +1,11 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useApi } from "@backstage/core-plugin-api";
 import { Alert, Box, Flex, Text } from "@backstage/ui";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { ApmeGalaxySettings } from "./ApmeGalaxySettings";
 import { ApmeModelSettings } from "./ApmeModelSettings";
+import { ApmeAiProviders } from "./ApmeAiProviders";
 import { apmeHostApiRef } from "../api/apmeApi";
 import { SectionHeader } from "./layout";
 import { useLoad } from "./useLoad";
@@ -50,14 +51,23 @@ export function ApmeSettings({
   canManageSettings,
   supportsGalaxyCertificateSettings,
 }: ApmeSettingsProps) {
+  const [modelsRevision, setModelsRevision] = useState(0);
   return (
     <Flex className="apme-ui apme-settings" direction="column" gap="4">
       <SectionHeader
         title="Settings"
-        description="Manage model preferences and Galaxy access."
+        description="Manage AI providers, model preferences and Galaxy access."
       />
       <div className="apme-panel">
-        <ApmeModelSettings adapter={adapter} />
+        <ApmeAiProviders
+          adapter={adapter}
+          canView={canViewSettings}
+          canManage={canManageSettings}
+          onChanged={() => setModelsRevision((value) => value + 1)}
+        />
+      </div>
+      <div className="apme-panel">
+        <ApmeModelSettings key={modelsRevision} adapter={adapter} />
       </div>
       <div className="apme-panel">
         <ApmeGalaxySettings

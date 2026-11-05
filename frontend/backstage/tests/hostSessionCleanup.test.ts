@@ -4,12 +4,28 @@ import {
   createHostSessionSocket,
 } from "@apme/client";
 
-function openBody(status: number) {
+function openBody(status: number, headers?: HeadersInit) {
   const cancel = vi.fn();
   return {
     cancel,
-    response: new Response(new ReadableStream({ cancel }), { status }),
+    response: new Response(new ReadableStream({ cancel }), { status, headers }),
   };
+}
+
+/** Return an event response that opens a host session and aborts on close. */
+function openEventResponse(signal?: AbortSignal): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"event":"open"}\n'));
+        signal?.addEventListener(
+          "abort",
+          () => controller.error(new Error("Aborted")),
+          { once: true },
+        );
+      },
+    }),
+  );
 }
 
 it("cancels a denied creation response without opening an event stream", async () => {
@@ -84,6 +100,149 @@ it.each([200, 403])(
     await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
   },
 );
+
+it("retries a contended message and keeps the session open", async () => {
+  const contentionCancelled = vi.fn();
+  const contention = new Response(
+    new ReadableStream({ cancel: contentionCancelled }),
+    { status: 429, headers: { "Retry-After": "0" } },
+  );
+  const deleted = openBody(200);
+  let messageRequests = 0;
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/messages")) {
+      messageRequests++;
+      return messageRequests === 1
+        ? contention
+        : new Response(null, { status: 204 });
+    }
+    if (init?.method === "DELETE") return deleted.response;
+    if (init?.method === "POST") return new Response('{"id":"channel"}');
+    return openEventResponse(init?.signal ?? undefined);
+  });
+  const socket = createHostSessionSocket(
+    createDefaultApmeApiAdapter({ apiBase: "http://host", fetch }),
+    "ws://gateway/session",
+  );
+
+  await vi.waitFor(() => expect(socket.readyState).toBe(1));
+  await expect(socket.send('{"type":"files_done"}')).resolves.toBeUndefined();
+
+  expect(messageRequests).toBe(2);
+  expect(contentionCancelled).toHaveBeenCalledOnce();
+  expect(socket.readyState).toBe(1);
+  socket.close();
+  await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
+});
+
+it("waits for the server Retry-After before retrying a message", async () => {
+  let markFirstAttempt!: () => void;
+  const firstAttempt = new Promise<void>((resolve) => {
+    markFirstAttempt = resolve;
+  });
+  const deleted = openBody(200);
+  let messageRequests = 0;
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/messages")) {
+      messageRequests++;
+      if (messageRequests === 1) {
+        markFirstAttempt();
+        return new Response(null, {
+          status: 429,
+          headers: { "Retry-After": "1" },
+        });
+      }
+      return new Response(null, { status: 204 });
+    }
+    if (init?.method === "DELETE") return deleted.response;
+    if (init?.method === "POST") return new Response('{"id":"channel"}');
+    return openEventResponse(init?.signal ?? undefined);
+  });
+  const socket = createHostSessionSocket(
+    createDefaultApmeApiAdapter({ apiBase: "http://host", fetch }),
+    "ws://gateway/session",
+  );
+  await vi.waitFor(() => expect(socket.readyState).toBe(1));
+
+  vi.useFakeTimers();
+  try {
+    const sending = socket.send('{"type":"files_done"}');
+    await firstAttempt;
+    for (let turn = 0; turn < 10 && vi.getTimerCount() === 0; turn++)
+      await Promise.resolve();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(messageRequests).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(sending).resolves.toBeUndefined();
+    expect(messageRequests).toBe(2);
+  } finally {
+    vi.useRealTimers();
+    socket.close();
+  }
+  await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
+});
+
+it("fails a message after the bounded contention retries are exhausted", async () => {
+  const deleted = openBody(200);
+  let messageRequests = 0;
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/messages")) {
+      messageRequests++;
+      return new Response("busy", {
+        status: 429,
+        headers: { "Retry-After": "0" },
+      });
+    }
+    if (init?.method === "DELETE") return deleted.response;
+    if (init?.method === "POST") return new Response('{"id":"channel"}');
+    return openEventResponse(init?.signal ?? undefined);
+  });
+  const socket = createHostSessionSocket(
+    createDefaultApmeApiAdapter({ apiBase: "http://host", fetch }),
+    "ws://gateway/session",
+  );
+  const onerror = vi.fn();
+  socket.onerror = onerror;
+
+  await vi.waitFor(() => expect(socket.readyState).toBe(1));
+  await expect(socket.send('{"type":"files_done"}')).rejects.toThrow(
+    "Upload message rejected by host",
+  );
+
+  expect(messageRequests).toBe(6);
+  expect(socket.readyState).toBe(3);
+  expect(onerror).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
+});
+
+it("fails instead of retrying early for a Retry-After delay beyond its bound", async () => {
+  const contention = openBody(429, { "Retry-After": "6" });
+  const deleted = openBody(200);
+  let messageRequests = 0;
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/messages")) {
+      messageRequests++;
+      return contention.response;
+    }
+    if (init?.method === "DELETE") return deleted.response;
+    if (init?.method === "POST") return new Response('{"id":"channel"}');
+    return openEventResponse(init?.signal ?? undefined);
+  });
+  const socket = createHostSessionSocket(
+    createDefaultApmeApiAdapter({ apiBase: "http://host", fetch }),
+    "ws://gateway/session",
+  );
+
+  await vi.waitFor(() => expect(socket.readyState).toBe(1));
+  await expect(socket.send('{"type":"files_done"}')).rejects.toThrow(
+    "Upload message rejected by host",
+  );
+
+  expect(messageRequests).toBe(1);
+  expect(contention.cancel).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(deleted.cancel).toHaveBeenCalledOnce());
+});
 
 it("aborts the event reader and deletes the channel on a server close frame", async () => {
   const eventsCancelled = vi.fn();

@@ -162,6 +162,7 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 | 2026-11-03 | Codex | TASK-021 moves dependency diagrams below inventory, uses Portal's existing Ansible Core minor choices in advanced scan options, and applies ADR-043 ordering to nonzero project severity counts. Live acceptance remains in #833. |
 | 2026-11-04 | Codex | Clarified that the RHDH Local image contract takes effect after the final staged PR; intermediate merges retain the native deployment. |
 | 2026-11-04 | Codex | Kept plugin capabilities explicit, retained rule data during refresh, preserved independent project deletion permission, and required a supported user-selected severity when Portal omits numeric severity. Live two-host acceptance remains in #833. |
+| 2026-11-04 | Codex | Clarified that Local upload capability is disabled until the host opts in after installing the authenticated backend. |
 
 ## Staged delivery
 
@@ -169,3 +170,6 @@ Implementation is split from #832 under [TASK-022](../specs/REQ-021-ui-host-cons
 
 Stage 2 adds host-composable project/data/settings views and the development
 harness. Upload administration, Portal adapters and Local activation follow.
+
+Stage 3 adds the host-authorized upload channel and AI provider administration.
+ADR-074 defines the security boundary; Local activation still follows later.

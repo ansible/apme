@@ -298,11 +298,13 @@ export async function saveAiProvider(
     throw new Error(
       "Provider name must contain only letters, numbers, underscores or hyphens",
     );
+  const { baseUrl, ...configureFields } = configure;
   const configured = await apiFetch(
     `/ai/provider/${encodeURIComponent(id)}/configure`,
     {
       method: "POST",
-      body: JSON.stringify(configure),
+      // `null` is this client API's clear sentinel, not an Abbenay configure field.
+      body: JSON.stringify(baseUrl === null ? configureFields : configure),
       headers: { "Content-Type": "application/json" },
     },
     adapter,
@@ -336,23 +338,26 @@ export async function saveAiProvider(
       !Array.isArray(modelOptions)
         ? (modelOptions as Record<string, unknown>)
         : {};
+    const updatedProvider: Record<string, unknown> = {
+      ...prior,
+      engine: configure.engine,
+      models: Object.fromEntries(
+        models.map((model) => [
+          model,
+          Object.prototype.hasOwnProperty.call(retainedModels, model)
+            ? retainedModels[model]
+            : {},
+        ]),
+      ),
+    };
+    if (baseUrl === null) delete updatedProvider.base_url;
+    else if (typeof baseUrl === "string" && baseUrl.length > 0)
+      updatedProvider.base_url = baseUrl;
     Object.defineProperty(providers, id, {
       enumerable: true,
       configurable: true,
       writable: true,
-      value: {
-        ...prior,
-        engine: configure.engine,
-        models: Object.fromEntries(
-          models.map((model) => [
-            model,
-            Object.prototype.hasOwnProperty.call(retainedModels, model)
-              ? retainedModels[model]
-              : {},
-          ]),
-        ),
-        ...(configure.baseUrl ? { base_url: configure.baseUrl } : {}),
-      },
+      value: updatedProvider,
     });
     await request(
       "/ai/config",

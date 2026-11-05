@@ -45,6 +45,11 @@ const ApmeHealth = lazy(() =>
 const ApmeSettings = lazy(() =>
   import("./ApmeSettings").then((module) => ({ default: module.ApmeSettings })),
 );
+const ApmeUploadWorkbench = lazy(() =>
+  import("./ApmeUploadWorkbench").then((module) => ({
+    default: module.ApmeUploadWorkbench,
+  })),
+);
 
 export function ApmePageContent({
   showGlobalSettings = true,
@@ -77,6 +82,7 @@ export function ApmePageContent({
       showGlobalSettings={showGlobalSettings}
       section={section}
       showSectionNavigation={showSectionNavigation}
+      canUpload={hostApi.canUpload === true}
       canAcknowledgeFindings={hostApi.canAcknowledgeFindings === true}
       canViewSettings={hostApi.canViewSettings === true}
       canManageSettings={hostApi.canManageSettings === true}
@@ -92,6 +98,7 @@ export interface ApmeWorkbenchProps extends ApmeSettingsProps {
   canManageRules?: boolean;
   canManageProjects?: boolean;
   canDeleteProjects?: boolean;
+  canUpload?: boolean;
   canAcknowledgeFindings?: boolean;
   /** Hosts can place global settings on their own route. */
   showGlobalSettings?: boolean;
@@ -101,7 +108,7 @@ export interface ApmeWorkbenchProps extends ApmeSettingsProps {
   projectViews?: readonly ApmeProjectView[];
 }
 
-export type ApmeSection = "repositories" | "rules" | "health";
+export type ApmeSection = "repositories" | "rules" | "health" | "upload";
 
 /** Shared page; embedding hosts can supply their own authorized adapter. */
 export function ApmeWorkbench({
@@ -113,6 +120,7 @@ export function ApmeWorkbench({
   section,
   showSectionNavigation = true,
   projectViews = allApmeProjectViews,
+  canUpload = false,
   canAcknowledgeFindings = false,
   canViewSettings = false,
   canManageSettings = false,
@@ -124,7 +132,8 @@ export function ApmeWorkbench({
     section ??
     (requestedView === "rules" ||
     requestedView === "health" ||
-    (requestedView === "settings" && showGlobalSettings)
+    (requestedView === "settings" && showGlobalSettings) ||
+    requestedView === "upload"
       ? requestedView
       : "repositories");
   const selected = params.get("project");
@@ -257,11 +266,22 @@ export function ApmeWorkbench({
                 Settings
               </Button>
             )}
+            {canUpload && (
+              <Button
+                variant="secondary"
+                aria-current={view === "upload" ? "page" : undefined}
+                onPress={() => selectView("upload")}
+              >
+                Paste / upload
+              </Button>
+            )}
           </Flex>
         </nav>
       )}
       <Suspense fallback={<Text role="status">Loading APME view…</Text>}>
-        {view === "rules" ? (
+        {view === "upload" ? (
+          <ApmeUploadWorkbench adapter={adapter} canUpload={canUpload} />
+        ) : view === "rules" ? (
           <ApmeRules adapter={adapter} canManage={canManageRules} />
         ) : view === "health" ? (
           <ApmeHealth adapter={adapter} />
