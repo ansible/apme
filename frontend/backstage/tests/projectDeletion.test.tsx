@@ -158,6 +158,40 @@ it("lets a user retry a failed project load", async () => {
   await screen.findByRole("heading", { name: "Automation" });
 });
 
+it("keeps the loaded project and focused control when a refresh fails", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(project)))
+    .mockResolvedValueOnce(
+      new Response('{"detail":"Temporarily unavailable"}', { status: 503 }),
+    );
+  render(
+    <BUIProvider>
+      <ProjectDetails
+        projectId="p1"
+        adapter={createDefaultApmeApiAdapter({ fetch })}
+      >
+        {(_loadedProject, reload) => (
+          <button type="button" onClick={reload}>
+            Refresh project
+          </button>
+        )}
+      </ProjectDetails>
+    </BUIProvider>,
+  );
+
+  const refreshButton = await screen.findByRole("button", {
+    name: "Refresh project",
+  });
+  refreshButton.focus();
+  fireEvent.click(refreshButton);
+
+  expect(await screen.findByText("Temporarily unavailable")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Automation" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Refresh project" })).toBeTruthy();
+  expect(document.activeElement).toBe(refreshButton);
+});
+
 it.each([
   {
     breakdown: {

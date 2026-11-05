@@ -23,11 +23,11 @@ export function ProjectDetails({
     [projectId, adapter],
   );
   const state = useLoad(load);
-  const { value: project, error, reload } = state;
-  if (error) return <DataStatus {...state} subject="project" />;
-  if (!project) return <Text role="status">Loading project…</Text>;
+  const { value: project, reload } = state;
+  if (!project) return <DataStatus {...state} subject="project" />;
   return (
     <Flex className="apme-ui" direction="column" gap="4">
+      <DataStatus {...state} subject="project" />
       <div className="apme-stack apme-project-heading" style={{ gap: 6 }}>
         <Text as="h2" variant="title-medium">
           {project.name}
