@@ -4,7 +4,14 @@
  * Repo detail Quality activity — SPA project Activity list/detail (US-007).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { useSearchParams } from "react-router-dom";
 import { configApiRef, useApi } from "@backstage/core-plugin-api";
 import { useEntity } from "@backstage/plugin-catalog-react";
@@ -59,18 +66,10 @@ const useActivityListStyles = makeStyles({
     fontWeight: 600,
     lineHeight: 1.4,
   },
-  sortButton: {
-    width: "100%",
-    padding: 0,
-    border: 0,
-    background: "none",
-    color: "inherit",
-    font: "inherit",
-    textAlign: "left",
-    cursor: "pointer",
+  sortHeader: {
     "&:focus-visible": {
-      outline: "2px solid currentColor",
-      outlineOffset: 2,
+      outline: "2px solid #0066cc",
+      outlineOffset: -2,
     },
   },
 });
@@ -173,11 +172,25 @@ function ActivityList({
     return sortAsc ? " ↑" : " ↓";
   };
 
+  const sortDirection = (
+    col: ActivitySortColumn,
+  ): "ascending" | "descending" | "none" =>
+    sortCol === col ? (sortAsc ? "ascending" : "descending") : "none";
+
+  const handleSortKeyDown = (
+    event: KeyboardEvent<HTMLTableCellElement>,
+    col: ActivitySortColumn,
+  ) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    handleSort(col);
+  };
+
   const isInteractiveTarget = (target: EventTarget | null) =>
     target instanceof Element &&
     Boolean(
       target.closest(
-        "a, button, input, select, textarea, [role='button'], [role='link']",
+        "a, button, input, select, textarea, [role='button'], [role='link'], [data-row-click-ignore]",
       ),
     );
 
@@ -194,59 +207,65 @@ function ActivityList({
       <table className={tableClasses.table} role="grid">
         <thead>
           <tr>
-            <th className={tableClasses.sortableHeader} style={{ width: 110 }}>
-              <button
-                type="button"
-                className={classes.sortButton}
-                onClick={() => handleSort("type")}
-              >
-                Type{sortArrow("type")}
-              </button>
+            <th
+              className={`${tableClasses.sortableHeader} ${classes.sortHeader}`}
+              style={{ width: 110 }}
+              tabIndex={0}
+              aria-sort={sortDirection("type")}
+              onClick={() => handleSort("type")}
+              onKeyDown={(event) => handleSortKeyDown(event, "type")}
+            >
+              Type{sortArrow("type")}
             </th>
-            <th className={tableClasses.sortableHeader} style={{ width: 100 }}>
-              <button
-                type="button"
-                className={classes.sortButton}
-                onClick={() => handleSort("violations")}
-              >
-                Violations{sortArrow("violations")}
-              </button>
+            <th
+              className={`${tableClasses.sortableHeader} ${classes.sortHeader}`}
+              style={{ width: 100 }}
+              tabIndex={0}
+              aria-sort={sortDirection("violations")}
+              onClick={() => handleSort("violations")}
+              onKeyDown={(event) => handleSortKeyDown(event, "violations")}
+            >
+              Violations{sortArrow("violations")}
             </th>
-            <th className={tableClasses.sortableHeader} style={{ width: 88 }}>
-              <button
-                type="button"
-                className={classes.sortButton}
-                onClick={() => handleSort("fixable")}
-              >
-                Fixable{sortArrow("fixable")}
-              </button>
+            <th
+              className={`${tableClasses.sortableHeader} ${classes.sortHeader}`}
+              style={{ width: 88 }}
+              tabIndex={0}
+              aria-sort={sortDirection("fixable")}
+              onClick={() => handleSort("fixable")}
+              onKeyDown={(event) => handleSortKeyDown(event, "fixable")}
+            >
+              Fixable{sortArrow("fixable")}
             </th>
-            <th className={tableClasses.sortableHeader} style={{ width: 110 }}>
-              <button
-                type="button"
-                className={classes.sortButton}
-                onClick={() => handleSort("remediated")}
-              >
-                Remediated{sortArrow("remediated")}
-              </button>
+            <th
+              className={`${tableClasses.sortableHeader} ${classes.sortHeader}`}
+              style={{ width: 110 }}
+              tabIndex={0}
+              aria-sort={sortDirection("remediated")}
+              onClick={() => handleSort("remediated")}
+              onKeyDown={(event) => handleSortKeyDown(event, "remediated")}
+            >
+              Remediated{sortArrow("remediated")}
             </th>
-            <th className={tableClasses.sortableHeader} style={{ width: 88 }}>
-              <button
-                type="button"
-                className={classes.sortButton}
-                onClick={() => handleSort("manual")}
-              >
-                Manual{sortArrow("manual")}
-              </button>
+            <th
+              className={`${tableClasses.sortableHeader} ${classes.sortHeader}`}
+              style={{ width: 88 }}
+              tabIndex={0}
+              aria-sort={sortDirection("manual")}
+              onClick={() => handleSort("manual")}
+              onKeyDown={(event) => handleSortKeyDown(event, "manual")}
+            >
+              Manual{sortArrow("manual")}
             </th>
-            <th className={tableClasses.sortableHeader} style={{ width: 120 }}>
-              <button
-                type="button"
-                className={classes.sortButton}
-                onClick={() => handleSort("time")}
-              >
-                Time{sortArrow("time")}
-              </button>
+            <th
+              className={`${tableClasses.sortableHeader} ${classes.sortHeader}`}
+              style={{ width: 120 }}
+              tabIndex={0}
+              aria-sort={sortDirection("time")}
+              onClick={() => handleSort("time")}
+              onKeyDown={(event) => handleSortKeyDown(event, "time")}
+            >
+              Time{sortArrow("time")}
             </th>
             <th style={{ width: 140 }}>Published</th>
           </tr>
@@ -275,7 +294,7 @@ function ActivityList({
                 }}
                 style={{ cursor: "pointer" }}
               >
-                <td>
+                <td data-row-click-ignore>
                   <span
                     className={classes.typeChip}
                     style={scanTypeChipStyle(isFix, isDark)}

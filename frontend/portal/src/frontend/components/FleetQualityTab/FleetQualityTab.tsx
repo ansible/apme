@@ -5,7 +5,7 @@
  * `design/apme-integration` → QualityOverviewContent.tsx
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import {
   Box,
   Card,
@@ -106,21 +106,9 @@ const useStyles = makeStyles((theme) => ({
       userSelect: "none",
       "&:hover": { color: theme.palette.text.primary },
     },
-    "& th > button": {
-      width: "100%",
-      padding: 0,
-      border: 0,
-      background: "none",
-      color: "inherit",
-      font: "inherit",
-      textAlign: "left",
-      textTransform: "inherit",
-      letterSpacing: "inherit",
-      cursor: "pointer",
-      "&:focus-visible": {
-        outline: "2px solid currentColor",
-        outlineOffset: 2,
-      },
+    "& th:focus-visible": {
+      outline: `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: -2,
     },
     "& td": {
       padding: "10px 12px",
@@ -236,6 +224,20 @@ export const FleetQualityTab = ({
       setSortCol(col);
       setSortAsc(false);
     }
+  };
+
+  const sortDirection = (
+    col: SortColumn,
+  ): "ascending" | "descending" | "none" =>
+    sortCol === col ? (sortAsc ? "ascending" : "descending") : "none";
+
+  const handleSortKeyDown = (
+    event: KeyboardEvent<HTMLTableCellElement>,
+    col: SortColumn,
+  ) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    handleSort(col);
   };
 
   const toggleSeverity = (sev: SeverityLevel) => {
@@ -533,42 +535,55 @@ export const FleetQualityTab = ({
                 <thead>
                   <tr>
                     <th style={{ width: 36, padding: "10px 4px" }} />
-                    <th style={{ width: 100 }}>
-                      <button
-                        type="button"
-                        onClick={() => handleSort("severity")}
-                      >
-                        Severity{sortArrow("severity")}
-                      </button>
+                    <th
+                      style={{ width: 100 }}
+                      tabIndex={0}
+                      aria-sort={sortDirection("severity")}
+                      onClick={() => handleSort("severity")}
+                      onKeyDown={(event) =>
+                        handleSortKeyDown(event, "severity")
+                      }
+                    >
+                      Severity{sortArrow("severity")}
                     </th>
-                    <th>
-                      <button
-                        type="button"
-                        onClick={() => handleSort("impact")}
-                      >
-                        Rule{sortArrow("impact")}
-                      </button>
+                    <th
+                      tabIndex={0}
+                      aria-sort={sortDirection("impact")}
+                      onClick={() => handleSort("impact")}
+                      onKeyDown={(event) => handleSortKeyDown(event, "impact")}
+                    >
+                      Rule{sortArrow("impact")}
                     </th>
-                    <th style={{ width: 110 }}>
-                      <button
-                        type="button"
-                        onClick={() => handleSort("category")}
-                      >
-                        Category{sortArrow("category")}
-                      </button>
+                    <th
+                      style={{ width: 110 }}
+                      tabIndex={0}
+                      aria-sort={sortDirection("category")}
+                      onClick={() => handleSort("category")}
+                      onKeyDown={(event) =>
+                        handleSortKeyDown(event, "category")
+                      }
+                    >
+                      Category{sortArrow("category")}
                     </th>
-                    <th style={{ width: 72 }}>
-                      <button type="button" onClick={() => handleSort("repos")}>
-                        Repos{sortArrow("repos")}
-                      </button>
+                    <th
+                      style={{ width: 72 }}
+                      tabIndex={0}
+                      aria-sort={sortDirection("repos")}
+                      onClick={() => handleSort("repos")}
+                      onKeyDown={(event) => handleSortKeyDown(event, "repos")}
+                    >
+                      Repos{sortArrow("repos")}
                     </th>
-                    <th style={{ width: 100 }}>
-                      <button
-                        type="button"
-                        onClick={() => handleSort("occurrences")}
-                      >
-                        Occurrences{sortArrow("occurrences")}
-                      </button>
+                    <th
+                      style={{ width: 100 }}
+                      tabIndex={0}
+                      aria-sort={sortDirection("occurrences")}
+                      onClick={() => handleSort("occurrences")}
+                      onKeyDown={(event) =>
+                        handleSortKeyDown(event, "occurrences")
+                      }
+                    >
+                      Occurrences{sortArrow("occurrences")}
                     </th>
                   </tr>
                 </thead>
