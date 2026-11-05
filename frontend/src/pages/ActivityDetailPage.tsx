@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
-import { AssessFindingsPanel, toPrFilesDiffUrl } from '@apme/ui-workflow';
+import { AssessFindingsPanel, toPrFilesDiffUrl, violationToFinding } from '@apme/ui-workflow';
 import { PipelineLogOutput } from '../components/PipelineLogOutput';
 import {
   DependencyHealthOutput,
@@ -19,32 +19,12 @@ import { ExternalLinkAltIcon } from '@patternfly/react-icons';
 import { useApmeApi } from '../api/apmeApiAdapter';
 import { createSuppression, deleteActivity, getActivity, submitActivity } from '../services/api';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
-import type { AssessFinding } from '@apme/ui-workflow';
 import type { ActivityDetail, ViolationDetail } from '../types/api';
 
 function displayType(scanType: string): string {
   if (scanType === 'scan') return 'check';
   if (scanType === 'fix') return 'remediate';
   return scanType;
-}
-
-function violationToFinding(v: ViolationDetail): AssessFinding {
-  return {
-    rule_id: v.rule_id,
-    severity: v.level,
-    message: v.message,
-    file: v.file,
-    line: v.line,
-    path: v.path,
-    node_type: v.node_type,
-    remediation_class: v.remediation_class,
-    source: v.validator_source,
-    original_yaml: v.original_yaml,
-    fixed_yaml: v.fixed_yaml,
-    co_fixes: v.co_fixes,
-    node_line_start: v.node_line_start,
-    review_status: v.review_status,
-  };
 }
 
 export function ActivityDetailPage() {

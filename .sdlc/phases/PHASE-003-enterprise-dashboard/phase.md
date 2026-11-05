@@ -38,6 +38,7 @@ Enterprise Dashboard with ROI/Time-Saved reporting and Custom Policy engine. Sec
 | REQ-014 | Policy Permissive Mode | Draft |
 | REQ-016 | Phase 2 SCM Providers (GitLab + Bitbucket) | In Progress |
 | REQ-020 | Unified Supply Chain Security (SBOM, CVE, CWE) | Draft |
+| REQ-021 | APME UI Host Consolidation | In Progress |
 
 ## Dependencies
 

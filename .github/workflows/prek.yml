@@ -3,7 +3,7 @@ name: prek
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "feat/ui-split-*"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}

@@ -4,9 +4,15 @@
 
 Implemented
 
+Extended by [ADR-073](ADR-073-ui-host-composition.md): the same product release
+also carries the Gateway client, standard Backstage frontend/backend and
+Portal integration adapters. The workflow
+tarball asset name remains compatible; its manifest pins the client artifact
+from that same release.
+
 ## Date
 
-2026-07-23 (revised 2026-07-31)
+2026-07-23 (revised 2026-11-04)
 
 ## Context
 
@@ -30,11 +36,11 @@ Constraints and drivers:
 ~~**We will publish `@apme/ui-workflow` as an `npm pack` `.tgz` attached to
 dedicated GitHub Releases tagged `ui-workflow-vX.Y.Z`.**~~
 
-**Revised:** The `@apme/ui-workflow` tarball is attached as an asset to the
-main APME product release (`vX.Y.Z`). There is no separate versioning or tag
-convention — the package version is derived from the release tag at build time.
-Portal (and other hosts) pin the HTTPS release asset URL on the product release.
-npmjs and GitHub Packages remain deferred.
+**Revised:** The `@apme/client` and `@apme/ui-workflow` tarballs are attached as
+assets to the main APME product release (`vX.Y.Z`). There is no separate
+versioning or tag convention — package versions are derived from the release
+tag at build time. Portal (and other hosts) pin the HTTPS release asset URLs on
+the product release. npmjs and GitHub Packages remain deferred.
 
 ## Alternatives Considered
 
@@ -123,20 +129,32 @@ enough and the UI package tracks them naturally.
 
 ## Implementation Notes
 
-- Package: not `private`; `prepack` runs `tsc` + copies CSS into `dist/`;
-  `files` includes `dist/` and README. `package.json` version is `0.0.0-dev`
-  (placeholder); the real version is injected from the release tag at build
-  time via `npm version --no-git-tag-version`.
+- Packages: `@apme/client` and `@apme/ui-workflow` are packed from the built
+  workspace. The packer stages manifests and injects the release-tag version
+  without modifying the source manifests.
 - CI: `.github/workflows/ui-workflow-release.yml` triggers on
-  `release: published` (main `vX.Y.Z` releases). Derives version from the
-  tag, stamps package.json, runs `npm pack`, and uploads the `.tgz` to the
-  existing release.
+  stable `release: published` events with `vX.Y.Z` tags. It runs the local
+  packed-consumer smoke check, packs release-mode artifacts, verifies their
+  manifest dependency URLs and checksums, then uploads the tarballs,
+  `manifest.json`, and `SHA256SUMS` to the existing release.
 - Portal: depend on
   `https://github.com/ansible/apme/releases/download/vX.Y.Z/apme-ui-workflow-X.Y.Z.tgz`
   and `--embed-package @apme/ui-workflow` for dynamic plugin export.
 - Release steps: create the main APME release as usual — the workflow
-  automatically attaches the tarball. No manual version bump needed for the
-  UI package.
+  automatically attaches the client/workflow tarballs, manifest, and checksums.
+  No manual package version bump is needed.
+
+## Retry behavior
+
+Release retries verify already published asset checksums and upload only missing
+files. An existing asset with different bytes fails the job and is never replaced
+under the same immutable URL. The upload operation is exposed through
+`tox -e frontend-release-upload`; a completed retry is a no-op.
+
+The release manifest records the package version, source commit, dependency
+mode, and artifact metadata. It omits the build runner's Node patch version so
+retries for the same commit produce identical manifest bytes across supported
+Node patch releases.
 
 ## Related Decisions
 
@@ -152,3 +170,5 @@ enough and the UI package tracks them naturally.
 | 2026-07-23 | Initial — GitHub Release tarball publish for `@apme/ui-workflow` |
 | 2026-07-31 | Consolidated into main APME release; removed separate `ui-workflow-v*` tag convention |
 | 2026-09-22 | Agent: Status → Implemented — `ui-workflow-release.yml` and `tox -e ui-workflow-pack` publish `@apme/ui-workflow` with main release |
+| 2026-11-02 | Codex: extend the package set under ADR-073 and verify immutable published bytes before completing partial-release retries |
+| 2026-11-04 | Codex: make release manifests deterministic across supported Node patch releases |

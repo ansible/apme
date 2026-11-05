@@ -105,7 +105,9 @@ artifact type, translate it:
 1. **Does every statement mean what it says?** Check every type
    annotation, return value, error code, version range, log level,
    comment, and docstring. If the code declares it, the runtime must
-   honor it on every path.
+   honor it on every path. For Markdown, verify heading levels follow the
+   document hierarchy and current-state labels describe the behavior that
+   exists at this point in a staged rollout.
    For recurring background work, compare steady-state and transition logs:
    unchanged successes and repeated failures should not crowd out meaningful
    changes; initial failures and recoveries must remain visible.
@@ -120,6 +122,10 @@ artifact type, translate it:
    something they shouldn't? Also check every capability grant:
    permission scopes, CORS origins, container capabilities. Does each
    grant the minimum necessary?
+   Trace every state-changing UI entry point against the host's permission
+   defaults, including creation dialogs and deep links. For public HTTP routes,
+   verify that rate limits and authorization precede expensive body parsing;
+   a later permission check does not bound work performed before it.
 
 3. **Would a caller be surprised?** Read every public function from
    the caller's perspective. Can it return a value the type doesn't
@@ -130,6 +136,13 @@ artifact type, translate it:
    the same module? When a helper opens a channel, socket, or other
    closeable resource, does every return path (success and failure)
    close it — typically via `finally` — or can a failed RPC leak it?
+   For fetch-based transports, trace response bodies on success, non-2xx,
+   cancellation and cleanup requests. Consuming a main stream does not dispose
+   separate creation, message or deletion responses.
+   For published package APIs, give each exported function or hook a
+   concise JSDoc description of its purpose and any non-obvious behavior;
+   enforce this on public exports rather than requiring boilerplate for
+   private callbacks.
    Trace async entry points through helpers to every filesystem operation,
    including discovery, metadata probes, and parsing. Blocking storage must
    stay off the event loop, and unchanged hot paths should avoid repeated
@@ -149,7 +162,9 @@ artifact type, translate it:
    that contradicts it. When docs name protobuf fields on
    `SessionEvent` / `SessionResult` / reporting events, verify the
    field exists on that message in the active `.proto` — aggregated
-   types defined elsewhere do not imply they are streamed.
+   types defined elsewhere do not imply they are streamed. For staged or
+   historical documents, verify that precedence and effective timing are
+   explicit so an archived plan cannot read as the current authority.
 
 5. **Are dependencies and versions pinned to intent?** Check every
    version range, action tag, and base image. Does each one express
@@ -157,11 +172,23 @@ artifact type, translate it:
    used by CI, compare all of its resolution sources: CI requirements,
    project lockfiles, developer install commands, and agent setup guides.
    Keep the resolved versions aligned or document the intentional split.
+   When requirements and research pin the same external source, reconcile
+   their revisions and identify which pin governs implementation versus which
+   records a historical snapshot.
    For workflow
    checkouts: if the job has write scopes (`packages: write`, etc.)
    or runs untrusted/repo scripts after checkout, is
    `persist-credentials: false` set so `GITHUB_TOKEN` is not left
    in local Git config? Match sibling jobs in the same workflow.
+   Reproduce build/test commands from a fresh checkout in CI order; verify their
+   dependency setup does not rely on outputs, symlinks, native addon binaries or
+   caches from an earlier local build. If lifecycle scripts are disabled, verify
+   runtime-required native dependencies have an explicit preparation step.
+   For published immutable assets, retries must verify existing bytes
+   and complete missing uploads without overwriting different published content.
+   Keep their manifests deterministic across retries: omit runner-specific
+   values such as the executing Node patch version unless that value is an
+   intentional, pinned part of the artifact contract.
 
 6. **Is there dead weight?** Check for unused imports, unreachable
    branches, written-but-never-read variables, parameters accepted
@@ -194,6 +221,8 @@ artifact type, translate it:
    repo: do proto RPCs have matching servicer methods in `daemon/`?
    Do rule IDs follow ADR-008 conventions (L/M/R/P/SEC)? Does
    `_DEFAULT_PORTS` match the services actually started? Are
+   Markdown indexes consistent across their canonical tables, directory
+   trees and phase lists, including names and status? Are
    `event_emitter` calls consistent with the reporting sink
    protocol? Cross-artifact mismatches (proto declaration vs Python
    implementation) are the easiest to miss and the most embarrassing
@@ -239,6 +268,10 @@ artifact type, translate it:
    route, or selected entity changes, resolve and reject an older request
    after cleanup; verify its success, catch, and finally handlers cannot
    overwrite current data, selections, persisted values, or loading state.
+   For requests that create a remote resource, also close the client after the
+   server accepts the request but before its response arrives. Verify the
+   client can still learn the resource id and dispose of it; aborting the
+   request must not hide a resource that the server already created.
    What happens when `asyncio.gather()`
    returns a mix of results and exceptions — does every caller
    handle `return_exceptions=True` correctly?

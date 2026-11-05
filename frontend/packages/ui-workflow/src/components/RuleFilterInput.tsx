@@ -113,7 +113,7 @@ export function RuleFilterInput({
     if (!isOpen) setIsOpen(true);
     if (selectOptions.every((o) => o.isAriaDisabled || o.isDisabled)) return;
 
-    let indexToFocus = 0;
+    let indexToFocus: number;
     if (key === 'ArrowUp') {
       if (focusedItemIndex === null || focusedItemIndex === 0) {
         indexToFocus = selectOptions.length - 1;
@@ -182,6 +182,8 @@ export function RuleFilterInput({
   };
 
   const toggle = (toggleRef: React.Ref<MenuToggleElement>) => (
+    // PatternFly's MenuToggle supplies native button keyboard activation.
+    /* eslint-disable-next-line a11y/click-events-have-key-events -- custom PatternFly control has its own keyboard behavior */
     <MenuToggle
       variant="typeahead"
       aria-label="Filter by rule ID"

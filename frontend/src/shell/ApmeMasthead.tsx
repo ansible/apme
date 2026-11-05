@@ -22,7 +22,7 @@ export function ApmeMasthead() {
     <PageMasthead
       brand={
         <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/apme.svg" alt="" height={32} width={32} aria-hidden />
+          <img src="/apme.svg" alt="APME logo" height={32} width={32} aria-hidden="true" />
           <span style={{ fontWeight: 700, fontSize: 18, letterSpacing: 1.5 }}>
             APME
           </span>
@@ -47,6 +47,7 @@ export function ApmeMasthead() {
             >
               Documentation
             </DropdownItem>
+            {/* eslint-disable-next-line a11y/click-events-have-key-events -- PatternFly DropdownItem handles keyboard activation */}
             <DropdownItem
               id="about"
               onClick={() => setAboutOpen(true)}

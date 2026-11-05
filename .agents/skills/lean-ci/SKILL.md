@@ -31,7 +31,9 @@ locally-runnable tox environments; CI just calls them.
    pin. `tox-uv` is CI-only and is pinned in `ci/tox-requirements.txt` (#591).
 
 3. **No scattered version pinning.** Python version is in `pyproject.toml`
-   (`requires-python`). Node is in `frontend/package.json` (`engines.node`).
+   (`requires-python`). Native UI Node support is in `frontend/package.json`;
+   the shared Backstage/Portal package baseline is in root `package.json`
+   (`engines.node`, constrained to the tested host-compatible major).
    Tool versions are managed in `.pre-commit-config.yaml`
    (ruff, mypy) and `pyproject.toml` (deps). Not in workflow YAML.
    Carve-out: CI installs `tox`/`tox-uv` with `uvx` from
@@ -40,13 +42,21 @@ locally-runnable tox environments; CI just calls them.
    version and the documented `uv tool install` pin aligned with the CI
    tox pin. `tox-uv` is CI-only and remains outside the project lock.
    Jobs that need Node use `actions/setup-node` with
-   `node-version-file: frontend/package.json`.
+   `node-version-file` pointing at the appropriate package manifest.
 
 4. **Minimal setup actions.** `astral-sh/setup-uv` and `actions/checkout` only.
    No `actions/setup-python` (uv handles it). No other setup actions without
    explicit justification.
-   **Exception:** `test.yml` jobs `ui` and `ui-workflow-pack` use
-   `actions/setup-node` because `tox -e ui` / `ui-workflow-pack` need `npm`.
+   **Exception:** `test.yml` jobs `ui`, `ui-workflow-pack`, and
+   `shared-packages`, plus the `attach-tarball` job in
+   `ui-workflow-release.yml`, use `actions/setup-node`. Their tox environments
+   run the UI tests, package type checks/tests/builds, or package build and
+   smoke checks; the release job verifies the local packed consumer and
+   release-mode package manifests before uploading release artifacts.
+   The `ui` job reads `frontend/package.json`; package workspace, shared
+   package, and release jobs read the root `package.json` because they install
+   from the root. Add jobs to this exception only when they are introduced
+   with `actions/setup-node`.
 
 5. **Pin actions to commit SHAs.** Mutable tags (`@v4`) allow upstream changes
    to affect CI without review. Always pin to a full commit SHA with a comment
@@ -84,9 +94,11 @@ CI has six workflows in `.github/workflows/`:
   ADR-047, not a violation of principle 2; `tox -e lint` is the local
   equivalent. Do not "fix" this without amending ADR-047.
 - **test.yml**: Runs `tox -e unit`, `tox -e integration`, `tox -e ui`,
-  `tox -e ai`, and `tox -e ui-workflow-pack` as separate jobs. Quality gate
-  for correctness. Coverage threshold is enforced via `--cov-fail-under` in
-  `tox.ini`.
+  `tox -e ai`, and `tox -e ui-workflow-pack` as separate jobs. Its
+  `shared-packages` job runs `tox -e frontend-ci,frontend-lint,frontend-unit,frontend-pack-smoke,frontend-release-pack-smoke`
+  to install, check, test, and verify local and release-mode package artifacts.
+  Quality gates for correctness. Coverage threshold is enforced via
+  `--cov-fail-under` in `tox.ini`.
 - **container-images.yml**: Builds and pushes multi-arch container images
   (`linux/amd64` + `linux/arm64`, ADR-063) to GHCR on `main`, version tags, and
   `workflow_dispatch`, then merges manifests via
@@ -94,7 +106,10 @@ CI has six workflows in `.github/workflows/`:
 - **deprecation-scrape.yml**: Monthly cron scraping ansible-core for deprecation
   gaps.
 - **pr-feedback.yml**: Labels PRs with failing checks or merge conflicts.
-- **ui-workflow-release.yml**: Publishes the `@apme/ui-workflow` release tarball.
+- **ui-workflow-release.yml**: For stable `vX.Y.Z` releases, runs standard
+  package checks and a local packed-consumer smoke check, then packs and
+  verifies release-mode manifests for `@apme/client` and `@apme/ui-workflow`
+  before uploading their tarballs, `manifest.json`, and `SHA256SUMS`.
 
 `prek.yml` and `test.yml` trigger on `pull_request` targeting `main` and use
 `concurrency` groups with `cancel-in-progress` to avoid stacking runs on rapid

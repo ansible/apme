@@ -1,6 +1,6 @@
-# Attach @apme/ui-workflow tarball to the main APME release (ADR-066).
+# Attach client and workflow tarballs to the main release (ADR-066/073).
 # Runs after a GitHub Release is published; derives version from the tag.
-name: UI workflow package artifact
+name: UI package artifacts
 
 on:
   release:
@@ -27,7 +27,9 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version-file: package.json
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Derive version from tag
         id: ver
@@ -39,27 +41,27 @@ jobs:
             exit 1
           fi
           printf 'version=%s\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
-          printf 'tarball=apme-ui-workflow-%s.tgz\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
         env:
           GITHUB_EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
 
-      - name: Install frontend deps
-        working-directory: frontend
-        run: npm ci
+      - name: Verify standard packages
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-build,frontend-lint,frontend-unit
 
-      - name: Stamp version into package.json
-        working-directory: frontend/packages/ui-workflow
+      - name: Verify local packed consumer
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-pack-smoke
+
+      - name: Pack immutable release artifacts
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-        run: npm version "${VERSION}" --no-git-tag-version
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-pack -- --version "${VERSION}"
 
-      - name: npm pack (runs prepack → tsc + CSS copy)
-        working-directory: frontend
-        run: npm pack ./packages/ui-workflow
+      - name: Verify release package manifests
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-release-verify -- --version "${VERSION}"
 
-      - name: Upload tarball to release
+      - name: Upload packages and checksums to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
-          TARBALL: ${{ steps.ver.outputs.tarball }}
-        run: gh release upload --clobber "${TAG}" "frontend/${TARBALL}"
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-release-upload -- --tag "${TAG}"

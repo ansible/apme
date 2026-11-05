@@ -15,6 +15,7 @@ WORKDIR /app
 # EUNSUPPORTEDPROTOCOL).
 COPY frontend/package.json frontend/package-lock.json* ./
 COPY frontend/packages/ui-workflow/package.json ./packages/ui-workflow/
+COPY frontend/packages/apme-client/package.json ./packages/apme-client/
 COPY frontend/vendor ./vendor
 RUN npm ci
 COPY frontend/ .

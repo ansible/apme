@@ -228,7 +228,7 @@ export function ActivityPage() {
                     />
                   </td>
                   <td role="cell" style={{ opacity: 0.7 }}>{timeAgo(item.created_at)}</td>
-                  <td role="cell" onClick={(e) => e.stopPropagation()}>
+                  <td role="cell">
                     {isResumable && item.project_id ? (
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <Button

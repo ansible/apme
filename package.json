@@ -1,0 +1,62 @@
+{
+  "name": "apme-ui-workspaces",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "workspaces": [
+    "frontend/packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow",
+    "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json",
+    "lint:ui": "node frontend/backstage/scripts/check-eslint-minimatch.mjs && eslint . --ext .ts,.tsx",
+    "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",
+    "pack": "node frontend/backstage/scripts/pack.mjs",
+    "format": "prettier --write eslint.config.mjs frontend/backstage frontend/packages/apme-client",
+    "format:check": "prettier --check eslint.config.mjs frontend/backstage frontend/packages/apme-client",
+    "pack:verify": "node frontend/backstage/scripts/verify-pack.mjs",
+    "pack:verify:release": "node frontend/backstage/scripts/verify-release-pack.mjs"
+  },
+  "dependencies": {
+    "@patternfly/react-core": "6.6.2",
+    "@patternfly/react-icons": "6.6.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "^6.0.5",
+    "esbuild": "0.28.2",
+    "eslint": "10.14.0",
+    "eslint-plugin-a11y": "1.4.0",
+    "eslint-plugin-jsdoc": "^65.4.3",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "jsdom": "^30.1.1",
+    "prettier": "^3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "overrides": {
+    "minimatch@^10.0.1": "11.0.1",
+    "minimatch@^10.2.2": "11.0.1",
+    "minimatch@^10.2.4": "11.0.1",
+    "minimatch@^10.2.6": "11.0.1",
+    "@module-federation/dts-plugin": {
+      "undici": "7.30.1"
+    },
+    "@red-hat-developer-hub/cli": {
+      "@backstage/cli-module-auth": "0.1.5",
+      "@backstage/cli-module-new": "0.1.8"
+    }
+  }
+}

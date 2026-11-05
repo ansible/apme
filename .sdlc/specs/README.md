@@ -30,6 +30,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-018 | Python AST Validator | PHASE-002 | Draft |
 | REQ-019 | Scan Attestation | Unassigned | Draft |
 | REQ-020 | Unified Supply Chain Security (SBOM, CVE, CWE) | PHASE-003 | Draft |
+| REQ-021 | APME UI Host Consolidation | PHASE-003 | In Progress |
 
 ## Directory Structure
 
@@ -57,7 +58,8 @@ specs/
 ├── REQ-017-python-import-deprecations/
 ├── REQ-018-python-ast-validator/
 ├── REQ-019-scan-attestation/
-└── REQ-020-unified-supply-chain-security/
+├── REQ-020-unified-supply-chain-security/
+└── REQ-021-ui-host-consolidation/
 ```
 
 ## Phase Relationship
@@ -84,7 +86,8 @@ PHASE-003: Enterprise Dashboard (In Progress)
 ├── REQ-013: Extended OPA Policy Inputs (Draft)
 ├── REQ-014: Policy Permissive Mode (Draft)
 ├── REQ-016: Phase 2 SCM Providers (In Progress)
-└── REQ-020: Unified Supply Chain Security (Draft)
+├── REQ-020: Unified Supply Chain Security (Draft)
+└── REQ-021: APME UI Host Consolidation (In Progress)
 
 PHASE-004: AI Remediation (Implemented)
 └── DR-005: AI-Assisted Remediation (Decided)

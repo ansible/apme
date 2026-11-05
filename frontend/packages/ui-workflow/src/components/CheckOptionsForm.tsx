@@ -11,6 +11,7 @@ import {
 import { listAiModels, type AiModelInfo } from '../api/listAiModels';
 import { useApmeApi } from '../api/apmeApiAdapter';
 import { AI_MODEL_STORAGE_KEY } from '../shared/constants';
+import { ANSIBLE_CORE_VERSION_OPTIONS } from '../shared/ansibleCoreVersions';
 
 export interface CheckOptionsFormProps {
   ansibleVersion: string;
@@ -48,9 +49,18 @@ export function CheckOptionsForm({
   const prefix = idPrefix ? `${idPrefix}-` : '';
   const api = useApmeApi();
   const [models, setModels] = useState<AiModelInfo[]>([]);
+  const [customVersionSelected, setCustomVersionSelected] = useState(false);
   const [selectedModel, setSelectedModel] = useState(
     () => localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? '',
   );
+
+  useEffect(() => {
+    if (ANSIBLE_CORE_VERSION_OPTIONS.some((version) => version === ansibleVersion)) {
+      setCustomVersionSelected(false);
+    } else if (ansibleVersion) {
+      setCustomVersionSelected(true);
+    }
+  }, [ansibleVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,12 +97,39 @@ export function CheckOptionsForm({
           <label htmlFor={`${prefix}ansible-version`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
             Ansible Core Version
           </label>
-          <TextInput
+          <FormSelect
             id={`${prefix}ansible-version`}
-            placeholder="e.g. 2.16"
-            value={ansibleVersion}
-            onChange={(_e, v) => onAnsibleVersionChange(v)}
-          />
+            value={customVersionSelected ? '__custom__' : ansibleVersion}
+            onChange={(_e, v) => {
+              if (v === '__custom__') {
+                setCustomVersionSelected(true);
+                if (ANSIBLE_CORE_VERSION_OPTIONS.some((version) => version === ansibleVersion)) {
+                  onAnsibleVersionChange('');
+                }
+              } else {
+                setCustomVersionSelected(false);
+                onAnsibleVersionChange(v);
+              }
+            }}
+          >
+            <FormSelectOption value="" label="Engine default" />
+            <FormSelectOption value="__custom__" label="Custom version…" />
+            {ansibleVersion && !ANSIBLE_CORE_VERSION_OPTIONS.some((version) => version === ansibleVersion) && (
+              <FormSelectOption value={ansibleVersion} label={`ansible-core ${ansibleVersion}`} />
+            )}
+            {ANSIBLE_CORE_VERSION_OPTIONS.map((version) => (
+              <FormSelectOption key={version} value={version} label={`ansible-core ${version}`} />
+            ))}
+          </FormSelect>
+          {customVersionSelected && (
+            <TextInput
+              aria-label="Custom Ansible Core version"
+              placeholder="e.g. 2.16.3 or 2.21"
+              value={ansibleVersion}
+              onChange={(_e, value) => onAnsibleVersionChange(value)}
+              style={{ marginTop: 8 }}
+            />
+          )}
         </FlexItem>
         {showCollections && (
           <FlexItem>
