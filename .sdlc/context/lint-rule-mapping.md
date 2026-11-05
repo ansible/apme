@@ -12,7 +12,7 @@ Rule IDs categorize the **type of check**, not the validator that runs it. The v
 |--------|----------|-------|
 | **L** | Lint (style, correctness, best practice) | Any validator can implement an L rule |
 | **M** | Modernize (keep code current with ansible-core) | Uses ansible-core runtime metadata |
-| **R** | Risk/security (annotation-based) | Any validator can implement an R rule |
+| **R** | Risk/security and advisory rules | Any validator can implement an R rule |
 | **P** | Policy/validation (legacy) | Superseded by L058/L059 |
 
 > **Note**: `src/apme_engine/validators/native/rules/rule_versions.json` includes entries for both previous (R301, R302, ...) and current (L026, L027, ...) IDs for the renumbered rules; the loader uses the current `rule_id` (L###) when looking up version info.
@@ -50,11 +50,11 @@ L001 was removed — its scope was limited to shell tasks without names, which i
 | run-once | L023 | Consider whether run_once is appropriate |
 | name[missing] | L024 | Task should have a name |
 | name[casing] | L025 | Task/play name should start with uppercase |
-| (new) | R118 | Inbound transfer (annotation-based, any external source) |
+| (new) | R118 | Inbound transfer from remote or templated sources for modules in APME's static inbound risk profiles |
 
 ---
 
-## Native (Python) Rules — L026-L039
+## Native (Python) Rules — L026-L036, L038-L039
 
 | Previous rule_id (ARI) | New ID | File | Description |
 |------------------------|--------|------|-------------|
@@ -69,7 +69,6 @@ L001 was removed — its scope was limited to shell tasks without names, which i
 | R203 | L034 | `L034_unused_override.py` | Unused override |
 | R204 | L035 | `L035_unnecessary_set_fact.py` | Unnecessary set_fact |
 | R205 | L036 | `L036_unnecessary_include_vars.py` | Unnecessary include_vars |
-| R304 | L037 | `L037_unresolved_module.py` | Unresolved module |
 | R305 | L038 | `L038_unresolved_role.py` | Unresolved role |
 | R306 | L039 | `L039_undefined_variable.py` | Undefined variable |
 
@@ -86,25 +85,26 @@ L001 was removed — its scope was limited to shell tasks without names, which i
 | L044 | `L044_avoid_implicit.py` | Avoid implicit state (set state explicitly) |
 | L045 | `L045_inline_env_var.py` | Avoid inline environment in tasks |
 | L046 | `L046_no_free_form.py` | Avoid raw/command/shell without args key |
-| L047 | `L047_no_log_password.py` | no_log for password-like params (opt-in, disabled by default) |
-| L048 | `L048_no_same_owner.py` | copy with remote_src set owner (opt-in, disabled by default) |
+| L047 | `L047_no_log_password.py` | no_log for password-like params (enabled by default; pattern coverage is implementation-specific) |
+| L048 | `L048_no_same_owner.py` | copy with remote_src set owner (enabled by default; limited case) |
 | L049 | `L049_loop_var_prefix.py` | Loop variable prefix (e.g. `item_`) |
 | L050 | `L050_var_naming.py` | Variable naming (lowercase, underscores) |
 | L051 | `L051_jinja.py` | Jinja spacing `{{ var }}` |
-| L052 | `L052_galaxy_version_incorrect.py` | Galaxy version format in meta |
+| L052 | `L052_galaxy_version_incorrect.py` | Role `galaxy_info.version` format (`x.y` or `x.y.z`), not collection `galaxy.yml` version |
 | L053 | `L053_meta_incorrect.py` | Role meta structure |
-| L054 | `L054_meta_no_tags.py` | Role meta galaxy_tags |
+| L054 | `L054_meta_no_tags.py` | Role metadata tag presence (does not validate upstream tag format; accepts non-empty `categories`) |
 | L055 | `L055_meta_video_links.py` | Role meta video_links URLs |
-| L056 | `L056_sanity.py` | Path matches sanity ignore pattern |
+| L056 | `L056_sanity.py` | Flags nodes under common ignored/generated paths; not ansible-lint sanity ignore-file validation |
 
 ---
 
-## Ansible Validator Rules — L057-L059
+## Ansible Validator Rules — L037, L057-L059
 
 These rules require an Ansible runtime (pre-built venv with ansible-core). They run in the Ansible validator service.
 
 | Rule ID | Description | Method |
 |---------|-------------|--------|
+| L037 | Unresolved module via Ansible module/action plugin loaders | subprocess |
 | L057 | Syntax check (`ansible-playbook --syntax-check`) | subprocess |
 | L058 | Argspec validation (docstring-based: parses DOCUMENTATION string) | subprocess |
 | L059 | Argspec validation (mock/patch-based: captures real argument_spec) | subprocess |
@@ -114,7 +114,7 @@ These rules require an Ansible runtime (pre-built venv with ansible-core). They 
 | Rule | Method | Characteristics |
 |------|--------|-----------------|
 | L058 | Parses the module's `DOCUMENTATION` string | Safe (no code execution), fast, but may drift from actual argument_spec |
-| L059 | Patches `AnsibleModule.__init__` and calls `module.main()` to capture the real argument_spec | More accurate, catches `mutually_exclusive`/`required_together`/`required_if`, but executes module import code |
+| L059 | Patches `AnsibleModule.__init__` and calls `module.main()` to capture the real argument_spec | Checks `mutually_exclusive` and `required_together`; it does not enforce `required_if` or `required_one_of`, and imports module code |
 
 Both can run simultaneously; each has a unique rule ID so users can enable/disable independently.
 

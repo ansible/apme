@@ -12,6 +12,7 @@ from apme_engine.graph.rules._module_risk_mapping import (
     get_risk_profile,
     resolve_field,
 )
+from apme_engine.graph.sensitivity import redact_urls_in_text
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
 
@@ -97,7 +98,7 @@ class FileDeletionGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
-        detail: YAMLDict = {"path": path_val}
+        detail: YAMLDict = {"path": redact_urls_in_text(path_val)}
         return GraphRuleResult(
             verdict=True,
             detail=detail,

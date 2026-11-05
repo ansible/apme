@@ -1,7 +1,7 @@
 ---
 rule_id: R108
 validator: native
-description: Privilege escalation (annotation-based).
+description: Task or play enables privilege escalation.
 scope: play
 ai_prompt: |
   This rule flags privilege escalation (become: true). Many tasks

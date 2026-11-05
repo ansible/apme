@@ -187,9 +187,16 @@ def run(
     for node in task_nodes:
         module = node.get("module", "")
         module_options = node.get("module_options")
-        if not module or not isinstance(module_options, dict) or not module_options:
+        if not module or not isinstance(module_options, dict):
             continue
         module_str = str(module)
+        collections = node.get("collections_in_play", [])
+        if (
+            module_str.count(".") < 2
+            and isinstance(collections, list | tuple)
+            and any(str(name) not in {"ansible.builtin", "ansible.legacy"} for name in collections)
+        ):
+            continue
         task_modules[module_str] = True
         tasks_for_check.append(
             {

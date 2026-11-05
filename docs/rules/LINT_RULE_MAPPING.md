@@ -5,14 +5,20 @@
 > and prefix conventions. This document retains **ansible-lint name cross-references**
 > and historical renumbering tables only.
 
+> **Coverage caveat:** this is an ID cross-reference, not a parity guarantee.
+> See [APME_ANSIBLE_LINT_ARI_REVIEW.md](APME_ANSIBLE_LINT_ARI_REVIEW.md) for
+> current implementation scope. L037 now uses Ansible plugin resolution, and
+> OPA R118 receives inbound annotations synthesized from APME's local module
+> risk profiles; see the detailed review for the remaining scope limits.
+
 Rule IDs categorize the **type of check**, not the validator that runs it. The validator is an implementation detail.
 
 | Prefix | Category | Notes |
 |--------|----------|-------|
 | L | Lint (style, correctness, best practice) | Any validator can implement an L rule |
 | M | Modernize (keep code current with ansible-core) | Uses ansible-core runtime metadata |
-| R | Risk/security (annotation-based) | Any validator can implement an R rule |
-| P | Policy/validation (legacy) | Superseded by L058/L059 |
+| R | Risk/security | Any validator can implement an R rule |
+| P | Policy/validation (legacy) | Delegated counterparts use L037/M001, L058/L059, and L039 |
 | A | AAP-specific (platform compatibility, APIs) | A001–A099 |
 | SEC: | Secrets (Gitleaks) | Always **critical** severity per ADR-043 |
 
@@ -51,9 +57,9 @@ L002 was removed — its FQCN check (syntactic dot-count) is superseded by **M00
 | run-once | L023 | Consider whether run_once is appropriate |
 | name[missing] | L024 | Task should have a name |
 | name[casing] | L025 | Task/play name should start with uppercase |
-| (new) | R118 | Inbound transfer (annotation-based, any external source) |
+| (new) | R118 | Inbound transfer based on risk annotations synthesized from APME's module profiles during OPA serialization |
 
-## Native (Python) rules — L026-L039
+## Native (Python) rules — L026-L036, L038-L039
 
 | Previous rule_id (ARI) | New ID | File | Description |
 |------------------------|--------|------|-------------|
@@ -68,7 +74,6 @@ L002 was removed — its FQCN check (syntactic dot-count) is superseded by **M00
 | R203 | L034 | L034_unused_override.py | Unused override |
 | R204 | L035 | L035_unnecessary_set_fact.py | Unnecessary set_fact |
 | R205 | L036 | L036_unnecessary_include_vars.py | Unnecessary include_vars |
-| R304 | L037 | L037_unresolved_module.py | Unresolved module |
 | R305 | L038 | L038_unresolved_role.py | Unresolved role |
 | R306 | L039 | L039_undefined_variable.py | Undefined variable |
 
@@ -83,31 +88,32 @@ L002 was removed — its FQCN check (syntactic dot-count) is superseded by **M00
 | L044 | L044_avoid_implicit.py | Avoid implicit state (set state explicitly) |
 | L045 | L045_inline_env_var.py | Avoid inline environment in tasks |
 | L046 | L046_no_free_form.py | Avoid raw/command/shell without args key |
-| L047 | L047_no_log_password.py | no_log for password-like params (opt-in, disabled by default) |
-| L048 | L048_no_same_owner.py | copy with remote_src set owner (opt-in, disabled by default) |
+| L047 | L047_no_log_password.py | no_log for password-like params (enabled by default; pattern coverage is implementation-specific) |
+| L048 | L048_no_same_owner.py | copy with remote_src set owner (enabled by default; limited case) |
 | L049 | L049_loop_var_prefix.py | Loop variable prefix (e.g. item_) |
 | L050 | L050_var_naming.py | Variable naming (lowercase, underscores) |
 | L051 | L051_jinja.py | Jinja spacing {{ var }} |
-| L052 | L052_galaxy_version_incorrect.py | Galaxy version format in meta |
+| L052 | L052_galaxy_version_incorrect.py | Role `galaxy_info.version` format (`x.y` or `x.y.z`), not collection `galaxy.yml` version |
 | L053 | L053_meta_incorrect.py | Role meta structure |
-| L054 | L054_meta_no_tags.py | Role meta galaxy_tags |
+| L054 | L054_meta_no_tags.py | Role metadata tags presence (does not validate upstream tag format; accepts non-empty `categories`) |
 | L055 | L055_meta_video_links.py | Role meta video_links URLs |
-| L056 | L056_sanity.py | Path matches sanity ignore pattern |
+| L056 | L056_sanity.py | Flag nodes under common ignored/generated paths; not ansible-lint sanity ignore-file validation |
 | L060 | L060_line_length.py | Line too long (> 160 characters) |
 
-## Ansible validator rules — L057-L059
+## Ansible validator rules — L037, L057-L059
 
 These rules require an Ansible runtime (pre-built venv with ansible-core). They run in the Ansible validator service.
 
 | Rule ID | Description | Method |
 |---------|-------------|--------|
+| L037 | Unresolved module from Ansible's module/action plugin loaders | subprocess |
 | L057 | Syntax check (`ansible-playbook --syntax-check`) | subprocess |
 | L058 | Argspec validation (docstring-based: parses DOCUMENTATION string) | subprocess |
 | L059 | Argspec validation (mock/patch-based: captures real `argument_spec`) | subprocess |
 
 L058 and L059 both check module arguments but use different extraction methods:
 - **L058** parses the module's `DOCUMENTATION` string -- safe (no code execution), fast, but may drift from actual argument_spec.
-- **L059** patches `AnsibleModule.__init__` and calls `module.main()` to capture the real `argument_spec` -- more accurate, catches `mutually_exclusive`/`required_together`/`required_if`, but executes module import code.
+- **L059** patches `AnsibleModule.__init__` and calls `module.main()` to capture the runtime `argument_spec`; it checks `mutually_exclusive` and `required_together`, but does not enforce `required_if` or `required_one_of` and imports module code.
 
 Both can run simultaneously; each has a unique rule ID so users can enable/disable independently.
 
@@ -138,6 +144,9 @@ These rules operate on the content graph via native Python `GraphRule` implement
 | Rule ID | File | Description |
 |---------|------|-------------|
 | L111 | L111_inventory_group_hyphens_graph.py | Inventory group names should not contain hyphens |
+| L112 | L112_latest_vcs_version_graph.py | Git/Hg tasks should select an explicit version |
+| L113 | L113_role_name_graph.py | Role names should match the lowercase identifier convention |
+| L114 | L114_collection_version_graph.py | Collection versions must be valid and at least 1.0.0 |
 
 ## Modernize rules — M001-M004 / M048 (ansible validator)
 
@@ -195,7 +204,7 @@ These rules are generated by the deprecation pipeline and detect patterns deprec
 ## Other rule namespaces (unchanged)
 
 - **R###** -- Risk/security rules (e.g. R101, R103-R109, R111-R115, R117, R118, R401-R404, R501) remain R###. R118 is an OPA rule; the rest are native.
-- **P###** -- Policy/validation rules (P001-P004) -- legacy; superseded by L058/L059 and M001.
+- **P###** -- Policy/validation rules (P001-P004) -- delegated descriptions; runtime counterparts include L037/M001, L058/L059, and L039.
 - **A###** -- AAP-specific rules (A001-A002) -- platform compatibility and deprecated APIs.
 - **SEC:*** -- Gitleaks secret detection; always critical severity.
 - **Sample101** -- Sample rule; unchanged.

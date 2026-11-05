@@ -51,6 +51,14 @@ _OPAQUE_TOKEN_RE = re.compile(
 )
 _WORD_BOUNDARY_RE = re.compile(r"(?:^|[_.'\"\[])({})(?:[_.'\"\[\]]|$)".format("|".join(_SENSITIVE_WORDS)))
 _URL_USERINFO_RE = re.compile(r"^([^:/?#]+)://([^/?#]*)@")
+_URL_LITERAL_RE = re.compile(
+    r"(?i)\b[a-z][a-z0-9+.-]*://"
+    r"(?:\{\{(?:(?!\}\})[^\n])*\}\}|\{%[^\n]*?%\}|(?!\{\{|\{%)[^\s\"'<>])+"
+)
+_SCP_LITERAL_RE = re.compile(
+    r"(?<![\w.-])(?:([^@\s\"'<>]+)@)?([^:/\s\"'<>]+):"
+    r"(?:\{\{(?:(?!\}\})[^\n])*\}\}|\{%[^\n]*?%\}|(?!\{\{|\{%)[^\s\"'<>])+"
+)
 
 
 def redact_url_userinfo(url: str) -> str:
@@ -68,6 +76,51 @@ def redact_url_userinfo(url: str) -> str:
     scheme = match.group(1)
     rest = url[match.end() :]
     return f"{scheme}://{REDACTED}@{rest}"
+
+
+def redact_url_query(url: str) -> str:
+    """Replace URL query and fragment contents so tokens are not exposed.
+
+    Args:
+        url: URL or source string that may contain a query component.
+
+    Returns:
+        The source with its query and fragment replaced by ``[REDACTED]``.
+    """
+    query_start = url.find("?")
+    fragment_start = url.find("#")
+    if fragment_start >= 0 and (query_start < 0 or fragment_start < query_start):
+        return f"{url[:fragment_start]}#[REDACTED]"
+    if query_start < 0:
+        return url
+    if fragment_start < 0:
+        return f"{url[:query_start]}?[REDACTED]"
+    return f"{url[:query_start]}?[REDACTED]#[REDACTED]"
+
+
+def redact_urls_in_text(value: str) -> str:
+    """Redact URL credentials, query, and fragment contents in text.
+
+    Args:
+        value: Text that may contain URLs or SCP-style source strings.
+
+    Returns:
+        Text with URL credentials, queries, and fragments redacted.
+    """
+    sanitized = _URL_LITERAL_RE.sub(
+        lambda match: redact_url_query(redact_url_userinfo(match.group(0))),
+        value,
+    )
+
+    def redact_scp_source(match: re.Match[str]) -> str:
+        userinfo, host, path = match.groups()
+        safe_source = f"{host}:{redact_url_query(path)}"
+        if userinfo is None:
+            return safe_source
+        safe_userinfo = "[REDACTED]" if ":" in userinfo else userinfo
+        return f"{safe_userinfo}@{safe_source}"
+
+    return _SCP_LITERAL_RE.sub(redact_scp_source, sanitized)
 
 
 def var_looks_sensitive(var_name: str) -> bool:

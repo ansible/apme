@@ -1,7 +1,7 @@
 ---
 rule_id: R105
 validator: native
-description: Outbound transfer (annotation-based).
+description: Outbound transfer to a parameterized destination.
 scope: task
 ai_prompt: |
   This rule flags outbound data transfers to parameterized URLs. Evaluate

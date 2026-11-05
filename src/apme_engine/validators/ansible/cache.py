@@ -78,15 +78,20 @@ def _ansible_core_version(venv_root: str) -> str:
     return ""
 
 
-_COLLECTION_SEARCH_ENV_KEYS = (
+_PLUGIN_SEARCH_ENV_KEYS = (
+    "HOME",
+    "ANSIBLE_HOME",
     "ANSIBLE_COLLECTIONS_PATH",
     "ANSIBLE_COLLECTIONS_PATHS",
+    "ANSIBLE_COLLECTIONS_SCAN_SYS_PATH",
+    "ANSIBLE_LIBRARY",
+    "ANSIBLE_ACTION_PLUGINS",
     "ANSIBLE_CONFIG",
 )
 
 
 def _collection_search_fingerprint(env_extra: dict[str, str] | None) -> str:
-    """Fingerprint environment overrides that affect plugin resolution.
+    """Fingerprint environment values that affect plugin resolution.
 
     Args:
         env_extra: Optional overrides merged into the subprocess environment.
@@ -99,7 +104,7 @@ def _collection_search_fingerprint(env_extra: dict[str, str] | None) -> str:
     for source in (env_extra, os.environ):
         if not source:
             continue
-        for key in _COLLECTION_SEARCH_ENV_KEYS:
+        for key in _PLUGIN_SEARCH_ENV_KEYS:
             if key in source and key not in seen:
                 parts.append(f"{key}={source[key]}")
                 seen.add(key)

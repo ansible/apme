@@ -12,6 +12,7 @@ from apme_engine.graph.rules._module_risk_mapping import (
     get_risk_profile,
     resolve_field,
 )
+from apme_engine.graph.sensitivity import REDACTED, redact_urls_in_text
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
 
@@ -105,8 +106,10 @@ class OutboundTransferGraphRule(GraphRule):
         detail: YAMLDict = {}
         src = resolve_field(mo, profile, "src")
         if src:
-            detail["from"] = src
-        detail["to"] = dest
+            # The URI profile maps ``src`` to the request body. It may contain
+            # arbitrary sensitive payload data, so do not echo it in details.
+            detail["from"] = REDACTED if profile.fields.get("src") == "body" else redact_urls_in_text(str(src))
+        detail["to"] = redact_urls_in_text(dest)
         return GraphRuleResult(
             verdict=True,
             detail=detail,

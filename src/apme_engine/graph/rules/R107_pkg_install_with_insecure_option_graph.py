@@ -8,6 +8,7 @@ from apme_engine.graph.rules._module_risk_mapping import (
     get_risk_profile,
     resolve_field,
 )
+from apme_engine.graph.sensitivity import redact_urls_in_text
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
 
@@ -128,7 +129,7 @@ class InsecurePkgInstallGraphRule(GraphRule):
             insecure = True
 
         pkg = resolve_field(mo, profile, "pkg")
-        detail: YAMLDict = {"pkg": pkg} if pkg else {}
+        detail: YAMLDict = {"pkg": redact_urls_in_text(pkg)} if pkg else {}
 
         return GraphRuleResult(
             verdict=insecure,

@@ -25,11 +25,15 @@ Rules needed stable, human-readable IDs. The original ansible-lint used kebab-ca
 
 | Prefix | Category | Examples |
 |--------|----------|----------|
-| **L** | Lint (style, correctness, best practice) | L002–L059 |
-| **M** | Modernize (ansible-core migration) | M001–M004 |
-| **R** | Risk/security (annotation-based) | R101–R501, R118 |
+| **L** | Lint (style, correctness, best practice) | L002–L114 (with gaps) |
+| **M** | Modernize (ansible-core migration) | M001–M048 (with gaps) |
+| **R** | Risk/security and advisory rules | R101–R501 (with gaps) |
 | **P** | Policy (legacy, requires ansible runtime) | P001–P004 |
 | **A** | AAP-specific (platform compatibility, APIs) | A001–A099 |
+
+Rule ranges are illustrative, not a promise that every ID is implemented.
+The current catalog is the source of truth for registered rules and their
+validators.
 
 ## Rationale
 
@@ -57,14 +61,13 @@ Rules needed stable, human-readable IDs. The original ansible-lint used kebab-ca
 ### Rule Ranges
 
 ```
-L001-L099: Core lint rules (style, naming, structure)
-L100-L199: Reserved for future lint rules
+L001-L199: Lint rules (style, correctness, naming, structure)
 
 M001-M099: Modernization rules (ansible-core version migration)
 
-R001-R099: Risk annotation rules
-R100-R199: Security pattern rules
-R500-R599: Secret detection rules (Gitleaks)
+R001-R499: Risk/security graph and OPA rules
+R501: Advisory collection dependency suggestion
+R500, R502-R599: Unassigned; Gitleaks uses SEC:* IDs
 
 P001-P099: Policy rules (require ansible runtime)
 
@@ -92,4 +95,4 @@ AAP platform-specific rules warrant their own category to distinguish them from 
 ## Related Decisions
 
 - ADR-002: OPA/Rego rules (implements L-rules)
-- ADR-010: Gitleaks (implements R5xx rules)
+- ADR-010: Gitleaks (uses SEC:* IDs)

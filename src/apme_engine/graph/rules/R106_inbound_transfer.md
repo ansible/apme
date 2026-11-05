@@ -1,7 +1,7 @@
 ---
 rule_id: R106
 validator: native
-description: Inbound transfer (annotation-based).
+description: Inbound transfer from a parameterized source.
 scope: task
 ---
 

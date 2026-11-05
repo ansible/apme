@@ -1,7 +1,7 @@
 ---
 rule_id: R115
 validator: native
-description: File deletion (annotation-based).
+description: File deletion uses a parameterized path.
 scope: task
 ---
 

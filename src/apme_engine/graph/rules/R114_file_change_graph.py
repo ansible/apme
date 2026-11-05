@@ -12,6 +12,7 @@ from apme_engine.graph.rules._module_risk_mapping import (
     get_risk_profile,
     resolve_field,
 )
+from apme_engine.graph.sensitivity import redact_urls_in_text
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
 
@@ -90,9 +91,9 @@ class FileChangeGraphRule(GraphRule):
 
         detail: YAMLDict = {}
         if path_val and is_templated(path_val):
-            detail["path"] = path_val
+            detail["path"] = redact_urls_in_text(path_val)
         if src_val and is_templated(src_val):
-            detail["src"] = src_val
+            detail["src"] = redact_urls_in_text(src_val)
 
         if not detail:
             return GraphRuleResult(

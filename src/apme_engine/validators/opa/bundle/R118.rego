@@ -17,7 +17,7 @@ inbound_transfer(tree, node) := v if {
 	ann.risk_type == "inbound_transfer"
 	count(node.line) > 0
 	src := object.get(ann, "src", null)
-	src_value := object.get(src, "value", "unknown source")
+	src_value := object.get(src, "value", "a remote or potentially remote source")
 	v := {
 		"rule_id": "R118",
 		"severity": "info",

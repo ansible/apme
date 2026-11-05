@@ -7,17 +7,17 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 ## Summary
 
-| Tier | Count | % of 159 |
+| Tier | Count | % of 162 |
 |------|-------|--------|
-| Tier 1 — auto (has transform) | 25 | 16% |
-| Tier 2 — AI (task/block, no fixer) | 70 | 44% |
-| Tier 3 — manual | 64 | 40% |
+| Tier 1 — auto (has transform) | 25 | 15% |
+| Tier 2 — AI (task/block, no fixer) | 72 | 44% |
+| Tier 3 — manual | 65 | 40% |
 
 ### Promotion potential
 
 - **26** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
 - **9** Tier 3 rules have mechanical fixes blocked by scope
-- **70 - 26 = 44** Tier 2 rules should stay AI (judgment/security)
+- **72 - 26 = 46** Tier 2 rules should stay AI (judgment/security)
 
 ### Tier 3 breakdown
 
@@ -27,7 +27,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | cross-file / data-flow context | 4 |
 | playbook scope | 11 |
 | collection scope | 10 |
-| role scope | 10 |
+| role scope | 11 |
 | play scope | 7 |
 | inventory scope | 3 |
 
@@ -61,7 +61,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M008 | OPA | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | OPA | high | task | with_* loops are deprecated; use loop instead. |
 
-## Tier 2 — AI (70 rules)
+## Tier 2 — AI (72 rules)
 
 ### Could move to Tier 1 auto
 
@@ -108,6 +108,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L033 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L035 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L036 | low | task | Task/block scope — AI can propose fix (Tier 2) |
+| L037 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | L039 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | L041 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L044 | low | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -121,6 +122,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L093 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L094 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L106 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
+| L112 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | M005 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | M022 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | M028 | high | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -143,7 +145,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | R115 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | SEC:* | critical | task | Task/block scope — AI can propose fix (Tier 2) |
 
-## Tier 3 — Manual (64 rules)
+## Tier 3 — Manual (65 rules)
 
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
@@ -154,7 +156,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L023 | OPA | info | play | — | Info severity — informational, no auto-fix |
 | L027 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L034 | Native | low | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
-| L037 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | L038 | Native | medium | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L040 | Native | info | playbook | Replace tabs with spaces | Info severity — informational, no auto-fix |
 | L042 | Native | info | play | — | Info severity — informational, no auto-fix |
@@ -197,6 +198,8 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L104 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | L105 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | L111 | Native | low | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
+| L113 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L114 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M010 | Native | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | M011 | OPA | high | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M025 | OPA | high | play | — | Scope 'play' — play/role/collection not AI-proposable |

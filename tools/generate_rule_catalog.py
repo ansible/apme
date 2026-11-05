@@ -53,7 +53,16 @@ _ANSIBLE_CONST = re.compile(r'RULE_ID\s*=\s*"([^"]+)"')
 _ANSIBLE_INLINE = re.compile(r'"rule_id":\s*"([^"]+)"')
 _REG_CALL = re.compile(r'reg\.register\(\s*"([^"]+)"')
 
-_SKIP_NATIVE_STEMS = {"__init__", "base_rule", "sample_rule", "graph_rule_base", "_module_risk_mapping"}
+_SKIP_NATIVE_STEMS = {
+    "__init__",
+    "base_rule",
+    "sample_rule",
+    "graph_rule_base",
+    "_module_risk_mapping",
+    # L037's old graph heuristic is disabled and superseded by semantic
+    # module resolution emitted from the Ansible plugin-introspection pass.
+    "L037_unresolved_module_graph",
+}
 
 
 @dataclass
@@ -283,6 +292,16 @@ def _get_test_cache() -> dict[str, list[str]]:
                 seen_ids.add(rid)
         seen_ids.update(_rule_ids_from_imports(text))
         for rid in seen_ids:
+            # L037's active implementation now runs through the Ansible
+            # plugin loader. The older graph heuristic, generic remediation
+            # classification, and protobuf conversion tests do not exercise
+            # the current validator behavior.
+            if rid == "L037" and rel in {
+                "test_task_local_graph_rules_batch2.py",
+                "test_remediation.py",
+                "test_violation_convert.py",
+            }:
+                continue
             cache.setdefault(rid, [])
             if rel not in cache[rid]:
                 cache[rid].append(rel)
@@ -602,7 +621,7 @@ def _prefix_section() -> list[str]:
         "|--------|----------|-----------|",
         "| **L** | Lint (style, correctness, best practice) | L001–L199 |",
         "| **M** | Modernize (ansible-core migration) | M001–M099 |",
-        "| **R** | Risk / security (annotation-based) | R001–R499 |",
+        "| **R** | Risk / security and advisory rules | R001–R501 |",
         "| **P** | Policy (legacy runtime validation) | P001–P099 |",
         "| **A** | AAP-specific (platform compatibility) | A001–A099 |",
         "| **SEC:** | Secrets (Gitleaks) | SEC:* |",

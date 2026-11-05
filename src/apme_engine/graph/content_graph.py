@@ -411,6 +411,7 @@ class ContentNode:
         violation_ledger: Mutable violation lifecycle records keyed by
             ``(node_id, rule_id)``.  Single source of truth for violation
             status and attribution.
+        collections_in_play: Collection search order in scope for task nodes.
         MAX_PROGRESSION: Upper bound on progression length per node (class-level).
     """
 
@@ -479,6 +480,9 @@ class ContentNode:
 
     # Violation ledger — single source of truth for violation lifecycle
     violation_ledger: dict[ViolationKey, ViolationRecord] = field(default_factory=dict)
+
+    # Task-level Ansible search context for short module names.
+    collections_in_play: list[str] = field(default_factory=list)
 
     @property
     def node_type(self) -> NodeType:
@@ -1921,6 +1925,7 @@ _CONTENT_NODE_SIMPLE_FIELDS: tuple[str, ...] = (
     "collection_files",
     "module_line_count",
     "module_functions_without_return_type",
+    "collections_in_play",
 )
 
 

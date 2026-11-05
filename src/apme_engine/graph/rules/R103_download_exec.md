@@ -1,7 +1,7 @@
 ---
 rule_id: R103
 validator: native
-description: Task downloads and executes (annotation-based).
+description: Task executes content downloaded by a preceding task.
 scope: task
 ai_prompt: |
   This rule flags download-then-execute patterns — a supply chain risk.
@@ -16,7 +16,7 @@ ai_prompt: |
 
 ## Download exec (R103)
 
-Task downloads and executes (annotation-based). Depends on annotations for INBOUND (mutable src) and CMD_EXEC.
+Checks APME's inbound and command module profiles. It searches preceding tasks in the same play for a templated download source, then checks whether that task's destination string appears in a later command. This is a local string-based analysis, not ARI annotation or path containment analysis.
 
 ### Example: violation
 
