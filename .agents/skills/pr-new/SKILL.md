@@ -122,6 +122,10 @@ artifact type, translate it:
    something they shouldn't? Also check every capability grant:
    permission scopes, CORS origins, container capabilities. Does each
    grant the minimum necessary?
+   For event-triggered workflows that mutate multiple PRs or issues,
+   verify the triggering PR identity before acting. In per-item mutation
+   loops, catch failures per item, continue processing, and report all
+   items that could not be updated.
    Trace every state-changing UI entry point against the host's permission
    defaults, including creation dialogs and deep links. For public HTTP routes,
    verify that rate limits and authorization precede expensive body parsing;
