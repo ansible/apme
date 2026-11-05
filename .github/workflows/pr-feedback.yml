@@ -242,28 +242,38 @@ jobs:
               return;
             }
 
+            const failedPullNumbers = [];
             for (const pullNumber of duplicatePullNumbers) {
-              const { data: pull } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pullNumber,
-              });
+              try {
+                const { data: pull } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
 
-              if (pull.state !== "open") {
-                console.log(`PR #${pullNumber} is already ${pull.state}; skipping.`);
-                continue;
+                if (pull.state !== "open") {
+                  console.log(`PR #${pullNumber} is already ${pull.state}; skipping.`);
+                  continue;
+                }
+
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullNumber,
+                  body: `Closed because the combined Dependabot update in #${combinedPullNumber} was merged.`,
+                });
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                  state: "closed",
+                });
+              } catch (error) {
+                core.warning(`Failed to close PR #${pullNumber}: ${error.message}`);
+                failedPullNumbers.push(pullNumber);
               }
+            }
 
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pullNumber,
-                body: `Closed because the combined Dependabot update in #${combinedPullNumber} was merged.`,
-              });
-              await github.rest.pulls.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pullNumber,
-                state: "closed",
-              });
+            if (failedPullNumbers.length > 0) {
+              core.setFailed(`Failed to close PRs: ${failedPullNumbers.join(", ")}`);
             }
