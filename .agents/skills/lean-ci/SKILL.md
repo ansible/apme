@@ -82,7 +82,7 @@ environment that developers run locally.
 | `tox -e e2e` | End-to-end pod scan (rebuild + start + scan + assert) | manual |
 | `tox -e pm` | Build + start + open browser | manual |
 
-Install: `uv tool install tox==4.64.4 --with tox-uv==1.36.0` (match CI pins, #591)
+Install: `uv tool install tox==4.64.9 --with tox-uv==1.36.1` (match CI pins, #591)
 
 ## Workflow structure
 
