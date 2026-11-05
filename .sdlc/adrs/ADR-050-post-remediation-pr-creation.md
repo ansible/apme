@@ -166,7 +166,9 @@ Error responses:
   operation is not a remediate scan, no patches available, or a previous
   submit claim is incomplete. An incomplete claim blocks tokened and tokenless
   retries until SCM state is verified; if nothing was published, start a new
-  operation with a new token.
+  operation with a new token. Reusing a token to change a branch-only result
+  into a PR request also conflicts; retry without the token to open a PR from
+  the recorded branch.
 - `422` — no SCM token configured (project or global), or SCM provider
   cannot be detected
 - `502` — SCM provider API error (upstream failure)
@@ -384,6 +386,8 @@ globally via `APME_GITHUB_API_URL`.
   because the remote outcome may be uncertain.
   Tokenless follow-up submits reuse the scan's recorded branch so a branch-only
   tokened submit can later open a PR without creating a second branch.
+  Replays also preserve the original `create_pr` intent: a token retry cannot
+  turn a stored branch-only result into a successful PR request.
   All three are returned on activity list and detail REST responses.
   Patched file content is stored in a related `patched_files` table with
   columns `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML
@@ -447,3 +451,4 @@ globally via `APME_GITHUB_API_URL`.
 | 2026-11-05 | Agent | Block tokenless retries of incomplete claims and scope the claim write to its own session |
 | 2026-11-05 | Agent | Release claims after read-only SCM failures, retaining them after mutation starts |
 | 2026-11-05 | Agent | Reuse the recorded branch for tokenless follow-up submits |
+| 2026-11-05 | Agent | Reject same-token replay that upgrades a branch-only result to PR creation |

@@ -797,6 +797,27 @@ async def _release_pre_mutation_submit_claim(scan_id: str, token: str) -> None:
         logger.warning("Failed to release pre-mutation submit claim for scan %s", scan_id, exc_info=True)
 
 
+def _reject_pr_creation_replay(body: SubmitRequest, response: SubmitResponse) -> None:
+    """Reject replay when it changes a branch-only submit into a PR request.
+
+    Args:
+        body: Current submit request.
+        response: Previously stored result for the idempotency token.
+
+    Raises:
+        HTTPException: If the stored result has no PR but the retry requests one.
+    """
+    if body.create_pr and response.pr_url is None:
+        raise HTTPException(
+            status_code=409,
+            detail=_coded_detail(
+                "idempotency_conflict",
+                "This submit token already completed without creating a pull request. "
+                "Submit without the token to open a PR from the recorded branch.",
+            ),
+        )
+
+
 async def _submit_operation_impl(
     project_id: str,
     body: SubmitRequest | None = None,
@@ -948,6 +969,7 @@ async def _submit_operation_impl(
                                 patch_hash=incoming_hash,
                             ),
                         )
+                        _reject_pr_creation_replay(body, cached_entry.response)
                         if state and cached_entry.response.pr_url:
                             get_operation_registry().set_pr_url(state.operation_id, cached_entry.response.pr_url)
                         return cached_entry.response
@@ -1030,6 +1052,7 @@ async def _submit_operation_impl(
                                 patch_hash=incoming_hash,
                             ),
                         )
+                        _reject_pr_creation_replay(body, durable_response)
                         async with _SUBMIT_IDEMPOTENCY_LOCK:
                             _put_idempotency_entry(
                                 _replay_key,

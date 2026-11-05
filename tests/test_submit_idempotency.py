@@ -1101,6 +1101,62 @@ async def test_tokenless_submit_reuses_recorded_branch(client: AsyncClient) -> N
     create_pr.assert_awaited_once()
 
 
+@pytest.mark.parametrize("clear_cache", [False, True])  # type: ignore[untyped-decorator]
+async def test_same_token_cannot_upgrade_branch_only_submit_to_pr(
+    client: AsyncClient,
+    clear_cache: bool,
+) -> None:
+    """A same-token retry cannot change a branch-only submit into a PR request.
+
+    Args:
+        client: Async test client.
+        clear_cache: Whether to exercise durable replay without the in-memory cache.
+
+    Returns:
+        None: Assert-only test.
+    """
+    project_id = f"proj-submit-pr-intent-{clear_cache}"
+    scan_id = f"scan-submit-pr-intent-{clear_cache}"
+    token = "8f90a1b2c3d4e5f60718293a4b5c6d7e"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id=f"op-submit-pr-intent-{clear_cache}",
+    )
+
+    branch_head = AsyncMock(return_value=None)
+    push_files = AsyncMock(return_value="commit-sha")
+    create_branch = AsyncMock(return_value="parent-sha")
+    create_pr = AsyncMock()
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=branch_head),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_files),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=create_pr),
+    ):
+        first_response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id, "submit_token": token, "create_pr": False},
+        )
+        assert first_response.status_code == 200, first_response.text
+        assert first_response.json()["pr_url"] is None
+        if clear_cache:
+            clear_submit_idempotency_store()
+
+        retry_response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id, "submit_token": token, "create_pr": True},
+        )
+
+    assert retry_response.status_code == 409, retry_response.text
+    assert retry_response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "Submit without the token" in retry_response.json()["detail"]["message"]
+    branch_head.assert_awaited_once()
+    push_files.assert_awaited_once()
+    create_branch.assert_awaited_once()
+    create_pr.assert_not_awaited()
+
+
 async def test_concurrent_same_token_submit_pushes_once(client: AsyncClient) -> None:
     """Concurrent same-token submits serialize; the duplicate replays.
 

@@ -649,6 +649,9 @@ both paths.
 When a retry can omit or change its idempotency key, derive branch and replay
 behavior from persisted submit state before falling back to request-derived
 defaults; test branch-only creation followed by a tokenless PR-creation retry.
+Bind replay to side-effect intent as well as resource identity; test that a
+same-token retry cannot silently change a branch-only result into a PR request
+through either the in-memory or durable replay path.
 
 For trust-boundary address checks, require destinations to be globally
 routable and inspect embedded address forms such as mapped or well-known
