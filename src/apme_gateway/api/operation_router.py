@@ -1215,12 +1215,23 @@ async def _submit_operation_impl(
                     )
             except HTTPException:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.warning("Submit-token claim failed for scan %s", scan_id, exc_info=True)
                 try:
                     await db.rollback()
                 except Exception:
                     logger.debug("Rollback after claim failure also failed", exc_info=True)
+                if state:
+                    get_operation_registry().transition(
+                        state.operation_id,
+                        OperationStatus.COMPLETED,
+                        error="Submit claim outcome is uncertain",
+                    )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Submit claim could not be confirmed; no SCM call was made. "
+                    "Check the scan and SCM state before retrying.",
+                ) from exc
 
         # SCM calls run under a bounded timeout (#15): token/scan locks are
         # held across this block, so a hung provider must fail fast (504)

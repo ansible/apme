@@ -363,6 +363,43 @@ async def test_lost_submit_claim_conflicts_for_another_token(client: AsyncClient
     create_pr.assert_not_awaited()
 
 
+async def test_submit_claim_failure_stops_before_scm(client: AsyncClient) -> None:
+    """An uncertain claim cannot proceed to external SCM operations.
+
+    Args:
+        client: Test HTTP client.
+    """
+    project_id = "proj-submit-claim-error"
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id="scan-submit-claim-error",
+        operation_id="op-submit-claim-error",
+    )
+
+    with (
+        patch("sqlalchemy.update", side_effect=RuntimeError("claim storage unavailable")),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": "a" * 32},
+        )
+
+    assert response.status_code == 503, response.text
+    assert "no SCM call was made" in response.json()["detail"]
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+    state = get_operation_registry().get_by_project(project_id)
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "Submit claim outcome is uncertain"
+
+
 async def test_replay_with_different_branch_is_409(client: AsyncClient) -> None:
     """Same token with a different branch_name returns 409 conflict.
 
