@@ -31,7 +31,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && mkdir -p dist/styles && cp src/styles/workflow.css dist/styles/workflow.css",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/styles dist/graph && cp src/styles/workflow.css dist/styles/workflow.css && cp src/graph/apme.svg dist/graph/apme.svg",
     "prepack": "npm run build"
   },
   "peerDependencies": {

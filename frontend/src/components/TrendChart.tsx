@@ -1,7 +1,7 @@
 import { useRef, type CSSProperties } from 'react';
 import { Card, CardBody } from '@patternfly/react-core';
 import type { TrendPoint } from '../types/api';
-import { SvgExportButtons } from './SvgExportButtons';
+import { SvgExportButtons } from '@apme/ui-workflow/graph';
 
 interface TrendChartProps {
   data: TrendPoint[];

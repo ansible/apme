@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Button } from '@patternfly/react-core';
+import APME_LOGO_SVG from './apme.svg?raw';
 
 interface SvgExportButtonsProps {
   svgRef: { current: SVGSVGElement | null };
@@ -38,23 +39,7 @@ const STYLE_PROPERTIES = [
   'ry',
 ];
 
-let logoDataUriPromise: Promise<string> | undefined;
-
-function getLogoDataUri(): Promise<string | undefined> {
-  if (!logoDataUriPromise) {
-    const logoUrl = new URL('/apme.svg', window.location.origin);
-    logoDataUriPromise = fetch(logoUrl)
-      .then((response) => {
-        if (!response.ok) throw new Error('Could not load the APME logo.');
-        return response.text();
-      })
-      .then((svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
-  }
-  return logoDataUriPromise.catch(() => {
-    logoDataUriPromise = undefined;
-    return undefined;
-  });
-}
+const logoDataUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(APME_LOGO_SVG)}`;
 
 function findBackgroundColor(svg: SVGSVGElement, fallback = '#ffffff'): string {
   let element: Element | null = svg.parentElement;
@@ -87,16 +72,6 @@ async function createExportSvg(
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
 
-  prepareSvg?.(clone);
-
-  const [minX, minY, width, height] = parseViewBox(clone);
-  const exportWidth = Math.max(width, 180);
-  const headerHeight = 64;
-  clone.setAttribute('viewBox', `${minX} ${minY - headerHeight} ${exportWidth} ${height + headerHeight}`);
-  clone.setAttribute('width', String(exportWidth));
-  clone.setAttribute('height', String(height + headerHeight));
-  clone.removeAttribute('style');
-
   const originalElements = [source, ...Array.from(source.querySelectorAll('*'))];
   const clonedElements = [clone, ...Array.from(clone.querySelectorAll('*'))];
   originalElements.slice(1).forEach((element, index) => {
@@ -113,7 +88,16 @@ async function createExportSvg(
     if (inlineStyles) copiedElement.setAttribute('style', inlineStyles);
   });
 
-  const logoDataUri = await getLogoDataUri();
+  prepareSvg?.(clone);
+
+  const [minX, minY, width, height] = parseViewBox(clone);
+  const exportWidth = Math.max(width, 180);
+  const headerHeight = 64;
+  clone.setAttribute('viewBox', `${minX} ${minY - headerHeight} ${exportWidth} ${height + headerHeight}`);
+  clone.setAttribute('width', String(exportWidth));
+  clone.setAttribute('height', String(height + headerHeight));
+  clone.removeAttribute('style');
+
   const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   background.setAttribute('x', String(minX));
   background.setAttribute('y', String(minY - headerHeight));
@@ -139,16 +123,14 @@ async function createExportSvg(
   panel.setAttribute('stroke-width', '1');
   badge.appendChild(panel);
 
-  if (logoDataUri) {
-    const logo = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-    logo.setAttribute('x', String(badgeX + 7));
-    logo.setAttribute('y', String(badgeY + 7));
-    logo.setAttribute('width', '40');
-    logo.setAttribute('height', '34');
-    logo.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-    logo.setAttribute('href', logoDataUri);
-    badge.appendChild(logo);
-  }
+  const logo = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+  logo.setAttribute('x', String(badgeX + 7));
+  logo.setAttribute('y', String(badgeY + 7));
+  logo.setAttribute('width', '40');
+  logo.setAttribute('height', '34');
+  logo.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  logo.setAttribute('href', logoDataUri);
+  badge.appendChild(logo);
 
   const wordmark = document.createElementNS('http://www.w3.org/2000/svg', 'text');
   wordmark.setAttribute('x', String(badgeX + 56));

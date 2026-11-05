@@ -220,13 +220,14 @@ It uses tabs to organize functionality:
 - Ansible core version
 - Collection table (FQCN, version, source) — clickable to collection detail
 - Python package table — clickable to package detail
+- Dependency graph with APME-branded PNG/SVG downloads
 - Requirements file list
 - SBOM download button (CycloneDX JSON)
 
 ### Visualize Tab
 - ContentGraph visualization (loaded on demand)
-- Uses `GraphVisualization` component for D3/dagre rendering, fit/zoom, and
-  grouping controls
+- Uses the shared `@apme/ui-workflow/graph` renderer for D3/dagre rendering,
+  fit/zoom, and grouping controls
 - Exports rendered graph bounds, including visible group labels, to PNG or SVG
   with the APME logo and wordmark
 
@@ -318,8 +319,8 @@ Nginx handles:
 | `frontend/src/pages/PlaygroundPage.tsx` | File-upload sandbox |
 | `frontend/src/pages/RulesPage.tsx` | Rule catalog and override management |
 | `frontend/src/pages/ActivityDetailPage.tsx` | Scan detail (violations, logs, patches) |
-| `frontend/src/components/GraphVisualization.tsx` | ContentGraph D3 visualization |
-| `frontend/src/components/SvgExportButtons.tsx` | Branded PNG/SVG export controls and serialization |
+| `frontend/packages/ui-workflow/src/graph/GraphVisualization.tsx` | Shared ContentGraph and dependency graph D3 renderer |
+| `frontend/packages/ui-workflow/src/graph/SvgExportButtons.tsx` | Branded PNG/SVG export controls and serialization |
 | `frontend/src/components/OperationProgressPanel.tsx` | Real-time progress display |
 | `frontend/src/components/ProposalReviewPanel.tsx` | AI proposal review UI |
 | `frontend/src/components/OperationResultCard.tsx` | Operation result summary |
