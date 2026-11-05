@@ -870,7 +870,7 @@ async def test_durable_patch_verification_failure_does_not_replay_scan_pr(
                     branch_name=f"apme/{scan_id}",
                     commit_sha=f"sha-{scan_id}",
                     pr_url=f"https://github.com/org/repo/pull/{pr_number}",
-                    submit_token=token,
+                    submit_token=token if scan_id == durable_scan else None,
                     scm_provider="github",
                 )
             )
