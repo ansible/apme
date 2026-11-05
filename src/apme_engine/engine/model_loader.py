@@ -1105,6 +1105,7 @@ def load_playbooks(
         test_patterns = [
             os.path.join(path, "tests/**/*.ya?ml"),
             os.path.join(path, "molecule/**/*.ya?ml"),
+            os.path.join(path, "extensions/molecule/**/*.ya?ml"),
         ]
         test_results = safe_glob(test_patterns, recursive=True)
         # Merge and deduplicate

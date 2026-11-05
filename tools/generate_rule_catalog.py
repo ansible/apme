@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 NATIVE_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
+FILE_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"
 OPA_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "opa" / "bundle"
 ANSIBLE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "ansible" / "rules"
 GITLEAKS_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "gitleaks"
@@ -480,6 +481,25 @@ def _collect_native_rules() -> list[Rule]:
             )
         )
 
+    for md in sorted(FILE_RULES_DIR.glob("*.md")):
+        fm = _parse_frontmatter(md)
+        rid = fm.get("rule_id", "")
+        implementation = fm.get("implementation", "")
+        if not rid or not implementation:
+            continue
+        tests = _get_test_cache().get(rid, [])
+        rules.append(
+            Rule(
+                rule_id=rid,
+                validator="Native",
+                description=fm.get("description", ""),
+                has_impl=(FILE_RULES_DIR.parent / implementation).is_file(),
+                impl_file=implementation,
+                has_doc=True,
+                has_test=bool(tests),
+                test_files=tests,
+            )
+        )
     return rules
 
 

@@ -5,9 +5,27 @@ import re
 import subprocess
 from pathlib import Path
 
+import yaml
+
 RULE_ID = "L057"
 
 _TASK_DIRS = {"tasks", "handlers"}
+_PLAY_KEYS = frozenset(
+    {
+        "hosts",
+        "tasks",
+        "pre_tasks",
+        "post_tasks",
+        "handlers",
+        "roles",
+        "import_playbook",
+        "ansible.builtin.import_playbook",
+    }
+)
+_PLAY_MARKER = re.compile(
+    r"^(?:-\s+| {0,2})(?:hosts|tasks|pre_tasks|post_tasks|handlers|roles|(?:ansible\.builtin\.)?import_playbook)\s*:",
+    re.MULTILINE,
+)
 
 _PLAY_STRUCTURE_PATTERNS = (
     "is not a valid attribute for a play",
@@ -53,16 +71,37 @@ def _find_playbooks(root: Path) -> list[Path]:
     """
     playbooks = []
     for ext in ("*.yml", "*.yaml"):
-        for path in root.rglob(ext):
+        for path in sorted(root.rglob(ext)):
             if not path.is_file():
                 continue
             try:
                 text = path.read_text(errors="replace")
-                if "hosts:" in text or "tasks:" in text:
+                if _looks_like_playbook(text):
                     playbooks.append(path)
-            except Exception:
+            except OSError:
                 pass
     return playbooks
+
+
+def _looks_like_playbook(text: str) -> bool:
+    """Recognize play lists without confusing config or inventory with plays.
+
+    BaseLoader treats Ansible YAML tags as inert data. Malformed candidates
+    with play markers are retained so the syntax checker can diagnose them.
+
+    Args:
+        text: YAML document source.
+
+    Returns:
+        Whether the document is a playbook or a malformed playbook candidate.
+    """
+    try:
+        document: object = yaml.load(text, Loader=yaml.BaseLoader)
+    except yaml.YAMLError:
+        return bool(_PLAY_MARKER.search(text))
+    return isinstance(document, list) and any(
+        isinstance(play, dict) and _PLAY_KEYS.intersection(play) for play in document
+    )
 
 
 def run(

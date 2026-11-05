@@ -1182,7 +1182,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         if not context_obj.hierarchy_payload:
             logger.warning("Scan: no hierarchy payload produced (req=%s)", scan_id)
-            return [], ScanDiagnostics(), sid, [], None, None, [], set(), set(), None
+            # File validators still assess configuration-only snapshots.
+            context_obj.hierarchy_payload = {"hierarchy": []}
 
         # 2. Collection discovery
         discovered, requirements_found = _discover_collection_specs(files)
@@ -2563,6 +2564,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             )
             graph = ContentGraph()
 
+        # File findings have source/YAML paths rather than graph node IDs.
+        # A graph-only rescan cannot establish that they have been fixed.
+        session.file_violations = [dict(v) for v in initial_violations if str(v.get("path", "")).startswith("$")]
+        initial_violations = [v for v in initial_violations if not str(v.get("path", "")).startswith("$")]
+
         loop = asyncio.get_running_loop()
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
 
@@ -2874,6 +2880,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # the graph-owned NodeState snapshot objects.
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(dep_health_violations)
+        remaining.extend(dict(v) for v in session.file_violations)
         add_classification_to_violations(remaining)
         session.dep_health_violations = [dict(v) for v in remaining if str(v.get("source", "")) in dep_health_sources]
 
@@ -2897,8 +2904,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             session.working_files[rel_path] = patch.patched.encode("utf-8")
 
         session.tier1_patches = tier1_patches
-        session.remaining_ai = list(remaining)
-        session.remaining_manual = []
+        session.remaining_ai = [v for v in remaining if not str(v.get("path", "")).startswith("$")]
+        session.remaining_manual = [v for v in remaining if str(v.get("path", "")).startswith("$")]
 
         # 6. Enrich violations with node YAML from the graph progression.
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -3580,6 +3587,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(session.dep_health_violations)
+        remaining.extend(dict(v) for v in session.file_violations)
         add_classification_to_violations(remaining)
         rem_counts = count_by_remediation_class(remaining)
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -4478,6 +4486,7 @@ def _reconcile_after_approval(
         v["remediation_class"] = RemediationClass.MANUAL_REVIEW
     _enrich_violations_from_graph(remaining, graph, fixed=False)
     remaining.extend(dict(v) for v in session.dep_health_violations)
+    remaining.extend(dict(v) for v in session.file_violations)
 
     fixed = [dict(v) for v in graph.query_violations(status="fixed")]
     for v in fixed:

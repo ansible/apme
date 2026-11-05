@@ -11,6 +11,7 @@ troubleshoot APME.
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Podman pod, bootc VM, operator — setup and configuration |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local setup, tox environments, adding rules, testing |
 | [RULE_CONFIGURATION.md](RULE_CONFIGURATION.md) | Rule configuration, suppression, dependency scan options |
+| [MOLECULE.md](MOLECULE.md) | Automatic static Molecule checks and the pinned Red Hat ADT compatibility profile |
 | [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) | Podman rootless troubleshooting for OPA |
 
 ## When to Add a Document Here

@@ -1,7 +1,7 @@
-"""ARI native validator: graph-based rule evaluation.
+"""Native validator: graph analysis and built-in static file checks.
 
-Native rule evaluation runs ``GraphRule`` instances via
-``apme_engine.graph.scanner.scan()`` exclusively (ADR-059).
+Graph rules run through ``apme_engine.graph.scanner.scan()`` (ADR-059).
+Molecule file rules assess the uploaded snapshot independently (ADR-075).
 """
 
 from apme_engine.graph.scanner import native_rules_dir
