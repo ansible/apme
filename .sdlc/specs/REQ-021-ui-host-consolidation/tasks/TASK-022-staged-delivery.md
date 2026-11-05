@@ -6,7 +6,7 @@
 
 ## Status
 
-In Progress
+Complete
 
 ## Description
 
@@ -70,3 +70,37 @@ replay an old parent's commits after squash; do not use it for that transition.
   catalog read failures. Regression coverage includes router authorization,
   traversal and streaming, branch origin handling, sync failure recovery,
   activity query dismissal, and packed-build path resolution.
+- Stage 5: fresh install, 132 frontend tests, 270 native/workflow tests, both
+  packed consumers, repository lint and 4,976 Python tests passed (50 skipped).
+  The Local image built; installed-image browser checks with fixture data passed
+  workflow Next/Dismiss/re-entry, explicit new checks, both graphs, dependency
+  placement, version dropdown, severity order, cached Settings visits and rule
+  enable/severity/reset writes, including an 800px layout.
+- Git-object audit verified all five workspace locks, unchanged backend/proto
+  contracts, CI on stack bases, and default Local activation only in stage 5.
+  The reviewed UI and dependency resolution match #832. Review fixes harden
+  upload quota concurrency and dedicated Portal deletion authorization.
+
+## Merge maintenance
+
+Keep successor PRs as drafts until their predecessor is merged. Each PR targets
+its predecessor to show only its own changes. After a squash/rebase merge,
+rebase the successor onto updated main while dropping the old predecessor
+commits, then rebase the remaining descendants in order. Retarget the newly
+unblocked PR to main and rerun its CI before merging. Do not merge successors
+into their feature-branch bases. No production Portal dependency is switched
+until an APME release is available. The original #832 review history and branch
+are preserved; the split does not resolve disputed review threads.
+
+## Review convergence and activation gate
+
+Five independent review passes verified the split and re-reviewed both inherited
+security/resource fixes. No split-specific blockers remain. Portal direct project
+deletion now denies missing/denied host policy; concurrent upload creation checks
+capacity after host settings resolve. Dedicated regressions cover both changes.
+
+The final Local activation PR remains draft and blocked on predecessor merges
+and #833 Local replacement acceptance, including durable non-project CLI/upload
+history. This split does not waive those gaps or retire the native UI. Release
+retry under a changed Node build version may intentionally fail checksum checks
+because manifest provenance changes; refusing changed immutable bytes is retained.

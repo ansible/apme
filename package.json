@@ -8,16 +8,17 @@
   },
   "workspaces": [
     "frontend/packages/*",
-    "frontend/backstage/plugins/*"
+    "frontend/backstage/plugins/*",
+    "containers/rhdh/plugin"
   ],
   "scripts": {
     "build": "npm run build -w @apme/client && npm run build -w @apme/ui-workflow && npm run build -w @apme/backstage-plugin && npm run build -w @apme/backstage-plugin-backend",
-    "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json",
+    "typecheck": "tsc --noEmit -p frontend/backstage/tsconfig.json && tsc --noEmit -p tsconfig.json",
     "lint:ui": "node frontend/backstage/scripts/check-eslint-minimatch.mjs && eslint . --ext .ts,.tsx",
     "test": "vitest run --config frontend/backstage/vite.config.ts --maxWorkers=2",
     "pack": "node frontend/backstage/scripts/pack.mjs",
-    "format": "prettier --write eslint.config.mjs frontend/backstage frontend/packages/apme-client frontend/portal",
-    "format:check": "prettier --check eslint.config.mjs frontend/backstage frontend/packages/apme-client frontend/portal",
+    "format": "prettier --write eslint.config.mjs frontend/backstage frontend/portal frontend/packages/apme-client containers/rhdh tsconfig.json",
+    "format:check": "prettier --check eslint.config.mjs frontend/backstage frontend/portal frontend/packages/apme-client containers/rhdh tsconfig.json",
     "pack:verify": "node frontend/backstage/scripts/verify-pack.mjs",
     "pack:verify:release": "node frontend/backstage/scripts/verify-release-pack.mjs",
     "dev": "vite --config frontend/backstage/vite.config.ts --host 127.0.0.1",
@@ -54,7 +55,8 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.1",
     "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "@red-hat-developer-hub/cli": "2.1.2"
   },
   "overrides": {
     "minimatch@^10.0.1": "11.0.1",

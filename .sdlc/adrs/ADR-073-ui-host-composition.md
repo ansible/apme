@@ -187,3 +187,8 @@ redirects. The catalog module denies direct deletion unless its router receives
 a separate host deletion policy covering entitlement, repository access and
 independent destructive permission. Existing repository deregistration is
 unchanged. Sign-in and scan authorization do not grant deletion.
+
+Stage 5 activates the RHDH Local image/navigation/theme. The reviewed UI and
+dependency resolution from #832 are preserved, with the upload-capacity and
+Portal-deletion review fixes. Live acceptance and native retirement remain
+tracked in #833. Only the final stage changes the default Local build.

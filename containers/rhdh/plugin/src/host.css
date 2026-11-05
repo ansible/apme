@@ -1,0 +1,68 @@
+.apme-local-nav-heading {
+  display: flex;
+  align-items: center;
+}
+
+.apme-local-nav-brand {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.apme-local-nav-toggle {
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  min-height: 48px;
+  margin-inline-end: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.apme-local-nav-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.apme-local-nav-child {
+  box-sizing: border-box;
+  padding-inline-start: 1rem;
+}
+
+/* The pinned host clips its fixed sidebar to the desktop page's 1.5rem inset.
+ * Align the sidebar with that viewport so its first and last items remain visible.
+ * This stylesheet belongs only to the personal Local host, not Portal embeds.
+ */
+@media (min-width: 600px) {
+  nav[aria-label="sidebar nav"] [data-testid="sidebar-root"] {
+    top: 1.5rem;
+    bottom: 1.5rem;
+  }
+}
+
+.apme-local-theme-control {
+  display: grid;
+  gap: 6px;
+  padding: 20px 24px;
+  font-size: 12px;
+}
+.apme-local-theme-control select {
+  min-height: 32px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  background: inherit;
+  font: inherit;
+  color-scheme: light dark;
+}
+body[data-theme-mode="light"] .apme-local-theme-control select {
+  color-scheme: light;
+}
+body[data-theme-mode="dark"] .apme-local-theme-control select {
+  color-scheme: dark;
+}

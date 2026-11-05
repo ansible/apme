@@ -155,9 +155,11 @@ jobs:
           APME_GATEWAY_GRPC_LISTEN: 127.0.0.1:50060
           APME_GATEWAY_HTTP_HOST: 127.0.0.1
           APME_GATEWAY_HTTP_PORT: 8080
-      - run: uvx --with-requirements ci/tox-requirements.txt tox -e ui
+      # This job serves the legacy native frontend; Local RHDH browser checks
+      # run separately against the image started by `tox -e up`.
+      - run: uvx --with-requirements ci/tox-requirements.txt tox -e ui-native
         env:
-          APME_UI_URL: http://localhost:8081
+          APME_NATIVE_UI_URL: http://localhost:8081
           APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
           APME_GATEWAY_HTTP_HOST: 127.0.0.1
           APME_GATEWAY_HTTP_PORT: 8080

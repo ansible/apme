@@ -4,6 +4,11 @@
 
 Implemented
 
+Presentation ownership and long-term native SPA support amended by
+[ADR-073](ADR-073-ui-host-composition.md). RHDH Local and Portal are the target
+hosts; native retirement follows replacement acceptance without a required
+migration/support period.
+
 ## Date
 
 2026-03-19
