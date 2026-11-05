@@ -35,6 +35,9 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     # ── Deprecation pipeline (2.21–2.24 removals) ────────────────────────
     "M018": SpecifierSet(">=2.21"),  # removal version 2.21
     "M023": SpecifierSet(">=2.22"),  # follow_redirects string deprecated
+    # ── ansible-core 2.22 secret masking ─────────────────────────────────
+    "M031": SpecifierSet(">=2.22"),  # secret masking via register_secret
+    # ── ansible-core 2.23–2.24 deprecations ──────────────────────────────
     "M014": SpecifierSet(">=2.24"),  # top-level fact variables removed
     "M015": SpecifierSet(">=2.23"),  # play_hosts magic variable removed
     "M016": SpecifierSet(">=2.23"),  # empty when: deprecated

@@ -119,6 +119,7 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "M026": Severity.MEDIUM,
     "M029": Severity.MEDIUM,
     "M030": Severity.MEDIUM,
+    "M031": Severity.MEDIUM,
     "M047": Severity.MEDIUM,
     "R101": Severity.MEDIUM,
     "R103": Severity.MEDIUM,

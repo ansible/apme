@@ -460,6 +460,9 @@ sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
 and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
 have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
+For heuristic rules, trace each documented pass example through the same
+matching logic used by the rule and verify the expected fixture count against
+the rule's finding granularity. A passing example must not match the heuristic.
 For bounded shared capacity that responds with 429/503, trace two
 independent callers: verify the client retries transient contention within
 a finite budget, unrelated long-lived sessions do not fail immediately, and

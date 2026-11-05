@@ -415,6 +415,21 @@ class TestGraphBuilderLoopVariants:
         assert node.loop is not None
 
 
+class TestGraphBuilderRegisterProjection:
+    """Verify dictionary-form ``register`` is preserved on graph nodes."""
+
+    def test_register_projection(self) -> None:
+        """Store projected register variables without changing string register."""
+        projection = {
+            "api_token": "_task.result.json.token | ansible.builtin.register_secret",
+            "task_result": "_task.result",
+        }
+        node = _build_task_node_with_options({"register": projection})
+
+        assert node.register is None
+        assert node.options.get("register") == projection
+
+
 # ---------------------------------------------------------------------------
 # ContentGraph serialization roundtrip
 # ---------------------------------------------------------------------------
