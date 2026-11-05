@@ -45,7 +45,9 @@ TASK-001 through TASK-003 complete.
 - [x] `git diff --check`
 - [x] Repository lint via `tox -e lint`
 
-Interaction tests and actual-host permission/CRUD acceptance remain outstanding.
+Galaxy token reset coverage is included in `adapterContextCredentials.test.tsx`;
+model preference, Galaxy CRUD and actual-host permission acceptance remain
+outstanding.
 
 ## Acceptance Criteria Reference
 
@@ -59,5 +61,6 @@ confirm deletion. Host view/manage and certificate capabilities are explicit;
 no Galaxy request is made without view access. The existing Portal backend
 currently drops certificate updates, so embedded hosts default to no certificate
 editing. Type checking, formatting, browser build and package generation passed.
-Interaction tests were not added or run; actual-host permissions, storage failure,
-CRUD and keyboard/theme acceptance remain outstanding.
+Regression coverage verifies Galaxy credentials clear when the host adapter
+changes; model preference, actual-host permissions, storage failure, CRUD and
+keyboard/theme acceptance remain outstanding.

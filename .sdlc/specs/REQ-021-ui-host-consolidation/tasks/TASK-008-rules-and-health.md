@@ -45,8 +45,9 @@ TASK-001 through TASK-003 complete.
 - [x] `git diff --check`
 - [x] `tox -e lint`
 
-Interaction tests and real-host RBAC acceptance remain outstanding; this task's
-verification records only the checks actually run.
+Rule interaction coverage in `ruleControls.test.tsx` runs in the frontend unit
+suite. Health-specific interaction coverage and real-host RBAC acceptance remain
+outstanding; this task's verification records only the checks actually run.
 
 ## Acceptance Criteria Reference
 
@@ -59,5 +60,6 @@ Rules use the existing client and partial writes; embedded views default to
 read-only, Local opts into management and Portal owns its permission decision.
 Portal catalog normalization preserves its returned labels and leaves lossy
 metadata unspecified. Type checking, formatting, browser build and three-package
-generation passed. Interaction tests were not added or run for this family;
-permission-denial, keyboard/theme and real-host acceptance remain outstanding.
+generation passed. The current stage adds rule-control interaction coverage for
+edits, denied writes and focus retention in `ruleControls.test.tsx`; health
+interaction, keyboard/theme and real-host acceptance remain outstanding.

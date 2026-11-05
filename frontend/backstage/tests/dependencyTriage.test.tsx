@@ -123,6 +123,39 @@ it("loads every findings page before reporting complete dependency counts", asyn
   expect(screen.queryByRole("button", { name: /Acknowledge R200/ })).toBeNull();
 });
 
+it("stops dependency counting at the documented project finding limit", async () => {
+  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname.endsWith("/dependencies")) return json(inventory);
+    const offset = Number(url.searchParams.get("offset"));
+    if (offset === 10_000)
+      return json([finding(10_001, "Over limit", "dep_audit")]);
+    return json(
+      Array.from({ length: 500 }, (_, index) =>
+        finding(offset + index + 1, "Task finding", "native"),
+      ),
+    );
+  });
+  open(fetch);
+
+  await screen.findByText(
+    "Dependency issue counts are unavailable because this project has more than 10,000 findings.",
+  );
+
+  const findingCalls = fetch.mock.calls.filter(([input]) =>
+    String(input).includes("/violations?"),
+  );
+  expect(findingCalls).toHaveLength(21);
+  expect(String(findingCalls[findingCalls.length - 1]?.[0])).toContain(
+    "limit=1",
+  );
+  expect(
+    within(screen.getByRole("grid", { name: "Project collections" })).getByText(
+      "Unavailable",
+    ),
+  ).toBeTruthy();
+});
+
 it("confirms project-wide rule scope before acknowledging CVEs and refreshes all affected counts", async () => {
   let acknowledged = false;
   const rows = [

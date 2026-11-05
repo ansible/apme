@@ -73,7 +73,7 @@ function ApmeProjectDependenciesContent({
       </Flex>
       <DataStatus {...state} subject="dependencies" />
       <ApmeProjectSbom projectId={projectId} adapter={adapter} />
-      {dependencies && !state.error && !state.loading && (
+      {dependencies && (
         <>
           <Text>
             Ansible Core: {dependencies.ansible_core_version || "Not recorded"}

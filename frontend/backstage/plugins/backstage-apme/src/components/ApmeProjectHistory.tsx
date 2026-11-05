@@ -54,7 +54,7 @@ function ApmeProjectHistoryContent({
         </Button>
       </Flex>
       <DataStatus {...state} subject="project history" />
-      {!state.loading && !state.error && state.value && (
+      {state.value && (
         <>
           <Text>
             {state.value.total}{" "}

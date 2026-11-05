@@ -67,7 +67,7 @@ function ApmeProjectFindingsContent({
         </Button>
       </Flex>
       <DataStatus {...state} subject="findings" />
-      {!state.loading && !state.error && (
+      {state.value && (
         <>
           <Checkbox
             isSelected={includeAcknowledged}

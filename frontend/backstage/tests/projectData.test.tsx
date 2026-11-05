@@ -17,6 +17,7 @@ import { ApmeWorkbench } from "../plugins/backstage-apme/src/components/ApmePage
 import { ApmeActivityDetails } from "../plugins/backstage-apme/src/components/ApmeActivityDetails";
 import { ApmeProjectDependencies } from "../plugins/backstage-apme/src/components/ApmeProjectDependencies";
 import { ApmeProjectFindings } from "../plugins/backstage-apme/src/components/ApmeProjectFindings";
+import { ApmeProjectHistory } from "../plugins/backstage-apme/src/components/ApmeProjectHistory";
 
 const project = {
   id: "p1",
@@ -108,6 +109,128 @@ function workbench(fetch: typeof globalThis.fetch, entry: string) {
     </MemoryRouter>,
   );
 }
+
+it("keeps the repository table visible when refresh fails", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json({ items: [project], total: 1, limit: 25, offset: 0 }),
+    )
+    .mockResolvedValueOnce(
+      new Response('{"detail":"refresh unavailable"}', { status: 503 }),
+    );
+  workbench(fetch, "/apme");
+
+  await screen.findByRole("grid", { name: "APME repositories" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+  await screen.findByText("refresh unavailable");
+  expect(screen.getByRole("grid", { name: "APME repositories" })).toBeTruthy();
+  expect(screen.getByText("Automation")).toBeTruthy();
+});
+
+it("keeps project history visible when refresh fails", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json({ items: [run()], total: 1, limit: 25, offset: 0 }),
+    )
+    .mockResolvedValueOnce(
+      new Response('{"detail":"refresh unavailable"}', { status: 503 }),
+    );
+  render(
+    <BUIProvider>
+      <ApmeProjectHistory
+        projectId="p1"
+        adapter={adapter(fetch)}
+        onOpenActivity={vi.fn()}
+      />
+    </BUIProvider>,
+  );
+  await screen.findByRole("grid", { name: "Project history" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh history" }));
+
+  await screen.findByText("refresh unavailable");
+  expect(screen.getByRole("grid", { name: "Project history" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /run-one/ })).toBeTruthy();
+});
+
+it("keeps findings visible when refresh fails", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(json([finding]))
+    .mockResolvedValueOnce(
+      new Response('{"detail":"refresh unavailable"}', { status: 503 }),
+    );
+  render(
+    <BUIProvider>
+      <ApmeProjectFindings projectId="p1" adapter={adapter(fetch)} />
+    </BUIProvider>,
+  );
+  await screen.findAllByRole("button", { name: "L050" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh findings" }));
+
+  await screen.findByText("refresh unavailable");
+  expect(
+    screen.getAllByRole("button", { name: "L050" }).length,
+  ).toBeGreaterThan(0);
+});
+
+it("keeps dependency inventory visible when refresh fails", async () => {
+  let dependencyReads = 0;
+  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).includes("/dependencies")) {
+      dependencyReads += 1;
+      return dependencyReads === 1
+        ? json(deps)
+        : new Response('{"detail":"refresh unavailable"}', { status: 503 });
+    }
+    return json([]);
+  });
+  render(
+    <BUIProvider>
+      <ApmeProjectDependencies projectId="p1" adapter={adapter(fetch)} />
+    </BUIProvider>,
+  );
+  await screen.findByRole("grid", { name: "Project collections" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh dependencies" }));
+
+  await screen.findByText("refresh unavailable");
+  expect(
+    screen.getByRole("grid", { name: "Project collections" }),
+  ).toBeTruthy();
+  expect(screen.getByText("ansible.posix")).toBeTruthy();
+});
+
+it("keeps run details visible when refresh fails", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(json(run()))
+    .mockResolvedValueOnce(
+      new Response('{"detail":"refresh unavailable"}', { status: 503 }),
+    );
+  render(
+    <BUIProvider>
+      <ApmeActivityDetails
+        projectId="p1"
+        activityId="run-one"
+        adapter={adapter(fetch)}
+      />
+    </BUIProvider>,
+  );
+  await screen.findAllByRole("button", { name: "L050" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh run" }));
+
+  await screen.findByText("refresh unavailable");
+  expect(screen.getByRole("heading", { name: "Run run-one" })).toBeTruthy();
+  expect(
+    screen.getAllByRole("button", { name: "L050" }).length,
+  ).toBeGreaterThan(0);
+});
 
 it("deep-links to history without loading the repository list or starting a workflow", async () => {
   const fetch = vi.fn(async (input: RequestInfo | URL) => {

@@ -363,7 +363,7 @@ export function ApmeWorkbench({
                 description={error}
               />
             )}
-            {!error && (
+            {(!error || projects) && (
               <div className="apme-table-scroll">
                 <TableRoot aria-label="APME repositories" isPending={loading}>
                   <TableHeader>

@@ -20,6 +20,7 @@ import {
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { useMutation } from "./useMutation";
 import { DeleteProject } from "./DeleteProject";
+import { adapterIdentity } from "./adapterIdentity";
 
 export interface ApmeProjectSettingsProps {
   project: ProjectDetail;
@@ -37,11 +38,14 @@ export function ApmeProjectSettings(props: ApmeProjectSettingsProps) {
   return (
     <div className="apme-stack">
       {props.canManage && (
-        <ProjectSettingsForm key={`settings-${props.project.id}`} {...props} />
+        <ProjectSettingsForm
+          key={`settings-${props.project.id}-${adapterIdentity(props.adapter)}`}
+          {...props}
+        />
       )}
       {props.canDelete && (
         <DeleteProject
-          key={`delete-${props.project.id}`}
+          key={`delete-${props.project.id}-${adapterIdentity(props.adapter)}`}
           project={props.project}
           adapter={props.adapter}
           onDeleted={props.onDeleted}

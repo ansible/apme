@@ -18,16 +18,23 @@ import {
   type ProjectSummary,
 } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
+import { adapterIdentity } from "./adapterIdentity";
 
-export function CreateProjectDialog({
-  adapter,
-  onCreated,
-  onClose,
-}: {
+export function CreateProjectDialog(props: {
   adapter: ApmeApiAdapter;
   onCreated: (project: ProjectSummary) => void;
   onClose: () => void;
 }) {
+  return (
+    <CreateProjectDialogForm key={adapterIdentity(props.adapter)} {...props} />
+  );
+}
+
+function CreateProjectDialogForm({
+  adapter,
+  onCreated,
+  onClose,
+}: Parameters<typeof CreateProjectDialog>[0]) {
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");

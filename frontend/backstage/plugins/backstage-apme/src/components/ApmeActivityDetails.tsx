@@ -82,7 +82,7 @@ function ApmeActivityDetailsContent({
         </Flex>
       </Flex>
       <DataStatus {...state} subject="activity" />
-      {detail && !state.error && !state.loading && (
+      {detail && (
         <>
           <Text>
             {detail.total_violations} findings · {detail.remediated_count} fixed

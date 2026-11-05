@@ -46,8 +46,10 @@ TASK-001 through TASK-003 complete.
 - [x] Repository lint through tox
 - [x] `git diff --check`
 
-No interaction tests are added or run as part of this task. Runtime acceptance
-and complete feature replacement remain outstanding.
+Graph interaction coverage in `contentTree.test.tsx` exercises tree/list node
+inspection and the dependency diagram/text toggle in the frontend unit suite.
+SBOM interaction, runtime acceptance and complete feature replacement remain
+outstanding.
 
 ## Acceptance Criteria Reference
 
@@ -63,5 +65,6 @@ the host client only on user request, with a safe filename and object URL cleanu
 Adapter changes invalidate pending mutation callbacks and prepared downloads.
 Portal's absent graph/SBOM routes are recorded in TASK-005; no fallback added.
 Clean root installation, frontend/native builds, type/format checks, packages and
-repository lint passed. No new interaction tests were run, and real-host theme,
-keyboard, transport and resource acceptance remain outstanding.
+repository lint passed. Graph interaction tests cover node inspection and the
+dependency view toggle; SBOM and real-host theme, keyboard, transport and resource
+acceptance remain outstanding.

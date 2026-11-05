@@ -31,6 +31,8 @@ import {
   type DependencyKind,
 } from "./dependencyIssueMatching";
 
+const MAX_FINDINGS_TO_SCAN = 10_000;
+
 export function DependencyFindings({
   projectId,
   adapter,
@@ -50,9 +52,10 @@ export function DependencyFindings({
       const seen = new Set<number>();
       for (let offset = 0; ; offset += 500) {
         signal.throwIfAborted();
+        const limit = Math.min(500, MAX_FINDINGS_TO_SCAN + 1 - offset);
         const page = await listProjectViolations(
           projectId,
-          500,
+          limit,
           offset,
           undefined,
           undefined,
@@ -61,6 +64,10 @@ export function DependencyFindings({
         );
         if (!Array.isArray(page))
           throw new Error("Unexpected findings response.");
+        if (offset >= MAX_FINDINGS_TO_SCAN && page.length)
+          throw new Error(
+            `Dependency issue counts are unavailable because this project has more than ${MAX_FINDINGS_TO_SCAN.toLocaleString()} findings.`,
+          );
         const fresh = page.filter((finding) => !seen.has(finding.id));
         if (page.length && !fresh.length)
           throw new Error(

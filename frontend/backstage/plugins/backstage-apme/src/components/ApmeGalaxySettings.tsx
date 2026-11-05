@@ -25,6 +25,7 @@ import type { ApmeApiAdapter } from "@apme/client/transport";
 import { DataStatus, PageControls } from "./DataStatus";
 import { useLoad } from "./useLoad";
 import { useMutation } from "./useMutation";
+import { adapterIdentity } from "./adapterIdentity";
 
 export interface ApmeGalaxySettingsProps {
   adapter: ApmeApiAdapter;
@@ -163,7 +164,7 @@ function GalaxySettingsContent({
           />
           {canManage && (editingId === "new" || editing) && (
             <GalaxyServerForm
-              key={editing?.id ?? "new"}
+              key={`${adapterIdentity(adapter)}-${editing?.id ?? "new"}`}
               adapter={adapter}
               editing={editing}
               supportsCertificateSettings={supportsCertificateSettings}

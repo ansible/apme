@@ -812,6 +812,7 @@ async def delete_project_endpoint(project_id: str) -> None:
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found")
             await q.delete_project(db, project.id)
+        registry.remove_project(project.id)
 
 
 # ── Project-scoped endpoints (ADR-037) ───────────────────────────────
