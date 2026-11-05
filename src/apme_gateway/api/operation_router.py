@@ -941,7 +941,8 @@ async def _submit_operation_impl(
                         detail=_coded_detail(
                             "idempotency_conflict",
                             "A prior submit with this token did not complete "
-                            "(no branch recorded). Verify SCM state before retrying.",
+                            "(no branch recorded). Verify SCM state; if no publish occurred, "
+                            "start a new operation with a new token.",
                         ),
                     )
                 if durable_row is not None and durable_row.branch_name:
@@ -1211,8 +1212,8 @@ async def _submit_operation_impl(
                         status_code=409,
                         detail=_coded_detail(
                             "idempotency_conflict",
-                            "Another submit already claimed this scan. Verify SCM state before retrying; "
-                            "use a new token only after confirming that no prior publish occurred.",
+                            "Another submit already claimed this scan. Verify SCM state; if no publish occurred, "
+                            "start a new operation with a new token.",
                         ),
                     )
             except _IntegrityError as exc:
@@ -1231,8 +1232,8 @@ async def _submit_operation_impl(
                     status_code=409,
                     detail=_coded_detail(
                         "idempotency_conflict",
-                        "This submit token is already claimed for this project. Verify SCM state before retrying; "
-                        "use a new token only after confirming that no prior publish occurred.",
+                        "This submit token is already claimed for this project. Verify SCM state; "
+                        "if no publish occurred, start a new operation with a new token.",
                     ),
                 ) from exc
             except HTTPException:

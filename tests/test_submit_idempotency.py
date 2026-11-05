@@ -357,6 +357,7 @@ async def test_lost_submit_claim_conflicts_for_another_token(client: AsyncClient
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "idempotency_conflict"
     assert "Verify SCM state" in response.json()["detail"]["message"]
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
     branch_head.assert_not_awaited()
     push_files.assert_not_awaited()
     create_branch.assert_not_awaited()
@@ -445,6 +446,7 @@ async def test_duplicate_project_token_claim_conflicts_before_scm(client: AsyncC
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
     branch_head.assert_not_awaited()
     push_files.assert_not_awaited()
     create_branch.assert_not_awaited()
@@ -940,6 +942,7 @@ async def test_incomplete_durable_claim_blocks_cross_scan_retry(client: AsyncCli
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
     push_mock.assert_not_called()
 
 
