@@ -43,4 +43,4 @@ apme check tests/fixtures/customer-test/vault-reference.yml
 | deprecated-modules.yml | 0 | 2+ | 0 | 0 |
 | messy-formatting.yml | 1+ | 0 | 0 | 0 |
 | vault-reference.yml | 0 | 0 | 0 | 0 |
-| sensitive-vars.yml | 0 | 6+ | 0 | 0 |
+| sensitive-vars.yml | 0 | 5 | 0 | 0 |
