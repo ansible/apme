@@ -116,3 +116,4 @@ for this delivery and will remain documented gaps.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-11-05 | Codex | Initial requirement from the rule-coverage review |
+| 2026-11-05 | Codex | Review repairs for SCP sources and argspec plugin initialization; added runtime and lint regression coverage |

@@ -7,7 +7,7 @@
 | Metric | Count |
 |--------|-------|
 | Implemented | 157/162 |
-| Tested | 155/162 |
+| Tested | 159/162 |
 | Documented | 161/162 |
 | Deterministic fixer (Tier 1) | 25/162 |
 | Severity resolved (ADR-043 table or SEC: prefix) | 162/162 |
@@ -93,7 +93,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L034 | L | Native | low | inventory | manual | Lower-precedence override may be unused. | Yes | Yes | Yes | — |
 | L035 | L | Native | low | task | ai | set_fact with random in args. | Yes | Yes | Yes | — |
 | L036 | L | Native | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
-| L037 | L | Ansible | medium | task | ai | Module name could not be resolved by ansible-core. | Yes | — | Yes | — |
+| L037 | L | Ansible | medium | task | ai | Module name could not be resolved by ansible-core. | Yes | Yes | Yes | — |
 | L038 | L | Native | medium | role | manual | Role could not be resolved. | Yes | Yes | Yes | — |
 | L039 | L | Native | medium | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
 | L040 | L | Native | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
@@ -165,9 +165,9 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L106 | L | OPA | medium | task | ai | set_fact with loop and when is a scaling anti-pattern. | Yes | Yes | Yes | — |
 | L110 | L | Native | high | task | ai | Debug tasks should not log sensitive variables without no_log. | Yes | Yes | Yes | — |
 | L111 | L | Native | low | inventory | manual | Inventory group names should not contain hyphens. | Yes | Yes | Yes | — |
-| L112 | L | Native | low | task | ai | Git and Mercurial tasks should select an explicit version. | Yes | — | Yes | — |
-| L113 | L | Native | low | role | manual | Role names should use lowercase letters, digits, and underscores. | Yes | — | Yes | — |
-| L114 | L | Native | low | collection | manual | Collection version must be valid semantic version 1.0.0 or newer. | Yes | — | Yes | — |
+| L112 | L | Native | low | task | ai | Git and Mercurial tasks should select an explicit version. | Yes | Yes | Yes | — |
+| L113 | L | Native | low | role | manual | Role names should use lowercase letters, digits, and underscores. | Yes | Yes | Yes | — |
+| L114 | L | Native | low | collection | manual | Collection version must be valid semantic version 1.0.0 or newer. | Yes | Yes | Yes | — |
 | M001 | M | Ansible | high | task | auto | FQCN resolution — module resolved to a different canonical name. | Yes | Yes | Yes | Yes |
 | M002 | M | Ansible | high | task | auto | Deprecated module — module has deprecation metadata. | Yes | Yes | Yes | Yes |
 | M003 | M | Ansible | high | task | auto | Module redirect — module name was redirected to a new FQCN. | Yes | Yes | Yes | Yes |
@@ -279,7 +279,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M028 | high | task | ai | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | R118 | info | task | manual | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 
-### Native (99 rules, 98 impl, 95 tested, 4 fixers)
+### Native (99 rules, 98 impl, 98 tested, 4 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
@@ -348,9 +348,9 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L105 | low | collection | manual | galaxy.yml should have a repository key. | Yes | Yes | Yes | — |
 | L110 | high | task | ai | Debug tasks should not log sensitive variables without no_log. | Yes | Yes | Yes | — |
 | L111 | low | inventory | manual | Inventory group names should not contain hyphens. | Yes | Yes | Yes | — |
-| L112 | low | task | ai | Git and Mercurial tasks should select an explicit version. | Yes | — | Yes | — |
-| L113 | low | role | manual | Role names should use lowercase letters, digits, and underscores. | Yes | — | Yes | — |
-| L114 | low | collection | manual | Collection version must be valid semantic version 1.0.0 or newer. | Yes | — | Yes | — |
+| L112 | low | task | ai | Git and Mercurial tasks should select an explicit version. | Yes | Yes | Yes | — |
+| L113 | low | role | manual | Role names should use lowercase letters, digits, and underscores. | Yes | Yes | Yes | — |
+| L114 | low | collection | manual | Collection version must be valid semantic version 1.0.0 or newer. | Yes | Yes | Yes | — |
 | M005 | high | task | ai | Registered variable used in Jinja template may be untrusted in 2.19+. | Yes | Yes | Yes | — |
 | M010 | high | play | manual | ansible_python_interpreter set to Python 2; dropped in 2.18+. | Yes | Yes | Yes | — |
 | M014 | medium | task | ai | Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24) | Yes | Yes | Yes | — |
@@ -383,11 +383,11 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | R404 | info | task | manual | Expose variable_set for the task. | Yes | Yes | Yes | — |
 | R501 | info | collection | manual | Suggest collection/role dependency. | — | — | Yes | — |
 
-### Ansible (13 rules, 9 impl, 10 tested, 4 fixers)
+### Ansible (13 rules, 9 impl, 11 tested, 4 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
-| L037 | medium | task | ai | Module name could not be resolved by ansible-core. | Yes | — | Yes | — |
+| L037 | medium | task | ai | Module name could not be resolved by ansible-core. | Yes | Yes | Yes | — |
 | L057 | error | playbook | manual | Syntax check via ansible-playbook --syntax-check. | Yes | Yes | Yes | — |
 | L058 | error | task | ai | Argspec validation (docstring-based). | Yes | Yes | Yes | — |
 | L059 | error | task | ai | Argspec validation (mock/patch-based). | Yes | Yes | Yes | — |
@@ -419,13 +419,6 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 - **P002** (Ansible): [Delegated] Validate module argument keys (Ansible required). — L058/L059 validate unsupported keys, required keys, and choice values when module specs resolve. They skip tasks with templated arguments and short names in custom collection contexts, and do not merge module_defaults or action groups.
 - **P003** (Ansible): [Delegated] Validate module argument values (Ansible required). — L058/L059 check choice membership and selected argument-group constraints. They do not validate argument types, required_if, or required_one_of, and skip tasks containing templated argument values and short names in custom collection contexts.
 - **P004** (Ansible): [Delegated] Validate variables (Ansible required). — L039 performs APME's approximate static undefined-variable analysis. It is not equivalent to ARI's argument-context variable validation.
-
-### Implemented but untested — 4
-
-- **L037** (Ansible): Module name could not be resolved by ansible-core.
-- **L112** (Native): Git and Mercurial tasks should select an explicit version.
-- **L113** (Native): Role names should use lowercase letters, digits, and underscores.
-- **L114** (Native): Collection version must be valid semantic version 1.0.0 or newer.
 
 ### Implemented but undocumented — 1
 

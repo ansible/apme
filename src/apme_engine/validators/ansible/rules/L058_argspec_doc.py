@@ -24,8 +24,10 @@ module_names = data.get("modules", [])
 
 specs = {}
 try:
-    from ansible.plugins.loader import module_loader
+    from ansible.plugins.loader import fragment_loader, init_plugin_loader, module_loader
     from ansible.utils.plugin_docs import get_docstring
+
+    init_plugin_loader()
 
     for name in module_names:
         ctx = module_loader.find_plugin_with_context(name, ignore_deprecated=True)
@@ -33,7 +35,7 @@ try:
             continue
         path = ctx.plugin_resolved_path
         try:
-            doc, _, _, _ = get_docstring(path, fragment_loader=None, is_module=True)
+            doc, _, _, _ = get_docstring(path, fragment_loader=fragment_loader, is_module=True)
         except Exception:
             continue
         if not doc:

@@ -174,8 +174,12 @@ def _is_remote_source(source: str, module_name: str) -> bool:
         scheme = urlsplit(source).scheme.lower()
     except ValueError:
         return False
-    if scheme:
-        return scheme in _REMOTE_URL_SCHEMES
+    if scheme in _REMOTE_URL_SCHEMES:
+        return True
+    # urlsplit interprets a bare SCP hostname as a URI scheme. Preserve
+    # explicit local/unsupported URLs, but allow host:path through below.
+    if scheme == "file" or "://" in source:
+        return False
 
     if "{{" in source or "{%" in source:
         return True
@@ -208,10 +212,12 @@ def _is_scp_style_remote_source(source: str) -> bool:
     Returns:
         True when the source has a host and path separated by a colon.
     """
-    host, separator, _path = source.partition(":")
+    host, separator, path = source.partition(":")
     return bool(
         separator
         and host
+        and path
+        and not any(character.isspace() for character in host)
         and "/" not in host
         and not (len(host) == 1 and host.isalpha())
         and not source.startswith(("./", "../"))

@@ -50,6 +50,9 @@ inbound risk annotations from the active OPA payload path.
 
 ## Notes
 
-No tests were added or run per the active task instructions. The rule catalog
-was regenerated and `git diff --check` passed; runtime behavior remains
-unverified by tests in this session.
+Review validation added `tests/test_rule_parity_followups.py`, including real
+Ansible module/action resolution with project configuration, remote/local
+source classification, unarchive boolean handling, and credential redaction.
+The review repaired bare-host SCP source detection and initialized the plugin
+loaders used by L058/L059 so omitted required arguments are checked against
+real module specs, including documentation fragments.

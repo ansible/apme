@@ -29,8 +29,10 @@ class _CapturedSpec(Exception):
 
 specs = {}
 try:
-    from ansible.plugins.loader import module_loader
+    from ansible.plugins.loader import init_plugin_loader, module_loader
     from unittest.mock import patch
+
+    init_plugin_loader()
 
     for name in module_names:
         try:

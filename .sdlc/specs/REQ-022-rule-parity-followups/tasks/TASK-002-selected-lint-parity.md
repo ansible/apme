@@ -45,6 +45,8 @@ format validation, and collection `galaxy.yml` version validity.
 
 ## Notes
 
-No tests were added or run per the active task instructions. The generated
-catalog and rule lineage index were updated; rule behavior remains unverified
-by tests in this session.
+Review validation added parameterized L112–L114 cases in
+`tests/test_rule_parity_followups.py` for VCS defaults and collection search
+order, role metadata/name precedence, and SemVer syntax and version boundaries.
+All 50 cases in the review regression file pass through `tox -e unit`.
+The rule catalog was regenerated to include this behavior coverage.
