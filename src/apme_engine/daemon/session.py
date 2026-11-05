@@ -168,6 +168,8 @@ class SessionState:
         dep_health_violations: Dependency-health violations that do not
             participate in graph remediation but must survive approval and
             final reporting.
+        file_violations: Findings without graph nodes retained across approval
+            gates until the next full file assessment.
         approved_ids: Set of proposal IDs approved by the user.
         approved_proposals: Metadata snapshots of approved proposals.
         rejected_proposals: Metadata snapshots of rejected proposals retained
@@ -249,6 +251,7 @@ class SessionState:
     remaining_ai: list[ViolationDict] = field(default_factory=list)
     remaining_manual: list[ViolationDict] = field(default_factory=list)
     dep_health_violations: list[ViolationDict] = field(default_factory=list)
+    file_violations: list[ViolationDict] = field(default_factory=list)
 
     # Proposal IDs approved by the user (for FixCompletedEvent)
     approved_ids: set[str] = field(default_factory=set)
@@ -401,6 +404,7 @@ class SessionState:
         self.remaining_ai = []
         self.remaining_manual = []
         self.dep_health_violations = []
+        self.file_violations = []
         self.awaiting_tier1_gate = False
         self.awaiting_assess = False
         self.awaiting_ai_triage = False

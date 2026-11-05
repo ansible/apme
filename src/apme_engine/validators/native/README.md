@@ -1,13 +1,18 @@
 # Native (Python) validator
 
-Runs in-tree Python rules on `context.scandata` from the engine. Rules live in `rules/`.
+Runs built-in GraphRules over serialized ContentGraph data and static file rules
+over the uploaded snapshot. Graph rules live in `apme_engine/graph/rules/`;
+Molecule file checks live in `molecule.py`, with documentation in `rules/`.
 
-## Colocated tests
+File checks run even when no Ansible graph is available. They use the existing
+Native Validate RPC and executor, and report ordinary L-series findings.
+See [Molecule validation](../../../../docs/guides/MOLECULE.md) and ADR-075.
 
-Each rule can have a colocated test file: `*_test.py` next to the rule module (e.g. `R301_non_fqcn_use_test.py` next to `R301_non_fqcn_use.py`). Tests use **Python objects**, not Ansible YAML:
+## Tests
 
-- **`_test_helpers.py`** in `rules/` provides `make_task_spec`, `make_task_call`, `make_role_spec`, `make_role_call`, and `make_context` to build minimal engine objects.
-- Tests instantiate the rule class, build a context with the helper, then call `rule.match(ctx)` and `rule.process(ctx)` and assert on the result.
+Graph tests construct ContentGraph objects and call match/process, or run the
+graph scanner. File tests supply snapshot mappings and validate diagnostics,
+RPC adaptation, and session reporting without executing Molecule.
 
 Graph-rule unit tests live under `tests/` (for example
 `tests/test_module_options_graph_rules.py`). Run a scoped subset via tox;
@@ -17,4 +22,5 @@ Graph-rule unit tests live under `tests/` (for example
 tox -e unit -- --no-cov tests/test_module_options_graph_rules.py -q
 ```
 
-To add a test for a new rule: create `Rxxx_rule_name_test.py`, import the rule class and helpers, and add tests that cover “fires when” and “does not fire when” cases.
+Molecule rule coverage lives in `tests/test_molecule_validation.py` and
+`tests/test_L057_molecule_playbooks.py`.

@@ -1,8 +1,4 @@
-"""Native validator daemon: async gRPC server that runs GraphRules on deserialized ContentGraph.
-
-The legacy ``detect()`` + ``AnsibleRunContext`` path has been removed.
-All native rule evaluation runs via ``ContentGraph`` + ``GraphRule``.
-"""
+"""Native validator daemon: graph rules and static file checks through async gRPC."""
 
 import asyncio
 import contextvars
@@ -11,6 +7,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from typing import cast
 
 import grpc
 import grpc.aio
@@ -30,6 +27,7 @@ from apme_engine.graph.scanner import (
 )
 from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.log_bridge import attach_collector
+from apme_engine.validators.native.molecule import validate_molecule
 
 logger = logging.getLogger("apme.native")
 
@@ -97,18 +95,38 @@ def _run_graph(
     return _GraphRunResult(violations=violations, report=report)
 
 
+def _run_native(request: validate_pb2.ValidateRequest) -> _GraphRunResult:
+    """Assess supplied files and optional graph data in the executor.
+
+    Args:
+        request: Immutable request snapshot for this validation.
+
+    Returns:
+        Combined file and graph findings with graph diagnostics.
+    """
+    file_messages = cast(list[common_pb2.File], list(request.files))
+    files = {file.path: bytes(file.content) for file in file_messages}
+    file_findings = validate_molecule(files)
+    if request.content_graph_data:
+        dirty = frozenset(request.dirty_node_ids) if request.dirty_node_ids else None
+        result = _run_graph(request.content_graph_data, dirty, list(request.graph_rule_opt_in))
+        result.violations.extend(file_findings)
+        return result
+    return _GraphRunResult(violations=file_findings)
+
+
 class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
-    """Async gRPC adapter: deserializes ContentGraph, runs GraphRules in executor."""
+    """Async gRPC adapter for graph and file checks in the executor."""
 
     async def Validate(
         self,
         request: validate_pb2.ValidateRequest,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> ValidateResponse:
-        """Handle Validate RPC: deserialize ContentGraph and run GraphRules.
+        """Handle Validate RPC: assess uploaded files and any supplied graph.
 
         Args:
-            request: ValidateRequest with content_graph_data.
+            request: ValidateRequest with files and optional content_graph_data.
             context: gRPC servicer context.
 
         Returns:
@@ -120,10 +138,6 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
             try:
                 logger.info("Native: validate start (req=%s)", req_id)
 
-                if not request.content_graph_data:
-                    logger.warning("Native: no content_graph_data in request (req=%s)", req_id)
-                    return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
-
                 dirty: frozenset[str] | None = frozenset(request.dirty_node_ids) if request.dirty_node_ids else None
                 if dirty:
                     logger.info(
@@ -132,16 +146,12 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                         req_id,
                     )
 
-                opt_in = list(request.graph_rule_opt_in)
                 ctx = contextvars.copy_context()
-                opt_in = list(request.graph_rule_opt_in)
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
                     ctx.run,
-                    _run_graph,
-                    request.content_graph_data,
-                    dirty,
-                    opt_in,
+                    _run_native,
+                    request,
                 )
 
                 total_ms = (time.monotonic() - t0) * 1000
