@@ -1042,6 +1042,65 @@ async def test_untokened_submit_blocks_incomplete_scan_claim(client: AsyncClient
     create_pr.assert_not_awaited()
 
 
+async def test_tokenless_submit_reuses_recorded_branch(client: AsyncClient) -> None:
+    """A tokenless follow-up opens a PR from the prior branch-only submit.
+
+    Args:
+        client: Async test client.
+
+    Returns:
+        None: Assert-only test.
+    """
+    from apme_gateway.scm.base import PullRequestResult
+
+    project_id = "proj-submit-reuse-recorded-branch"
+    scan_id = "scan-submit-reuse-recorded-branch"
+    branch_name = "apme/remediate-token-branch"
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-reuse-recorded-branch",
+    )
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        scan.submit_token = "7e8f90a1b2c3d4e5f60718293a4b5c6d"  # notsecret
+        scan.branch_name = branch_name
+        await db.commit()
+
+    branch_head = AsyncMock(return_value="parent-sha")
+    push_files = AsyncMock(return_value="commit-sha")
+    create_branch = AsyncMock()
+    create_pr = AsyncMock(
+        return_value=PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/52",
+            branch_name=branch_name,
+            provider="github",
+        )
+    )
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=branch_head),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_files),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=create_pr),
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["branch_name"] == branch_name
+    branch_head.assert_awaited_once()
+    assert branch_head.await_args is not None
+    assert branch_head.await_args.args[1] == branch_name
+    create_branch.assert_not_awaited()
+    push_files.assert_awaited_once()
+    assert push_files.await_args is not None
+    assert push_files.await_args.args[1] == branch_name
+    create_pr.assert_awaited_once()
+
+
 async def test_concurrent_same_token_submit_pushes_once(client: AsyncClient) -> None:
     """Concurrent same-token submits serialize; the duplicate replays.
 

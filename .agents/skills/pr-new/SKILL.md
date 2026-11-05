@@ -646,6 +646,9 @@ For claims that gate external calls, classify read-only and mutating provider
 operations explicitly: release with a compare-and-set only when failure occurs
 before mutation starts, retain the claim after mutation may have begun, and test
 both paths.
+When a retry can omit or change its idempotency key, derive branch and replay
+behavior from persisted submit state before falling back to request-derived
+defaults; test branch-only creation followed by a tokenless PR-creation retry.
 
 For trust-boundary address checks, require destinations to be globally
 routable and inspect embedded address forms such as mapped or well-known

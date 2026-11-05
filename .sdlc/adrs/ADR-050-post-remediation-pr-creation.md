@@ -382,6 +382,8 @@ globally via `APME_GITHUB_API_URL`.
   Failures during the read-only branch lookup release the claim with a
   compare-and-set; once branch creation or file push starts, the claim remains
   because the remote outcome may be uncertain.
+  Tokenless follow-up submits reuse the scan's recorded branch so a branch-only
+  tokened submit can later open a PR without creating a second branch.
   All three are returned on activity list and detail REST responses.
   Patched file content is stored in a related `patched_files` table with
   columns `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML
@@ -444,3 +446,4 @@ globally via `APME_GITHUB_API_URL`.
 | 2026-11-05 | Agent | Enforce project-scoped submit-token claims in the database for cross-instance idempotency |
 | 2026-11-05 | Agent | Block tokenless retries of incomplete claims and scope the claim write to its own session |
 | 2026-11-05 | Agent | Release claims after read-only SCM failures, retaining them after mutation starts |
+| 2026-11-05 | Agent | Reuse the recorded branch for tokenless follow-up submits |

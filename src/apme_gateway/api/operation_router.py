@@ -1226,6 +1226,10 @@ async def _submit_operation_impl(
             normalized_token = re.sub(r"[^0-9a-f]", "", idempotency_token.lower())
             token_digest = hashlib.sha256(normalized_token.encode("ascii")).hexdigest()[:16]
             branch_name = f"apme/remediate-{token_digest}"
+        elif scan.branch_name:
+            # A tokenless follow-up may finish PR creation for a prior
+            # branch-only submit. Continue on the persisted branch.
+            branch_name = scan.branch_name
         else:
             branch_name = f"apme/remediate-{scan_id[:8]}"
         commit_title = body.title or f"fix: APME remediation — {scan.fixed_count} findings resolved"
