@@ -379,6 +379,9 @@ globally via `APME_GITHUB_API_URL`.
   The claim is committed in its own session before SCM mutation. If a claimed
   scan has no recorded branch, tokenless retries also return `409` to prevent
   a second branch from being created after an uncertain SCM outcome.
+  Failures during the read-only branch lookup release the claim with a
+  compare-and-set; once branch creation or file push starts, the claim remains
+  because the remote outcome may be uncertain.
   All three are returned on activity list and detail REST responses.
   Patched file content is stored in a related `patched_files` table with
   columns `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML
@@ -440,3 +443,4 @@ globally via `APME_GITHUB_API_URL`.
 | 2026-10-23 | Agent | Treat empty and whitespace-only inline, project, and global SCM tokens as unset during fallback selection |
 | 2026-11-05 | Agent | Enforce project-scoped submit-token claims in the database for cross-instance idempotency |
 | 2026-11-05 | Agent | Block tokenless retries of incomplete claims and scope the claim write to its own session |
+| 2026-11-05 | Agent | Release claims after read-only SCM failures, retaining them after mutation starts |

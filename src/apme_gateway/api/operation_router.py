@@ -770,6 +770,33 @@ async def submit_operation(
             inflight.release()
 
 
+async def _release_pre_mutation_submit_claim(scan_id: str, token: str) -> None:
+    """Release a submit claim after a failure before any SCM mutation.
+
+    Args:
+        scan_id: Scan whose durable claim should be released.
+        token: The token currently reserved by the scan.
+    """
+    try:
+        from sqlalchemy import update as _sa_update
+
+        async with get_session() as claim_db:
+            result = await claim_db.execute(
+                _sa_update(Scan)
+                .where(
+                    Scan.scan_id == scan_id,
+                    Scan.submit_token == token,
+                    Scan.branch_name.is_(None),
+                )
+                .values(submit_token=None)
+            )
+            await claim_db.commit()
+        if result.rowcount == 0:
+            logger.info("Pre-mutation submit claim was not released for scan %s; claim state changed", scan_id)
+    except Exception:
+        logger.warning("Failed to release pre-mutation submit claim for scan %s", scan_id, exc_info=True)
+
+
 async def _submit_operation_impl(
     project_id: str,
     body: SubmitRequest | None = None,
@@ -1273,6 +1300,7 @@ async def _submit_operation_impl(
         # held across this block, so a hung provider must fail fast (504)
         # instead of wedging the scan key for every waiter.
         _SCM_TIMEOUT_S = 120.0
+        mutation_started = False
         try:
             existing_head: str | None = None
             branch_head_sha = getattr(provider, "branch_head_sha", None)
@@ -1288,6 +1316,7 @@ async def _submit_operation_impl(
             # where create_branch succeeded but push_files did not.
             async with asyncio.timeout(_SCM_TIMEOUT_S):
                 if existing_head is None:
+                    mutation_started = True
                     parent_sha = await provider.create_branch(project.repo_url, project.branch, branch_name, token)
                     commit_sha = await provider.push_files(
                         project.repo_url,
@@ -1298,6 +1327,7 @@ async def _submit_operation_impl(
                         parent_commit_sha=parent_sha,
                     )
                 else:
+                    mutation_started = True
                     commit_sha = await provider.push_files(
                         project.repo_url,
                         branch_name,
@@ -1322,6 +1352,8 @@ async def _submit_operation_impl(
                 pr_url = pr_result.pr_url
         except TimeoutError as exc:
             logger.error("SCM provider timed out for project %s", project_id)
+            if idempotency_token is not None and not mutation_started:
+                await _release_pre_mutation_submit_claim(scan_id, idempotency_token)
             if state:
                 get_operation_registry().transition(
                     state.operation_id,
@@ -1337,6 +1369,8 @@ async def _submit_operation_impl(
                 type(exc).__name__,
                 _safe_scm_error(exc),
             )
+            if idempotency_token is not None and not mutation_started:
+                await _release_pre_mutation_submit_claim(scan_id, idempotency_token)
             if state:
                 get_operation_registry().transition(
                     state.operation_id,

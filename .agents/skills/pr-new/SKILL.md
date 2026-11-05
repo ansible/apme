@@ -642,6 +642,10 @@ Apply incomplete-claim checks to every request path that can trigger the same
 external side effect, including retries that omit the idempotency token. Keep
 claim/CAS writes inside an explicit session context that closes before the
 external call; test that execute or commit failures stop before that call.
+For claims that gate external calls, classify read-only and mutating provider
+operations explicitly: release with a compare-and-set only when failure occurs
+before mutation starts, retain the claim after mutation may have begun, and test
+both paths.
 
 For trust-boundary address checks, require destinations to be globally
 routable and inspect embedded address forms such as mapped or well-known

@@ -401,6 +401,60 @@ async def test_submit_claim_failure_stops_before_scm(client: AsyncClient) -> Non
     assert state.error == "Submit claim outcome is uncertain"
 
 
+@pytest.mark.parametrize("failure_stage", ["branch_lookup", "create_branch"])  # type: ignore[untyped-decorator]
+async def test_claim_released_only_before_scm_mutation(client: AsyncClient, failure_stage: str) -> None:
+    """Release claims on read failures and retain them after mutation starts.
+
+    Args:
+        client: Async test client.
+        failure_stage: SCM operation that fails.
+
+    Returns:
+        None: Assert-only test.
+    """
+    project_id = f"proj-submit-release-claim-{failure_stage}"
+    scan_id = f"scan-submit-release-claim-{failure_stage}"
+    token = "6d7e8f90a1b2c3d4e5f60718293a4b5c"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id=f"op-submit-release-claim-{failure_stage}",
+    )
+
+    branch_head = AsyncMock(
+        return_value=None,
+        side_effect=RuntimeError("SCM branch lookup failed") if failure_stage == "branch_lookup" else None,
+    )
+    create_branch = AsyncMock(
+        return_value="parent-sha",
+        side_effect=RuntimeError("SCM branch creation failed") if failure_stage == "create_branch" else None,
+    )
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=branch_head),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token},
+        )
+
+    assert response.status_code == 502, response.text
+    branch_head.assert_awaited_once()
+    push_files.assert_not_awaited()
+    create_pr.assert_not_awaited()
+    if failure_stage == "branch_lookup":
+        create_branch.assert_not_awaited()
+    else:
+        create_branch.assert_awaited_once()
+
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        assert scan.submit_token == (None if failure_stage == "branch_lookup" else token)
+
+
 async def test_duplicate_project_token_claim_conflicts_before_scm(client: AsyncClient) -> None:
     """A DB uniqueness collision from a racing Gateway is a safe 409.
 
