@@ -40,7 +40,18 @@ _ADDITIONAL_SENSITIVE_WORDS = frozenset({"auth_key", "bearer", "jwt", "oauth"})
 _ADDITIONAL_SENSITIVE_WORD_RE = re.compile(
     r"(?:^|[_.'\"\[])({})(?:[_.'\"\[\]]|$)".format("|".join(_ADDITIONAL_SENSITIVE_WORDS))
 )
-_REGISTER_SECRET_FILTER_RE = re.compile(r"\|\s*(?:ansible\.builtin\.)?register_secret\b")
+_REGISTER_SECRET_FILTER_RE = re.compile(r"(?P<pipe>\|\s*)(?:ansible\.builtin\.)?register_secret\b")
+
+try:
+    from jinja2 import Environment as _JinjaEnvironment  # type: ignore[import-not-found]
+    from jinja2 import nodes as _jinja_nodes
+    from jinja2.exceptions import TemplateSyntaxError as _JinjaTemplateSyntaxError  # type: ignore[import-not-found]
+
+    _JINJA_ENV = _JinjaEnvironment()
+except ImportError:
+    _JINJA_ENV = None
+    _jinja_nodes = None
+    _JinjaTemplateSyntaxError = None
 
 
 def _var_name_is_sensitive(var_name: str) -> bool:
@@ -56,15 +67,45 @@ def _var_name_is_sensitive(var_name: str) -> bool:
 
 
 def _value_has_register_secret_filter(value: object) -> bool:
-    """Check whether a string expression applies the core secret filter.
+    """Check whether the whole assigned string passes through the secret filter.
 
     Args:
         value: A YAML value, typically a Jinja expression.
 
     Returns:
-        True if the value contains ``register_secret`` or its FQCN.
+        True if the complete expression's outermost filter is ``register_secret``.
     """
-    return isinstance(value, str) and bool(_REGISTER_SECRET_FILTER_RE.search(value))
+    if not isinstance(value, str) or _JINJA_ENV is None or _jinja_nodes is None or _JinjaTemplateSyntaxError is None:
+        return False
+
+    expression = value.strip()
+    if not expression:
+        return False
+    if "{{" not in expression and "}}" not in expression:
+        expression = "{{ " + expression + " }}"
+    elif not (expression.startswith("{{") and expression.endswith("}}")):
+        return False
+
+    if not _REGISTER_SECRET_FILTER_RE.search(expression):
+        return False
+
+    # Jinja's parser does not accept Ansible's dotted filter spelling, so
+    # normalize it before parsing. The AST check below ensures a nested or
+    # concatenated occurrence still cannot exempt the assigned value.
+    normalized = _REGISTER_SECRET_FILTER_RE.sub(r"\g<pipe>register_secret", expression)
+    try:
+        template = _JINJA_ENV.parse(normalized)
+    except _JinjaTemplateSyntaxError:
+        return False
+
+    if len(template.body) != 1 or not isinstance(template.body[0], _jinja_nodes.Output):
+        return False
+    output = template.body[0]
+    return (
+        len(output.nodes) == 1
+        and isinstance(output.nodes[0], _jinja_nodes.Filter)
+        and output.nodes[0].name == "register_secret"
+    )
 
 
 def _find_sensitive_set_facts(node: ContentNode) -> list[str]:

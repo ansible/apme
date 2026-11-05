@@ -612,6 +612,30 @@ class TestRegisterSecretRecommendationGraphRule:
 
         assert result is not None
         assert result.verdict is False
+        assert _var_name_is_sensitive("db_password")
+
+        report = scan(graph, [rule], owned_only=True)
+        findings = [
+            rule_result
+            for node_result in report.node_results
+            for rule_result in node_result.rule_results
+            if rule_result.verdict and rule_result.rule is not None and rule_result.rule.rule_id == "M031"
+        ]
+        assert findings == []
+
+    def test_set_fact_with_unrelated_register_secret_filter_still_fires(self) -> None:
+        """An unrelated filtered string does not protect the assigned secret."""
+        graph, task_id = _make_set_fact_graph(
+            facts={"db_password": "{{ raw_password }}{{ 'other' | register_secret }}"}
+        )
+        rule = RegisterSecretRecommendationGraphRule()
+
+        result = rule.process(graph, task_id)
+
+        assert result is not None
+        assert result.verdict is True
+        detail = result.detail or {}
+        assert detail.get("sensitive_vars") == ["db_password"]
 
     def test_set_fact_with_fqcn_register_secret_filter_passes(self) -> None:
         """Rule passes when value uses the FQCN filter."""
@@ -663,6 +687,11 @@ class TestValueHasRegisterSecretFilter:
         assert not _value_has_register_secret_filter("{{ password }}")
         assert not _value_has_register_secret_filter("{{ val | default('') }}")
         assert not _value_has_register_secret_filter("{{ val | sensitive }}")
+
+    def test_filter_on_unrelated_concatenated_value_does_not_match(self) -> None:
+        """A filter on one concatenated part does not protect the full value."""
+        assert not _value_has_register_secret_filter("{{ raw_password }}{{ 'other' | register_secret }}")
+        assert not _value_has_register_secret_filter("{{ raw_password ~ ('other' | register_secret) }}")
 
     def test_non_string_value(self) -> None:
         """Return False for non-string values."""

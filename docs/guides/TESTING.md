@@ -250,10 +250,6 @@ jobs:
 Create `.gitlab-ci.yml`:
 
 ```yaml
-include:
-  - local: '.gitlab/apme-check.yml'
-
-# Or inline using container image:
 apme-check:
   image: ghcr.io/ansible/apme-cli:latest
   services:
