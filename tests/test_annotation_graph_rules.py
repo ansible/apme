@@ -600,7 +600,7 @@ class TestR105OutboundTransferGraphRule:
         assert result.verdict is True
         assert result.detail is not None
         assert result.detail["to"] == "{{ callback_url }}"
-        assert result.detail["from"] == "data"
+        assert result.detail["from"] == "[REDACTED]"
 
     def test_get_not_matched(self, rule: OutboundTransferGraphRule) -> None:
         """GET method does not match the outbound profile.

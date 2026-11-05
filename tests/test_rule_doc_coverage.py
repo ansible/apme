@@ -10,7 +10,13 @@ NATIVE_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
 OPA_BUNDLE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "opa" / "bundle"
 ANSIBLE_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "ansible" / "rules"
 
-_SKIP_NATIVE_FILES = {"__init__", "base_rule", "sample_rule"}
+_SKIP_NATIVE_FILES = {
+    "__init__",
+    "base_rule",
+    "sample_rule",
+    # Legacy heuristic is disabled; active L037 lives in the Ansible validator.
+    "L037_unresolved_module_graph",
+}
 
 
 def _discover_native_rule_ids() -> list[tuple[str, str, Path]]:

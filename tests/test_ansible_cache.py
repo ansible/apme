@@ -507,7 +507,7 @@ class TestPluginCacheCore:
             assert not lock_was_acquired
             return resolve_version(venv_root, namespace, name)
 
-        with patch.object(cache, "_resolve_version", side_effect=check_lock):
+        with patch.dict("os.environ", {}, clear=True), patch.object(cache, "_resolve_version", side_effect=check_lock):
             assert cache.introspect_context_suffix(venv) == "core:2.16.3"
 
     def test_collection_search_fingerprint_prefers_env_extra(self) -> None:
@@ -518,7 +518,7 @@ class TestPluginCacheCore:
                 "ANSIBLE_COLLECTIONS_PATH": "/from-env",
                 "ANSIBLE_CONFIG": "/from-env.cfg",
             },
-            clear=False,
+            clear=True,
         ):
             fp = _collection_search_fingerprint(
                 {

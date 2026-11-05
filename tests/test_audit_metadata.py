@@ -9,7 +9,7 @@ from apme_engine.graph.audit_metadata import (
     sanitize_audit_metadata_value,
     serialize_audit_metadata_value,
 )
-from apme_engine.graph.sensitivity import redact_url_userinfo, value_looks_sensitive
+from apme_engine.graph.sensitivity import redact_url_userinfo, redact_urls_in_text, value_looks_sensitive
 
 
 def test_redact_url_userinfo_strips_credentials() -> None:
@@ -33,6 +33,12 @@ def test_redact_url_userinfo_preserves_at_in_query_and_fragment() -> None:
     fragment_url = "https://example.com/path#user@secret"
     assert redact_url_userinfo(query_url) == query_url
     assert redact_url_userinfo(fragment_url) == fragment_url
+
+
+def test_redact_scp_source_query() -> None:
+    """SCP-style Git sources redact query values without breaking parsing."""
+    raw = "git@github.com:org/repo.git?token=secret"
+    assert redact_urls_in_text(raw) == "git@github.com:org/repo.git?[REDACTED]"
 
 
 def test_value_looks_sensitive_openssh_private_key() -> None:
