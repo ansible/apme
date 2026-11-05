@@ -68,6 +68,60 @@ it("does not reopen Create branch after dismissing and leaving/reopening the pro
     ),
   ).toBe(true);
 });
+
+it("clears an attached workflow when the host adapter changes", async () => {
+  const operation = {
+    operation_id: "op-one",
+    scan_id: "run-one",
+    status: "completed",
+    project_id: "p1",
+    result: { remediated_count: 1, patches: [] },
+    findings: [],
+    proposals: [],
+    progress: [],
+  };
+  const oldFetch = vi.fn(async () => new Response(JSON.stringify(operation)));
+  const newFetch = vi.fn(
+    async (_input: RequestInfo | URL) => new Response(null, { status: 404 }),
+  );
+  const view = render(
+    <BUIProvider>
+      <ApmeProjectWorkflow
+        projectId="p1"
+        adapter={createDefaultApmeApiAdapter({
+          apiBase: "/host",
+          fetch: oldFetch,
+        })}
+      />
+    </BUIProvider>,
+  );
+
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Resume workflow" }),
+  );
+  await screen.findByText("Create branch");
+
+  view.rerender(
+    <BUIProvider>
+      <ApmeProjectWorkflow
+        projectId="p1"
+        adapter={createDefaultApmeApiAdapter({
+          apiBase: "/host",
+          fetch: newFetch,
+        })}
+      />
+    </BUIProvider>,
+  );
+
+  await screen.findByRole("button", { name: "Check repository" });
+  expect(screen.queryByText("Create branch")).toBeNull();
+  expect(
+    newFetch.mock.calls.some(([input]) =>
+      String(input).endsWith("/projects/p1/operation"),
+    ),
+  ).toBe(true);
+});
+
 it("offers explicit resume for a live operation without attaching on project entry", async () => {
   const { mount } = fixture("assessed", 0);
   mount();

@@ -12,6 +12,7 @@ import {
 import { CheckOptionsForm, ProjectWorkflowPanel } from "@apme/ui-workflow";
 import { ApmeButton } from "./layout";
 import { DataStatus } from "./DataStatus";
+import { adapterIdentity } from "./adapterIdentity";
 import { useLoad } from "./useLoad";
 
 export interface ApmeProjectWorkflowProps {
@@ -26,7 +27,10 @@ export interface ApmeProjectWorkflowProps {
 export function ApmeProjectWorkflow(props: ApmeProjectWorkflowProps) {
   return (
     <ApmeApiProvider adapter={props.adapter}>
-      <ProjectWorkflow key={props.projectId} {...props} />
+      <ProjectWorkflow
+        key={`${props.projectId}-${adapterIdentity(props.adapter)}`}
+        {...props}
+      />
     </ApmeApiProvider>
   );
 }
