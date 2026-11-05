@@ -1,4 +1,4 @@
-# APME shared UI packages — delivery stage 1/5
+# APME shared UI packages — delivery stage 2/5
 
 This stack splits PR #832. See
 [TASK-022](../../.sdlc/specs/REQ-021-ui-host-consolidation/tasks/TASK-022-staged-delivery.md)
@@ -9,10 +9,12 @@ for the packages present at this stage, and `tox -e ui-workflow-pack` for native
 compatibility. Release builds pin all APME dependencies to artifacts of the same
 product release. Portal adoption follows publication and runtime acceptance (#833).
 
-The ESLint dependency override keeps every locked `minimatch` copy on the
-patched 11.x line. `check-eslint-minimatch.mjs` guards that lockfile contract;
-update it together with the override if the ESLint toolchain changes. The 10.x
-line has no fix for [GHSA-g3hv-75wg-m249](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
+The ESLint dependency override keeps `minimatch` resolved by ESLint,
+`@eslint/config-array`, and `@typescript-eslint/typescript-estree` on the patched
+11.x line. `check-eslint-minimatch.mjs` checks those lockfile resolutions;
+update it together with the override if the ESLint toolchain changes. Other
+packages keep their own `minimatch` requirements. The 10.x line has no fix for
+[GHSA-g3hv-75wg-m249](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
 
 ESLint covers APME-owned TypeScript and TSX. The only source exclusion is the
 exact `frontend/vendor/ansible-ui-framework/` snapshot, an upstream Ansible UI

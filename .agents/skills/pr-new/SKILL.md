@@ -268,6 +268,10 @@ artifact type, translate it:
    route, or selected entity changes, resolve and reject an older request
    after cleanup; verify its success, catch, and finally handlers cannot
    overwrite current data, selections, persisted values, or loading state.
+   For refresh-in-place views that retain loaded data, make the refresh fail
+   after an initial success and verify the prior content and controls stay
+   mounted while the error is surfaced inline; also verify initial-load
+   failures still show the error state.
    For requests that create a remote resource, also close the client after the
    server accepts the request but before its response arrives. Verify the
    client can still learn the resource id and dispose of it; aborting the

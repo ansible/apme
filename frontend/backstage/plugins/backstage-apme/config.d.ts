@@ -1,0 +1,20 @@
+export interface Config {
+  ansible?: {
+    apme?: {
+      /** Server-only location of the Portal settings store. */
+      portalSettingsPath?: string;
+      /** Allow HTTP URLs for explicitly configured development SCM servers. */
+      allowHttpOutboundUrls?: boolean;
+      /** Allow private network SCM hosts only when deployment policy permits. */
+      allowPrivateOutboundUrls?: boolean;
+    };
+  };
+  apme?: {
+    /** Host backend API prefix. Local defaults to discovery('proxy')/apme.
+     * @visibility frontend
+     */
+    apiBase?: string;
+    /** Authenticated upload backend; defaults to discovery('apme'). @visibility frontend */
+    uploadApiBase?: string;
+  };
+}

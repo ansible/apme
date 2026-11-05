@@ -28,6 +28,7 @@ if (
 const expectedPackages = new Map([
     ["@apme/client", `apme-client-${values.version}.tgz`],
     ["@apme/ui-workflow", `apme-ui-workflow-${values.version}.tgz`],
+    ["@apme/backstage-plugin", `apme-backstage-plugin-${values.version}.tgz`],
 ]);
 if (
     !Array.isArray(manifest.artifacts) ||

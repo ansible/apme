@@ -52,3 +52,6 @@ replay an old parent's commits after squash; do not use it for that transition.
   270 native/workflow tests, isolated packed-consumer declaration/browser checks
   and native Docker build stage passed. The default Podman UI Dockerfile
   (`containers/ui/Dockerfile`) copies the `@apme/client` manifest before `npm ci`.
+- Stage 2: fresh install, builds/types, 116 frontend tests, 270 native/workflow
+  tests, packed-consumer checks, development harness build, repository lint and
+  4,976 Python tests passed (50 skipped). No default Local deployment change.

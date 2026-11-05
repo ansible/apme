@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -75,21 +76,38 @@ class OperationRegistry:
         self._terminal_ttl = terminal_ttl
         self._reaper_task: asyncio.Task[None] | None = None
         self._project_locks: dict[str, asyncio.Lock] = {}
+        self._project_lock_users: dict[str, int] = {}
 
-    def project_lock(self, project_id: str) -> asyncio.Lock:
-        """Return a per-project lock for operate/abandon critical sections.
+    @contextlib.asynccontextmanager
+    async def project_lock(self, project_id: str) -> AsyncIterator[None]:
+        """Serialize project lifecycle work and reclaim idle lock entries.
 
         Args:
             project_id: Project UUID.
 
-        Returns:
-            Lock shared by all callers for this project.
+        Yields:
+            None: Control while holding the per-project lock.
         """
         lock = self._project_locks.get(project_id)
         if lock is None:
             lock = asyncio.Lock()
             self._project_locks[project_id] = lock
-        return lock
+        self._project_lock_users[project_id] = self._project_lock_users.get(project_id, 0) + 1
+        acquired = False
+        try:
+            await lock.acquire()
+            acquired = True
+            yield
+        finally:
+            if acquired:
+                lock.release()
+            users = self._project_lock_users.get(project_id, 0)
+            if users <= 1:
+                self._project_lock_users.pop(project_id, None)
+                if self._project_locks.get(project_id) is lock and not lock.locked():
+                    self._project_locks.pop(project_id, None)
+            else:
+                self._project_lock_users[project_id] = users - 1
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
@@ -115,6 +133,7 @@ class OperationRegistry:
         self._by_project.clear()
         self._terminal_times.clear()
         self._project_locks.clear()
+        self._project_lock_users.clear()
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -184,6 +203,22 @@ class OperationRegistry:
             return None
         return self._ops.get(op_id)
 
+    def remove_project(self, project_id: str) -> None:
+        """Remove a terminal operation snapshot after its project is deleted.
+
+        Args:
+            project_id: Deleted project UUID.
+
+        Raises:
+            ValueError: If the project still has a non-terminal operation.
+        """
+        operation = self.get_by_project(project_id)
+        if operation is None:
+            return
+        if operation.status not in TERMINAL_STATUSES:
+            raise ValueError("Cannot remove a project with an active operation")
+        self._remove(operation.operation_id)
+
     def list_active(self) -> list[OperationState]:
         """Return all non-terminal operations.
 
@@ -206,11 +241,6 @@ class OperationRegistry:
         self._terminal_times.pop(operation_id, None)
         if self._by_project.get(op.project_id) == operation_id:
             del self._by_project[op.project_id]
-            # Drop idle lock so long-lived gateways do not retain one entry
-            # per historical project_id (Copilot: unbounded _project_locks).
-            lock = self._project_locks.get(op.project_id)
-            if lock is not None and not lock.locked():
-                self._project_locks.pop(op.project_id, None)
         for q in op.sse_subscribers:
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait({"_close": True})

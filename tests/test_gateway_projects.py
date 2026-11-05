@@ -4,16 +4,21 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from apme_gateway.api.operation_router import OperateRequest, initiate_operation
 from apme_gateway.api.schemas import CreateProjectRequest, UpdateProjectRequest
 from apme_gateway.app import create_app
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.db.models import Project, Scan, Session, Violation
+from apme_gateway.operation_registry import get_operation_registry
+from apme_gateway.operation_types import OperationStatus
 from apme_gateway.scm.repo_url import normalize_repo_url
 
 pytestmark = pytest.mark.usefixtures("gateway_db")
@@ -420,6 +425,56 @@ async def test_delete_project(client: AsyncClient) -> None:
     assert resp.status_code == 204
     resp = await client.get("/api/v1/projects/proj-1")
     assert resp.status_code == 404
+
+
+async def test_delete_project_rejects_an_active_operation(client: AsyncClient) -> None:
+    """An active operation keeps its project and history available.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    await _seed_project()
+    registry = get_operation_registry()
+    operation_id = f"delete-guard-{uuid4().hex}"
+    registry.create(
+        operation_id=operation_id,
+        project_id="proj-1",
+        scan_id=f"scan-{uuid4().hex}",
+        scan_type="check",
+    )
+    try:
+        response = await client.delete("/api/v1/projects/proj-1")
+        assert response.status_code == 409
+        assert "operation is active" in response.json()["detail"]
+        project_response = await client.get("/api/v1/projects/proj-1")
+        assert project_response.status_code == 200
+    finally:
+        registry.transition(operation_id, OperationStatus.CANCELLED)
+
+
+async def test_operation_waiting_for_project_lock_rechecks_after_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operation queued behind deletion cannot use its stale project lookup.
+
+    Args:
+        monkeypatch: pytest fixture used to simulate deletion during lock acquisition.
+    """
+    await _seed_project()
+    registry = get_operation_registry()
+
+    class DeleteProjectOnLock:
+        async def __aenter__(self) -> None:
+            async with get_session() as db:
+                await q.delete_project(db, "proj-1")
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(registry, "project_lock", lambda _project_id: DeleteProjectOnLock())
+    with pytest.raises(HTTPException) as exc_info:
+        await initiate_operation("proj-1", OperateRequest(action="check"))
+    assert exc_info.value.status_code == 404
 
 
 async def test_delete_project_not_found(client: AsyncClient) -> None:
