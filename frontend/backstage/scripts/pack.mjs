@@ -21,6 +21,7 @@ const { values } = parseArgs({
         version: { type: "string", default: "0.0.0-dev" },
         output: { type: "string", default: "dist/ui-packages" },
         local: { type: "boolean", default: false },
+        "with-portal": { type: "boolean", default: false },
     },
 });
 const version = values.version;
@@ -51,6 +52,22 @@ const packages = [
         "frontend/backstage/plugins/backstage-apme-backend",
     ],
 ];
+if (values["with-portal"]) {
+    packages.push(
+        [
+            "@apme/portal-plugin",
+            "frontend/portal",
+            "manifests/frontend.json",
+            ["frontend", "common"],
+        ],
+        [
+            "@apme/portal-plugin-backend",
+            "frontend/portal",
+            "manifests/backend.json",
+            ["catalog", "scaffolder", "common"],
+        ],
+    );
+}
 const filenames = Object.fromEntries(
     packages.map(([name]) => [
         name,

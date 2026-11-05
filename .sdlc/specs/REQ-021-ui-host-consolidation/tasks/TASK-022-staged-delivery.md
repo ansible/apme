@@ -59,3 +59,14 @@ replay an old parent's commits after squash; do not use it for that transition.
   authorization/lifecycle), 270 native/workflow tests, four-artifact consumer
   checks, harness build, repository lint and 4,976 Python tests passed
   (50 skipped). Upload UI and backend authorization ship together.
+- Stage 4: 486 Portal backend/common tests and 519 Portal frontend tests passed;
+  both packed consumers, 128 shared frontend tests, 270 native/workflow tests,
+  fresh root install, repository lint and 4,976 Python tests passed (50 skipped).
+  Portal source provenance and static NFS integration are preserved. Review
+  hardening adds host authorization to inherited project and repository routes,
+  constrains SCM branch lookup to configured HTTPS origins without redirects,
+  safely encodes Gateway path identifiers, streams operation responses with
+  cancellation, scopes catalog sync by SCM provider and host, and propagates
+  catalog read failures. Regression coverage includes router authorization,
+  traversal and streaming, branch origin handling, sync failure recovery,
+  activity query dismissal, and packed-build path resolution.

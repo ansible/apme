@@ -1,4 +1,4 @@
-# APME shared UI packages — delivery stage 3/5
+# APME shared UI packages — delivery stage 4/5
 
 This stack splits PR #832. See
 [TASK-022](../../.sdlc/specs/REQ-021-ui-host-consolidation/tasks/TASK-022-staged-delivery.md)

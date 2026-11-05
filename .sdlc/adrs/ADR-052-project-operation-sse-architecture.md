@@ -167,3 +167,4 @@ the implementation simple and avoids schema changes for transient state.
 | 2026-09-22 | Agent | Status clarified — `OperationRegistry` and SSE shipped; `WS /projects/{id}/ws/operate` still present |
 | 2026-09-22 | Agent | Status → Partially Implemented — operation registry and SSE shipped |
 | 2026-11-04 | Codex | Project deletion now shares the operation lock and rejects active work; operation creation rechecks project existence after acquiring the lock |
+| 2026-11-04 | Codex | Portal operation adapter now preserves streamed response chunks/backpressure and cancels upstream work when the client disconnects; legacy WebSocket removal remains pending |
