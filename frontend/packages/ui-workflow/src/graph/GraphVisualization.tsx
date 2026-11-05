@@ -68,6 +68,7 @@ interface Props {
   variant?: 'content' | 'dependencies';
 }
 
+/** Renders an interactive content or dependency graph with branded image exports. */
 export function GraphVisualization({ data, variant = 'content' }: Props) {
   const title = variant === 'dependencies' ? 'Dependency graph' : 'Content graph';
   const markerPrefix = `apme-graph-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}-`;

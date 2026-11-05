@@ -233,6 +233,7 @@ function safeFilename(filename: string): string {
   return filename.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'apme-graph';
 }
 
+/** Adds APME-branded PNG and SVG download controls for an SVG visualization. */
 export function SvgExportButtons({
   svgRef,
   filename,
