@@ -7,6 +7,8 @@ on:
     types: [completed]
   push:
     branches: [main]
+  pull_request:
+    types: [closed]
   schedule:
     - cron: "0 */6 * * *"
 
@@ -208,14 +210,17 @@ jobs:
             }
 
   close-dependabot-duplicates:
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 857 &&
+      github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
-            const combinedPullNumber = 768;
-            const duplicatePullNumbers = [760, 761, 762, 763, 764, 765, 766];
+            const combinedPullNumber = context.payload.pull_request.number;
+            const duplicatePullNumbers = [845, 846, 847, 848, 849, 850, 851, 852, 853, 854, 855, 856];
 
             const { data: combinedPull } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -223,33 +228,52 @@ jobs:
               pull_number: combinedPullNumber,
             });
 
+            if (
+              combinedPull.number !== 857 ||
+              combinedPull.base.ref !== "main" ||
+              combinedPull.head.ref !== "chore/dependabot-batch-2026-11"
+            ) {
+              console.log("This is not the designated combined Dependabot PR; skipping.");
+              return;
+            }
+
             if (!combinedPull.merged_at) {
               console.log(`PR #${combinedPullNumber} has not merged; skipping.`);
               return;
             }
 
+            const failedPullNumbers = [];
             for (const pullNumber of duplicatePullNumbers) {
-              const { data: pull } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pullNumber,
-              });
+              try {
+                const { data: pull } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
 
-              if (pull.state !== "open") {
-                console.log(`PR #${pullNumber} is already ${pull.state}; skipping.`);
-                continue;
+                if (pull.state !== "open") {
+                  console.log(`PR #${pullNumber} is already ${pull.state}; skipping.`);
+                  continue;
+                }
+
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullNumber,
+                  body: `Closed because the combined Dependabot update in #${combinedPullNumber} was merged.`,
+                });
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                  state: "closed",
+                });
+              } catch (error) {
+                core.warning(`Failed to close PR #${pullNumber}: ${error.message}`);
+                failedPullNumbers.push(pullNumber);
               }
+            }
 
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pullNumber,
-                body: `Closed because the combined Dependabot update in #${combinedPullNumber} was merged.`,
-              });
-              await github.rest.pulls.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pullNumber,
-                state: "closed",
-              });
+            if (failedPullNumbers.length > 0) {
+              core.setFailed(`Failed to close PRs: ${failedPullNumbers.join(", ")}`);
             }

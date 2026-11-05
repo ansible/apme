@@ -22,15 +22,15 @@ constraints = [
 
 [[package]]
 name = "abbenay-client"
-version = "2026.8.9"
+version = "2026.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/71/554397b9d34c24c8840b2e803a991b5351b9db4328135c2491ffcf66d50e/abbenay_client-2026.8.9.tar.gz", hash = "sha256:7be743974fa7fe87a6bf31cbc132f6d0c3f70b0bf123f39c9bd7688e82d571b0", size = 37121, upload-time = "2026-09-16T20:26:17.605Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/e9/8966363146fcb1b0a1a1f666b016a75bf21e747742219d15ec5b3f603e9b/abbenay_client-2026.9.0.tar.gz", hash = "sha256:3d41c7dbfefdfd50804cfc3c53625dee31c5d41b1736a43ba1cbb94ec0c27522", size = 37298, upload-time = "2026-09-29T19:24:18.771Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/26/04/0563e8f8797c58e5e726e5a6159e5b23f9d2211edb289e1e5d3443300c09/abbenay_client-2026.8.9-py3-none-any.whl", hash = "sha256:76fcdfcc13e8c6d53f4b3c06df628acdc2ee5715f6325ed4f16e689b73b1abfe", size = 38944, upload-time = "2026-09-16T20:26:16.303Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/57/78328c5b0d4054613578a41dd3dc5bf341c9b8ea9ef0943ae55172897a39/abbenay_client-2026.9.0-py3-none-any.whl", hash = "sha256:5011e2a791ac54325d3cb6aba096cf1fcf1fe445cbe15a4453c2ecf4bedce6a5", size = 39155, upload-time = "2026-09-29T19:24:17.228Z" },
 ]
 
 [[package]]
@@ -299,7 +299,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.9" },
+    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.9.0" },
     { name = "ansible-core", specifier = ">=2.20.7" },
     { name = "asyncpg", marker = "extra == 'gateway'", specifier = ">=0.30" },
     { name = "certifi", specifier = ">=2026.10.19" },
@@ -344,7 +344,7 @@ provides-extras = ["ai", "gateway", "dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "ansible-dev-tools", specifier = ">=25.10.0" },
-    { name = "tox", specifier = "==4.64.4" },
+    { name = "tox", specifier = "==4.64.9" },
 ]
 
 [[package]]
@@ -2627,7 +2627,7 @@ wheels = [
 
 [[package]]
 name = "tox"
-version = "4.64.4"
+version = "4.64.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cachetools" },
@@ -2642,9 +2642,9 @@ dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
     { name = "virtualenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/04/e0/7a2ce108942f825c1ac9a2ef931dc53b1a7d18ca25d1ae10add73aa83ebc/tox-4.64.4.tar.gz", hash = "sha256:99e2a36e75202bd468f68126be25f72b8d8483e4a27b65252d6f019e856e62fd", size = 317372, upload-time = "2026-09-27T16:20:19.793Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/ce/062f2b42f95cfcbb9f1d7450820d29afffd4cd1967bdaa5e70ae3ad0d7b8/tox-4.64.9.tar.gz", hash = "sha256:6e85d720e350f1fb598498f3b4e742d0afa0a1e2b2e5e8203452729a3fa1da2c", size = 331588, upload-time = "2026-10-05T13:52:29.631Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/ee/3283286925ad7021282b01155a3ed4fdc87fd40e1a7e5db4e25183a1592a/tox-4.64.4-py3-none-any.whl", hash = "sha256:7158441d235d9e1b588f0e9f0547c07a45b3bd2f31530adb14ff5b3c1e84daeb", size = 232543, upload-time = "2026-09-27T16:20:18.407Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/98/0eef630912ae10dfcf78ccf424852360ab41abeb62575f794bb91af79288/tox-4.64.9-py3-none-any.whl", hash = "sha256:1281e9ada1f39ef248f7962cb20024643d2c406cd5a27aa6ef68877fd48a79b2", size = 237685, upload-time = "2026-10-05T13:52:27.985Z" },
 ]
 
 [[package]]
