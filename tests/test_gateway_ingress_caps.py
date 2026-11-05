@@ -114,21 +114,6 @@ def test_submit_token_length_is_bounded() -> None:
     assert effective_token is not None and not _is_valid_submit_token(effective_token)
 
 
-async def test_prior_submit_claim_check_releases_read_transaction() -> None:
-    """A read after a lost submit claim must release its transaction."""
-    from types import SimpleNamespace
-
-    from apme_gateway.api.operation_router import _prior_submit_claim_is_incomplete
-
-    db = AsyncMock()
-    claimed = SimpleNamespace(submit_token="a" * 32, pr_url=None, branch_name=None)
-    with patch("apme_gateway.api.operation_router.q.get_scan", new=AsyncMock(return_value=claimed)):
-        incomplete = await _prior_submit_claim_is_incomplete(db, "scan-id", "a" * 32)
-
-    assert incomplete
-    db.rollback.assert_awaited_once()
-
-
 def _ws_msg(msg_type: str, **fields: object) -> dict[str, object]:
     """Build one fake upload WebSocket message with object-typed values.
 

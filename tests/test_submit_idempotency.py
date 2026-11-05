@@ -321,6 +321,48 @@ async def test_weak_token_is_400(client: AsyncClient) -> None:
     assert detail["code"] == "invalid_idempotency_token"
 
 
+async def test_lost_submit_claim_conflicts_for_another_token(client: AsyncClient) -> None:
+    """A compare-and-set loss never proceeds to external SCM operations.
+
+    Args:
+        client: Test HTTP client.
+    """
+    project_id = "proj-submit-claim-conflict"
+    scan_id = "scan-submit-claim-conflict"
+    prior_token = "b" * 32
+    request_token = "a" * 32
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-claim-conflict",
+    )
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        scan.submit_token = prior_token
+        scan.branch_name = "apme/prior-submit"
+        await db.commit()
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": request_token},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "Verify SCM state" in response.json()["detail"]["message"]
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+
+
 async def test_replay_with_different_branch_is_409(client: AsyncClient) -> None:
     """Same token with a different branch_name returns 409 conflict.
 

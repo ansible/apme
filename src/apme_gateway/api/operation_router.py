@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import SubmitRequest, SubmitResponse
@@ -771,32 +770,6 @@ async def submit_operation(
             inflight.release()
 
 
-async def _prior_submit_claim_is_incomplete(db: AsyncSession, scan_id: str, token: str) -> bool:
-    """Check whether a failed claim belongs to an unfinished earlier submit.
-
-    The claim compare-and-set can lose to another writer after the initial
-    lookup. This follow-up read starts a transaction, so roll it back before
-    the caller makes any external SCM request.
-
-    Args:
-        db: Session used for the submit claim.
-        scan_id: Scan whose token claim lost the compare-and-set.
-        token: Token being submitted.
-
-    Returns:
-        True when the same token is claimed without a recorded branch or PR.
-    """
-    claimed = await q.get_scan(db, scan_id)
-    incomplete = (
-        claimed is not None
-        and getattr(claimed, "submit_token", None) == token
-        and not getattr(claimed, "pr_url", None)
-        and not getattr(claimed, "branch_name", None)
-    )
-    await db.rollback()
-    return incomplete
-
-
 async def _submit_operation_impl(
     project_id: str,
     body: SubmitRequest | None = None,
@@ -1225,23 +1198,19 @@ async def _submit_operation_impl(
                     .values(submit_token=idempotency_token)
                 )
                 await db.commit()
-                if _claim_result.rowcount == 0 and await _prior_submit_claim_is_incomplete(
-                    db,
-                    scan_id,
-                    idempotency_token,
-                ):
+                if _claim_result.rowcount == 0:
                     if state:
                         get_operation_registry().transition(
                             state.operation_id,
                             OperationStatus.COMPLETED,
-                            error="Prior submit attempt did not complete",
+                            error="Another submit already owns this scan claim",
                         )
                     raise HTTPException(
                         status_code=409,
                         detail=_coded_detail(
                             "idempotency_conflict",
-                            "A prior submit with this token did not complete "
-                            "(no branch recorded). Retry with a fresh token.",
+                            "Another submit already claimed this scan. Verify SCM state before retrying; "
+                            "use a new token only after confirming that no prior publish occurred.",
                         ),
                     )
             except HTTPException:
