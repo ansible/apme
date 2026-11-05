@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Button } from '@patternfly/react-core';
-import APME_LOGO_SVG from './apme.svg?raw';
+import APME_LOGO_URL from './apme.svg';
 
 interface SvgExportButtonsProps {
   svgRef: { current: SVGSVGElement | null };
@@ -39,7 +39,22 @@ const STYLE_PROPERTIES = [
   'ry',
 ];
 
-const logoDataUri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(APME_LOGO_SVG)}`;
+let logoDataUriPromise: Promise<string | undefined> | undefined;
+
+function getLogoDataUri(): Promise<string | undefined> {
+  if (!logoDataUriPromise) {
+    logoDataUriPromise = fetch(APME_LOGO_URL)
+      .then((response) => {
+        if (!response.ok) throw new Error('Could not load the APME logo.');
+        return response.text();
+      })
+      .then((svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+  }
+  return logoDataUriPromise.catch(() => {
+    logoDataUriPromise = undefined;
+    return undefined;
+  });
+}
 
 function findBackgroundColor(svg: SVGSVGElement, fallback = '#ffffff'): string {
   let element: Element | null = svg.parentElement;
@@ -68,6 +83,7 @@ async function createExportSvg(
   backgroundColor: string,
   prepareSvg?: (svg: SVGSVGElement) => void,
 ): Promise<{ source: string; width: number; height: number }> {
+  const logoDataUri = await getLogoDataUri();
   const clone = source.cloneNode(true) as SVGSVGElement;
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
@@ -123,14 +139,16 @@ async function createExportSvg(
   panel.setAttribute('stroke-width', '1');
   badge.appendChild(panel);
 
-  const logo = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-  logo.setAttribute('x', String(badgeX + 7));
-  logo.setAttribute('y', String(badgeY + 7));
-  logo.setAttribute('width', '40');
-  logo.setAttribute('height', '34');
-  logo.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-  logo.setAttribute('href', logoDataUri);
-  badge.appendChild(logo);
+  if (logoDataUri) {
+    const logo = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    logo.setAttribute('x', String(badgeX + 7));
+    logo.setAttribute('y', String(badgeY + 7));
+    logo.setAttribute('width', '40');
+    logo.setAttribute('height', '34');
+    logo.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    logo.setAttribute('href', logoDataUri);
+    badge.appendChild(logo);
+  }
 
   const wordmark = document.createElementNS('http://www.w3.org/2000/svg', 'text');
   wordmark.setAttribute('x', String(badgeX + 56));
