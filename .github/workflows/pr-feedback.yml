@@ -210,7 +210,10 @@ jobs:
             }
 
   close-dependabot-duplicates:
-    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 857 &&
+      github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -224,6 +227,15 @@ jobs:
               repo: context.repo.repo,
               pull_number: combinedPullNumber,
             });
+
+            if (
+              combinedPull.number !== 857 ||
+              combinedPull.base.ref !== "main" ||
+              combinedPull.head.ref !== "chore/dependabot-batch-2026-11"
+            ) {
+              console.log("This is not the designated combined Dependabot PR; skipping.");
+              return;
+            }
 
             if (!combinedPull.merged_at) {
               console.log(`PR #${combinedPullNumber} has not merged; skipping.`);
