@@ -59,6 +59,20 @@ const useActivityListStyles = makeStyles({
     fontWeight: 600,
     lineHeight: 1.4,
   },
+  sortButton: {
+    width: "100%",
+    padding: 0,
+    border: 0,
+    background: "none",
+    color: "inherit",
+    font: "inherit",
+    textAlign: "left",
+    cursor: "pointer",
+    "&:focus-visible": {
+      outline: "2px solid currentColor",
+      outlineOffset: 2,
+    },
+  },
 });
 
 type ActivitySortColumn =
@@ -159,6 +173,14 @@ function ActivityList({
     return sortAsc ? " ↑" : " ↓";
   };
 
+  const isInteractiveTarget = (target: EventTarget | null) =>
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "a, button, input, select, textarea, [role='button'], [role='link']",
+      ),
+    );
+
   if (activities.length === 0) {
     return (
       <div style={{ padding: 24, textAlign: "center", opacity: 0.6 }}>
@@ -172,47 +194,59 @@ function ActivityList({
       <table className={tableClasses.table} role="grid">
         <thead>
           <tr>
-            <th
-              className={tableClasses.sortableHeader}
-              style={{ width: 110 }}
-              onClick={() => handleSort("type")}
-            >
-              Type{sortArrow("type")}
+            <th className={tableClasses.sortableHeader} style={{ width: 110 }}>
+              <button
+                type="button"
+                className={classes.sortButton}
+                onClick={() => handleSort("type")}
+              >
+                Type{sortArrow("type")}
+              </button>
             </th>
-            <th
-              className={tableClasses.sortableHeader}
-              style={{ width: 100 }}
-              onClick={() => handleSort("violations")}
-            >
-              Violations{sortArrow("violations")}
+            <th className={tableClasses.sortableHeader} style={{ width: 100 }}>
+              <button
+                type="button"
+                className={classes.sortButton}
+                onClick={() => handleSort("violations")}
+              >
+                Violations{sortArrow("violations")}
+              </button>
             </th>
-            <th
-              className={tableClasses.sortableHeader}
-              style={{ width: 88 }}
-              onClick={() => handleSort("fixable")}
-            >
-              Fixable{sortArrow("fixable")}
+            <th className={tableClasses.sortableHeader} style={{ width: 88 }}>
+              <button
+                type="button"
+                className={classes.sortButton}
+                onClick={() => handleSort("fixable")}
+              >
+                Fixable{sortArrow("fixable")}
+              </button>
             </th>
-            <th
-              className={tableClasses.sortableHeader}
-              style={{ width: 110 }}
-              onClick={() => handleSort("remediated")}
-            >
-              Remediated{sortArrow("remediated")}
+            <th className={tableClasses.sortableHeader} style={{ width: 110 }}>
+              <button
+                type="button"
+                className={classes.sortButton}
+                onClick={() => handleSort("remediated")}
+              >
+                Remediated{sortArrow("remediated")}
+              </button>
             </th>
-            <th
-              className={tableClasses.sortableHeader}
-              style={{ width: 88 }}
-              onClick={() => handleSort("manual")}
-            >
-              Manual{sortArrow("manual")}
+            <th className={tableClasses.sortableHeader} style={{ width: 88 }}>
+              <button
+                type="button"
+                className={classes.sortButton}
+                onClick={() => handleSort("manual")}
+              >
+                Manual{sortArrow("manual")}
+              </button>
             </th>
-            <th
-              className={tableClasses.sortableHeader}
-              style={{ width: 120 }}
-              onClick={() => handleSort("time")}
-            >
-              Time{sortArrow("time")}
+            <th className={tableClasses.sortableHeader} style={{ width: 120 }}>
+              <button
+                type="button"
+                className={classes.sortButton}
+                onClick={() => handleSort("time")}
+              >
+                Time{sortArrow("time")}
+              </button>
             </th>
             <th style={{ width: 140 }}>Published</th>
           </tr>
@@ -226,8 +260,14 @@ function ActivityList({
                 key={scan.scan_id}
                 role="row"
                 tabIndex={0}
-                onClick={() => onOpen(scan.scan_id)}
+                aria-label={`Open ${typeLabel} activity from ${timeAgo(scan.created_at)}`}
+                onClick={(event) => {
+                  if (!isInteractiveTarget(event.target)) {
+                    onOpen(scan.scan_id);
+                  }
+                }}
                 onKeyDown={(e) => {
+                  if (isInteractiveTarget(e.target)) return;
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     onOpen(scan.scan_id);
@@ -254,7 +294,7 @@ function ActivityList({
                 <td style={{ color: theme.palette.text.secondary }}>
                   {timeAgo(scan.created_at)}
                 </td>
-                <td onClick={(e) => e.stopPropagation()}>
+                <td>
                   <ActivityPublishedCell
                     pr_url={scan.pr_url}
                     branch_name={scan.branch_name}

@@ -608,6 +608,7 @@ export const ApmeRulesTab = () => {
               <Typography variant="h6" style={{ fontFamily: "monospace" }}>
                 Rule: {selectedRule.id}
               </Typography>
+              {/* eslint-disable-next-line a11y/click-events-have-key-events -- IconButton renders a native button with keyboard activation. */}
               <IconButton
                 aria-label="Close rule detail"
                 onClick={() => setSelectedRule(null)}

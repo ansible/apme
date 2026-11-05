@@ -174,6 +174,8 @@ export const ApmeRepoStatusChip = ({
   const worst = projectWorstSeverity(project);
   if (!worst) {
     return (
+      // Material UI Chip supplies role, focus, and Enter/Space activation when clickable.
+      // eslint-disable-next-line a11y/click-events-have-key-events -- Chip already provides button keyboard behavior.
       <Chip
         size="small"
         label={label}
@@ -185,6 +187,8 @@ export const ApmeRepoStatusChip = ({
   }
 
   return (
+    // Material UI Chip supplies role, focus, and Enter/Space activation when clickable.
+    // eslint-disable-next-line a11y/click-events-have-key-events -- Chip already provides button keyboard behavior.
     <Chip
       size="small"
       label={label}

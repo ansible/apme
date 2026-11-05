@@ -5,14 +5,13 @@
  * `design/apme-integration` → QualityOverviewContent.tsx
  */
 
-import { useMemo, useState, type MouseEvent } from "react";
+import { useMemo, useState } from "react";
 import {
   Box,
   Card,
   Chip,
   Collapse,
   IconButton,
-  Link,
   Tooltip,
   Typography,
   makeStyles,
@@ -106,6 +105,22 @@ const useStyles = makeStyles((theme) => ({
       cursor: "pointer",
       userSelect: "none",
       "&:hover": { color: theme.palette.text.primary },
+    },
+    "& th > button": {
+      width: "100%",
+      padding: 0,
+      border: 0,
+      background: "none",
+      color: "inherit",
+      font: "inherit",
+      textAlign: "left",
+      textTransform: "inherit",
+      letterSpacing: "inherit",
+      cursor: "pointer",
+      "&:focus-visible": {
+        outline: "2px solid currentColor",
+        outlineOffset: 2,
+      },
     },
     "& td": {
       padding: "10px 12px",
@@ -518,32 +533,42 @@ export const FleetQualityTab = ({
                 <thead>
                   <tr>
                     <th style={{ width: 36, padding: "10px 4px" }} />
-                    <th
-                      style={{ width: 100 }}
-                      onClick={() => handleSort("severity")}
-                    >
-                      Severity{sortArrow("severity")}
+                    <th style={{ width: 100 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("severity")}
+                      >
+                        Severity{sortArrow("severity")}
+                      </button>
                     </th>
-                    <th onClick={() => handleSort("impact")}>
-                      Rule{sortArrow("impact")}
+                    <th>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("impact")}
+                      >
+                        Rule{sortArrow("impact")}
+                      </button>
                     </th>
-                    <th
-                      style={{ width: 110 }}
-                      onClick={() => handleSort("category")}
-                    >
-                      Category{sortArrow("category")}
+                    <th style={{ width: 110 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("category")}
+                      >
+                        Category{sortArrow("category")}
+                      </button>
                     </th>
-                    <th
-                      style={{ width: 72 }}
-                      onClick={() => handleSort("repos")}
-                    >
-                      Repos{sortArrow("repos")}
+                    <th style={{ width: 72 }}>
+                      <button type="button" onClick={() => handleSort("repos")}>
+                        Repos{sortArrow("repos")}
+                      </button>
                     </th>
-                    <th
-                      style={{ width: 100 }}
-                      onClick={() => handleSort("occurrences")}
-                    >
-                      Occurrences{sortArrow("occurrences")}
+                    <th style={{ width: 100 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleSort("occurrences")}
+                      >
+                        Occurrences{sortArrow("occurrences")}
+                      </button>
                     </th>
                   </tr>
                 </thead>
@@ -556,9 +581,18 @@ export const FleetQualityTab = ({
                     return [
                       <tr
                         key={group.ruleId}
+                        tabIndex={0}
+                        aria-expanded={isExpanded}
                         onClick={() =>
                           setExpandedRule(isExpanded ? null : group.ruleId)
                         }
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setExpandedRule(isExpanded ? null : group.ruleId);
+                          }
+                        }}
                         style={{
                           cursor: "pointer",
                           ...(isExpanded
@@ -610,12 +644,17 @@ export const FleetQualityTab = ({
                         </td>
                         <td>
                           {group.category ? (
-                            <Typography
-                              onClick={(e: MouseEvent) => {
+                            <button
+                              type="button"
+                              onClick={(e) => {
                                 e.stopPropagation();
                                 toggleCategory(group.category!);
                               }}
                               style={{
+                                padding: 0,
+                                border: 0,
+                                background: "none",
+                                textAlign: "left",
                                 fontSize: 11,
                                 color: categoryFilters.has(group.category)
                                   ? theme.palette.primary.main
@@ -627,7 +666,7 @@ export const FleetQualityTab = ({
                               }}
                             >
                               {categoryLabel(group.category)}
-                            </Typography>
+                            </button>
                           ) : (
                             "—"
                           )}
@@ -718,7 +757,7 @@ export const FleetQualityTab = ({
                                     >
                                       {r.lastScannedAt ?? "—"}
                                     </Typography>
-                                    <Link
+                                    <a
                                       href={repositoryDetailPath(
                                         r.entityName,
                                         group.ruleId,
@@ -728,12 +767,10 @@ export const FleetQualityTab = ({
                                         fontWeight: 500,
                                         flexShrink: 0,
                                       }}
-                                      onClick={(e: MouseEvent) =>
-                                        e.stopPropagation()
-                                      }
+                                      onClick={(e) => e.stopPropagation()}
                                     >
                                       View details →
-                                    </Link>
+                                    </a>
                                   </Box>
                                 ))}
                               </Box>

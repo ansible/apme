@@ -159,6 +159,7 @@ export const ViolationDetailModal = ({
             </Typography>
           )}
         </Box>
+        {/* eslint-disable-next-line a11y/click-events-have-key-events -- IconButton renders a native button with keyboard activation. */}
         <IconButton size="small" onClick={onClose} aria-label="Close">
           <CloseIcon />
         </IconButton>

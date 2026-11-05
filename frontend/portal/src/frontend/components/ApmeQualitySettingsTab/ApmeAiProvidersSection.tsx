@@ -267,6 +267,8 @@ const ManagedProviderList = ({
             }
           />
           <ListItemSecondaryAction>
+            {/* Material UI IconButton renders a native button with keyboard activation. */}
+            {/* eslint-disable-next-line a11y/click-events-have-key-events -- IconButton already provides native button keyboard behavior. */}
             <IconButton
               edge="end"
               aria-label={`Edit provider ${p.id}`}
@@ -275,6 +277,8 @@ const ManagedProviderList = ({
             >
               <EditIcon fontSize="small" />
             </IconButton>
+            {/* Material UI IconButton renders a native button with keyboard activation. */}
+            {/* eslint-disable-next-line a11y/click-events-have-key-events -- IconButton already provides native button keyboard behavior. */}
             <IconButton
               edge="end"
               aria-label={`Remove provider ${p.id}`}

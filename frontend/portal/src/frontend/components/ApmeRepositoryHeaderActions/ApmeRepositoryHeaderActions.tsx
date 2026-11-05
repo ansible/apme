@@ -90,6 +90,7 @@ export const ApmeRepositoryHeaderActions = ({
 
   return (
     <>
+      {/* eslint-disable-next-line a11y/click-events-have-key-events -- MenuItem receives focus and keyboard activation from the menu. */}
       <MenuItem onClick={handleScan}>
         <AssessmentIcon fontSize="small" style={{ marginRight: 8 }} />
         Run quality scan
@@ -107,6 +108,7 @@ export const ApmeRepositoryHeaderActions = ({
         </MenuItem>
       ) : null}
       {canDeregister && (
+        /* eslint-disable-next-line a11y/click-events-have-key-events -- MenuItem receives focus and keyboard activation from the menu. */
         <MenuItem onClick={handleDeregisterClick}>
           <DeleteOutlineIcon fontSize="small" style={{ marginRight: 8 }} />
           Remove
