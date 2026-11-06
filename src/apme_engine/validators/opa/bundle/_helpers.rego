@@ -114,7 +114,7 @@ uses_shell_features(cmd) if {
 uses_shell_features(cmd) if {
 	is_string(cmd)
 	stripped := trim_space(jinja_stripped(cmd))
-	regex.match(`^[A-Za-z_][A-Za-z0-9_]*=`, stripped)
+	regex.match(`^[A-Za-z_][A-Za-z0-9_]*\+?=`, stripped)
 }
 
 uses_shell_features(cmd) if {

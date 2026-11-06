@@ -574,6 +574,15 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_when_bash_append_assignment_is_used(self) -> None:
+        """Keep shell for Bash's PATH+= assignment form."""
+        content = textwrap.dedent("""\
+        - name: Extend PATH for command
+          ansible.builtin.shell: "PATH+=:/opt/bin printenv PATH"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
     def test_no_change_when_and_present(self) -> None:
         """Verifies no change when && in command."""
         content = textwrap.dedent("""\

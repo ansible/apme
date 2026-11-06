@@ -12,7 +12,7 @@ from apme_engine.remediation.transforms._helpers import get_module_key, rename_k
 # Inspected after Jinja ``{{ }}`` is stripped so ``|quote`` is not a pipe.
 # Non-greedy so dict literals like ``{{ {'k': 'v'} }}`` are stripped too.
 _JINJA_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
-_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
 _SHELL_CHARS = (
     "|",
     "&&",
