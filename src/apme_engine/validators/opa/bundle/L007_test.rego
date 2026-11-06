@@ -23,6 +23,18 @@ test_L007_does_not_fire_for_printf_builtin if {
 	not rules.command_instead_of_shell(tree, node)
 }
 
+test_L007_does_not_fire_for_true_builtin if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "true"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_for_false_builtin if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "false"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
 test_L007_does_not_fire_for_bash_append_assignment if {
 	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "PATH+=:/opt/bin printenv PATH"}, "line": [1], "key": "k", "file": "f.yml"}]}
 	node := tree.nodes[0]

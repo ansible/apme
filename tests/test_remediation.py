@@ -583,6 +583,26 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_for_true_builtin(self) -> None:
+        """Keep shell for true, which needs no external binary."""
+        content = textwrap.dedent("""\
+        - name: Run true
+          ansible.builtin.shell: true
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+        assert "ansible.builtin.shell" in result.content
+
+    def test_no_change_for_false_builtin(self) -> None:
+        """Keep shell for false, which needs no external binary."""
+        content = textwrap.dedent("""\
+        - name: Run false
+          ansible.builtin.shell: false
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+        assert "ansible.builtin.shell" in result.content
+
     def test_no_change_when_bash_append_assignment_is_used(self) -> None:
         """Keep shell for Bash's PATH+= assignment form."""
         content = textwrap.dedent("""\
