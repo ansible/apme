@@ -584,7 +584,7 @@ def _extract_collections(trees_data: list[YAMLDict]) -> list[str]:
                 parts = mod.split(".")
                 if len(parts) >= 3 and all(parts):
                     prefix = f"{parts[0]}.{parts[1]}"
-                    if prefix != "ansible.builtin":
+                    if prefix not in {"ansible.builtin", "ansible.legacy"}:
                         collections.add(prefix)
     return sorted(collections)
 
