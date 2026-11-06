@@ -530,14 +530,15 @@ async def test_ai_triage_bridge_forwards_remediation_fields() -> None:
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_path_traversal_rejected() -> None:
-    """Files with ``..`` in the path are rejected."""
+    """Files with ``..`` or absolute paths are rejected."""
     from apme_gateway.session_client import _sanitize_path
 
     with pytest.raises(ValueError, match="traversal"):
         _sanitize_path("../../etc/passwd")
 
     assert _sanitize_path("roles/tasks/main.yml") == "roles/tasks/main.yml"
-    assert _sanitize_path("/absolute/path.yml") == "absolute/path.yml"
+    with pytest.raises(ValueError, match="traversal"):
+        _sanitize_path("/absolute/path.yml")
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

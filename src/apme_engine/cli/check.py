@@ -305,7 +305,11 @@ def run_check(args: argparse.Namespace) -> None:
         from apme_engine.engine._version import __version__ as _engine_version
 
         sarif_doc = violations_to_sarif(violations, tool_version=_engine_version)
-        print(json.dumps(sarif_doc))
+        # Stdout first (flushed) so piped consumers never lose results if
+        # the best-effort Gateway mirror below stalls or fails.
+        print(json.dumps(sarif_doc), flush=True)
+        if getattr(args, "report_to_gateway", False):
+            _report_check_to_gateway(args, project_root, violations)
         if violations:
             sys.exit(EXIT_VIOLATIONS)
         return
@@ -331,7 +335,9 @@ def run_check(args: argparse.Namespace) -> None:
             "resolution_summary": dict(res_counts),
             "diffs": diffs,
         }
-        print(json.dumps(out, indent=2))
+        print(json.dumps(out, indent=2), flush=True)
+        if getattr(args, "report_to_gateway", False):
+            _report_check_to_gateway(args, project_root, violations)
         if violations:
             sys.exit(EXIT_VIOLATIONS)
         return
@@ -347,7 +353,93 @@ def run_check(args: argparse.Namespace) -> None:
 
     display_summary = _ScanSummaryCompat(tier1_report)
     render_check_results(violations, scan_id=scan_id, scan_time_ms=None, summary=display_summary)
+    sys.stdout.flush()
+    if getattr(args, "report_to_gateway", False):
+        _report_check_to_gateway(args, project_root, violations)
     if suppressed_count and not show_suppressed:
         sys.stderr.write(dim(f"  ({suppressed_count} suppressed violation(s) hidden — use --show-suppressed)\n"))
     if violations:
         sys.exit(EXIT_VIOLATIONS)
+
+
+def _report_check_to_gateway(
+    args: argparse.Namespace,
+    project_root: object,
+    violations: list[ViolationDict],
+) -> None:
+    """Mirror CLI-local check results into Gateway activity (additive stub).
+
+    POSTs to ``POST /api/v1/scans/import`` (shared-space mirror). Best
+    effort: failures warn on stderr and never change the check exit code.
+
+    Args:
+        args: Parsed CLI arguments (gateway_url, project_id).
+        project_root: Resolved project root path.
+        violations: Active violations to mirror.
+    """
+    try:
+        from apme_engine.cli.gateway_client import GatewayClient  # noqa: PLC0415
+
+        client = GatewayClient(base_url=getattr(args, "gateway_url", None))
+        max_violations = 5000
+        max_body_bytes = 16 * 1024 * 1024
+        payload: dict[str, object] = {
+            "project_path": str(project_root)[:1000],
+            "scan_type": "check",
+            "source": "cli",
+            "violations": [],
+        }
+        project_id = getattr(args, "project_id", None)
+        if project_id:
+            project_id_text = str(project_id)
+            if len(project_id_text) <= 100:
+                payload["project_id"] = project_id_text
+            else:
+                sys.stderr.write("  Warning: --report-to-gateway omitted project_id longer than 100 characters.\n")
+
+        encoded_size = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        imported_violations: list[dict[str, object]] = []
+        for violation in violations[:max_violations]:
+            row: dict[str, object] = {
+                "rule_id": str(violation.get("rule_id", ""))[:64],
+                "level": str(violation.get("level") or violation.get("severity") or "warning")[:16],
+                "message": str(violation.get("message", ""))[:4000],
+                "file": str(violation.get("file", ""))[:1000],
+                "line": _import_line(violation.get("line")),
+                "path": str(violation.get("path", ""))[:2000],
+                "remediation_class": str(violation.get("remediation_class") or "")[:32],
+            }
+            row_size = len(json.dumps(row, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            next_size = encoded_size + row_size + bool(imported_violations)
+            if next_size > max_body_bytes:
+                break
+            imported_violations.append(row)
+            encoded_size = next_size
+        payload["violations"] = imported_violations
+
+        omitted_violations = len(violations) - len(imported_violations)
+        if omitted_violations:
+            sys.stderr.write(
+                f"  Warning: --report-to-gateway omitted {omitted_violations} violation(s) "
+                f"to stay within the {max_violations}-row and 16 MiB import limits.\n"
+            )
+        result = client.import_scan(payload)
+        reported_id = result.get("scan_id") if isinstance(result, dict) else None
+        if reported_id:
+            sys.stderr.write(f"  Reported to Gateway: scan {reported_id}\n")
+    except Exception as exc:  # noqa: BLE001 — best-effort mirror only
+        sys.stderr.write(f"  Warning: --report-to-gateway failed: {exc}\n")
+
+
+def _import_line(line: object) -> int | None:
+    """Normalize violation locations for the Gateway import schema.
+
+    Args:
+        line: Single line number or a line range from a validator.
+
+    Returns:
+        The first line number when it is an integer, otherwise ``None``.
+    """
+    if isinstance(line, list | tuple):
+        line = line[0] if line else None
+    return line if isinstance(line, int) and not isinstance(line, bool) else None

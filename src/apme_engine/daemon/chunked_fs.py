@@ -21,6 +21,11 @@ SKIP_FILENAMES = {".travis.yml", ".travis.yaml"}
 # Max file size to include (bytes); skip binary-ish or huge files
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MiB
 
+
+class ScanBundleLimitExceeded(ValueError):
+    """Raised when a bounded scan bundle would exceed its file or byte limit."""
+
+
 # Extensions we care about for Ansible (include these; exclude or skip binary)
 TEXT_EXTENSIONS = {
     ".yml",
@@ -265,6 +270,8 @@ def build_scan_bundle(
     skip_collection_health: bool = False,
     skip_dep_audit: bool = False,
     exclude_patterns: Sequence[str] | None = None,
+    max_files: int | None = None,
+    max_bytes: int | None = None,
 ) -> _ScanBundle:
     """Walk target_path (file, directory, or list of files/directories) and collect files.
 
@@ -283,9 +290,14 @@ def build_scan_bundle(
         skip_collection_health: Disable collection health validator (ADR-051).
         skip_dep_audit: Disable Python CVE audit validator (ADR-051).
         exclude_patterns: Optional CLI ``--exclude`` glob patterns (merged with .apmeignore).
+        max_files: Optional cap checked before reading file content beyond the limit.
+        max_bytes: Optional aggregate content cap checked while reading files.
 
     Returns:
         _ScanBundle with files and options populated.
+
+    Raises:
+        ScanBundleLimitExceeded: When either optional bundle limit is exceeded.
     """
     raw_targets: list[str | Path] = [target_path] if isinstance(target_path, (str, Path)) else list(target_path)
     if not raw_targets:
@@ -320,8 +332,9 @@ def build_scan_bundle(
         if scope not in target_scopes:
             target_scopes.append(scope)
 
-    files = []
+    files: list[File] = []
     seen: set[str] = set()
+    byte_count = 0
     for path, scope in to_visit:
         if not path.is_file():
             continue
@@ -353,14 +366,31 @@ def build_scan_bundle(
         if not _should_include(path, root, root_ignore):
             continue
         try:
-            content = path.read_bytes()
+            with path.open("rb") as source:
+                prefix = source.read(8192)
+                # Skip if the file looks binary, matching the legacy check.
+                if b"\x00" in prefix:
+                    continue
+                if max_files is not None and len(files) >= max_files:
+                    raise ScanBundleLimitExceeded(f"Scan file limit exceeded: {len(files) + 1} files (max {max_files})")
+                if max_bytes is not None and byte_count + len(prefix) > max_bytes:
+                    raise ScanBundleLimitExceeded(
+                        f"Scan size limit exceeded: more than {max_bytes} bytes (max {max_bytes} bytes)"
+                    )
+                remaining = None if max_bytes is None else max_bytes - byte_count - len(prefix)
+                tail = source.read() if remaining is None else source.read(remaining + 1)
+                content = prefix + tail
+        except ScanBundleLimitExceeded:
+            raise
         except (OSError, UnicodeDecodeError):
             continue
-        # Skip if looks binary
-        if b"\x00" in content[:8192]:
-            continue
+        if max_bytes is not None and byte_count + len(content) > max_bytes:
+            raise ScanBundleLimitExceeded(
+                f"Scan size limit exceeded: more than {max_bytes} bytes (max {max_bytes} bytes)"
+            )
         seen.add(str(resolved_path))
         files.append(File(path=str(rel), content=content))
+        byte_count += len(content)
 
     options = ScanOptions()
     if ansible_core_version:
@@ -402,6 +432,8 @@ def yield_scan_chunks(
     skip_collection_health: bool = False,
     skip_dep_audit: bool = False,
     exclude_patterns: Sequence[str] | None = None,
+    max_files: int | None = None,
+    max_bytes: int | None = None,
 ) -> Iterator[ScanChunk]:
     """Yield ScanChunk messages for FixSession/FormatStream so the total request stays under gRPC message limits.
 
@@ -421,6 +453,8 @@ def yield_scan_chunks(
         skip_collection_health: Disable collection health validator (ADR-051).
         skip_dep_audit: Disable Python CVE audit validator (ADR-051).
         exclude_patterns: Optional CLI ``--exclude`` glob patterns.
+        max_files: Optional cap passed to bundle construction.
+        max_bytes: Optional aggregate content cap passed to bundle construction.
 
     Yields:
         ScanChunk: ScanChunk messages for streaming.
@@ -437,6 +471,8 @@ def yield_scan_chunks(
         skip_collection_health=skip_collection_health,
         skip_dep_audit=skip_dep_audit,
         exclude_patterns=exclude_patterns,
+        max_files=max_files,
+        max_bytes=max_bytes,
     )
     files: list[File] = list(req.files)
     if not files:

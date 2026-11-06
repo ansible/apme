@@ -70,7 +70,7 @@ Decisions with substantial code shipped; ADR-defined scope still incomplete.
 | [ADR-040](ADR-040-scan-metadata-enrichment.md) | Scan Metadata Enrichment (Partially Implemented (global collection and Python-package catalog endpoints and collection-to-project routes pending)) | 2026-03-25 |
 | [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog (Partially Implemented (Phase 5 service_affecting and R2xx rules pending)) | 2026-03-26 |
 | [ADR-048](ADR-048-pod-internal-admin-endpoints.md) | Pod-Internal Admin Endpoints Rely on Network Isolation (Partially Implemented (localhost-only Galaxy Proxy binding and removal of hostPort exposure pending)) | 2026-04-01 |
-| [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration (Partially Implemented (scm_token encryption at rest pending)) | 2026-04-07 (revised 2026-07-06) |
+| [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration (Partially Implemented (scm_token encryption at rest pending)) | 2026-04-07 (revised 2026-11-05) |
 | [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning (Partially Implemented (M004 collection rules and `--rescan-deps` CLI flag pending)) | 2026-04-07 |
 | [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture (Partially Implemented (legacy WebSocket removal pending)) | 2026-04-14 |
 | [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy (Partially Implemented (`@v1` publish pending)) | 2026-04-10 |

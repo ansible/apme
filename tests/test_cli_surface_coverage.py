@@ -933,12 +933,14 @@ def test_suppress_add_full_requires_original_yaml(tmp_path: Path) -> None:
     assert exc.value.code == EXIT_ERROR
 
 
-def test_suppress_add_rule_module_requires_fqcn(tmp_path: Path) -> None:
-    """rule_module mode without fqcn exits with EXIT_ERROR.
+def test_suppress_add_rule_module_deprecated_to_rule_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """rule_module mode is deprecated: warns and maps to rule_only behavior.
 
     Args:
         tmp_path: Temporary directory fixture.
+        capsys: Pytest capture fixture.
     """
+    from apme_engine.cli._suppressions import load_suppressions
     from apme_engine.cli.suppress_cmd import _suppress_add
 
     args = argparse.Namespace(
@@ -950,9 +952,13 @@ def test_suppress_add_rule_module_requires_fqcn(tmp_path: Path) -> None:
         module_fqcn="",
         fingerprint=None,
     )
-    with pytest.raises(SystemExit) as exc:
-        _suppress_add(args)
-    assert exc.value.code == EXIT_ERROR
+    _suppress_add(args)
+    err = capsys.readouterr().err
+    assert "deprecated" in err
+    assert "rule_module" in err
+    entries = load_suppressions(tmp_path)
+    assert len(entries) == 1
+    assert entries[0].mode == "rule_only"
 
 
 def test_suppress_add_with_explicit_fingerprint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1007,7 +1013,7 @@ def test_suppress_add_duplicate_reports_exists(tmp_path: Path, capsys: pytest.Ca
 
 
 def test_suppress_add_computed_full_and_rule_module(tmp_path: Path) -> None:
-    """Computed fingerprints work for full and rule_module modes.
+    """Computed fingerprints work for full and rule_only modes.
 
     Args:
         tmp_path: Temporary directory fixture.
@@ -1030,10 +1036,10 @@ def test_suppress_add_computed_full_and_rule_module(tmp_path: Path) -> None:
         argparse.Namespace(
             target=str(tmp_path),
             rule_id="L002",
-            mode="rule_module",
+            mode="rule_only",
             reason="",
             original_yaml="",
-            module_fqcn="ansible.builtin.debug",
+            module_fqcn="",
             fingerprint=None,
         )
     )

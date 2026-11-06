@@ -27,11 +27,10 @@ from apme_gateway.scan.driver import (
     _OP_APPROVE_TIMEOUT_DEFAULT_S,
     _OP_BEGIN_TIMEOUT_DEFAULT_S,
     _OP_ESCALATE_TIMEOUT_DEFAULT_S,
-    OperatorAnswerQueue,
-    _drain_queue,
     _op_timeout,
     run_project_operation,
 )
+from apme_gateway.scan.operator_queue import OperatorAnswerQueue, _drain_queue
 from apme_gateway.scm.github import GitHubProvider
 from apme_gateway.scm.gitlab import GitLabProvider
 from apme_gateway.scm.text import is_text_blob
@@ -79,6 +78,63 @@ async def test_retire_approval_gate_on_timeout_resolves_after_commit_failure() -
 
     assert gate.future.done()
     assert gate.future.result() == []
+
+
+async def test_late_approval_after_new_gate_timeout_rejects_old_token() -> None:
+    """A timed-out later gate cannot replay the token from an earlier gate."""
+    from fastapi import HTTPException
+
+    from apme_gateway.api.operation_router import ApproveRequest, approve_proposals
+    from apme_gateway.operation_registry import get_operation_registry
+    from apme_gateway.operation_types import Proposal
+
+    registry = get_operation_registry()
+    state = registry.create(
+        operation_id="op-late-gate-approve",
+        project_id="proj-late-gate-approve",
+        scan_id="scan-late-gate-approve",
+        scan_type="remediate",
+    )
+    await registry.set_proposals(
+        state.operation_id,
+        [Proposal(id="gate1", rule_id="L001", file="one.yml")],
+    )
+    gate1 = state.approval_gate
+    assert gate1 is not None
+
+    mock_db = AsyncMock()
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_db
+    mock_cm.__aexit__.return_value = None
+    with (
+        patch("apme_gateway.api.operation_router.get_operation_registry", return_value=registry),
+        patch("apme_gateway.api.operation_router.get_session", return_value=mock_cm),
+        patch("apme_gateway.proposals.draft.commit_gate_decisions", new_callable=AsyncMock),
+    ):
+        approved = await approve_proposals(
+            state.project_id,
+            ApproveRequest(approved_ids=["gate1"], approval_gate_id=gate1.gate_id),
+        )
+        await registry.set_proposals(
+            state.operation_id,
+            [Proposal(id="gate2", rule_id="L002", file="two.yml")],
+            prompt_generation=2,
+        )
+        gate2 = state.approval_gate
+        assert gate2 is not None and gate2 is not gate1
+        # Simulate timeout resolution followed by the approval bridge clearing
+        # the current gate while the operation awaits its next update.
+        gate2.future.set_result([])
+        state.approval_gate = None
+        with pytest.raises(HTTPException) as late:
+            await approve_proposals(
+                state.project_id,
+                ApproveRequest(approved_ids=["gate2"], approval_gate_id=gate2.gate_id),
+            )
+
+    assert approved["status"] == "approved"
+    assert state.submit_token_gate_id == gate1.gate_id
+    assert late.value.status_code == 409
 
 
 def test_approval_gate_ids_are_opaque_and_unique() -> None:
