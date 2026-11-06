@@ -101,7 +101,7 @@ Ansible YAML and retain ordinary playbook validation coverage.
 ## Dependencies
 
 - REQ-001: Core Scanning Engine
-- ADR-075: File validation in the Native service
+- ADR-076: File validation in the Native service
 - ADR-008, ADR-009, ADR-019, ADR-026, ADR-041, ADR-047, ADR-059
 - Architectural compatibility: Verified; read-only validators, existing gRPC
   contract and pod topology, executor discipline, closed built-in bundles,

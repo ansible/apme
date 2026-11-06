@@ -1,7 +1,7 @@
 """Native validator: graph analysis and built-in static file checks.
 
 Graph rules run through ``apme_engine.graph.scanner.scan()`` (ADR-059).
-Molecule file rules assess the uploaded snapshot independently (ADR-075).
+Molecule file rules assess the uploaded snapshot independently (ADR-076).
 """
 
 from apme_engine.graph.scanner import native_rules_dir
