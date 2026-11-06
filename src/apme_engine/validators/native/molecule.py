@@ -100,6 +100,22 @@ class _Document:
     origins: dict[YamlPath, _Location] = field(default_factory=dict)
 
 
+@dataclass
+class _PlaybookAssessment:
+    """Inert playbook structure and import references from one source.
+
+    Attributes:
+        findings: Structural diagnostics.
+        imports: Source locations and literal, unrendered import values.
+    """
+
+    findings: list[ViolationDict] = field(default_factory=list)
+    imports: list[tuple[_Location, str]] = field(default_factory=list)
+
+
+PlaybookCache = dict[tuple[str, str], list[ViolationDict]]
+
+
 @lru_cache(maxsize=2)
 def _profile(version: str = PROFILE_VERSION) -> tuple[Draft7Validator, YAMLDict]:
     """Load trusted bundled schema and defaults.
@@ -113,6 +129,19 @@ def _profile(version: str = PROFILE_VERSION) -> tuple[Draft7Validator, YAMLDict]
     schema = json.loads((_ASSETS / f"molecule-{version}.json").read_text())
     defaults = cast(YAMLDict, json.loads((_ASSETS / f"defaults-{version}.json").read_text()))
     return Draft7Validator(schema), defaults
+
+
+@lru_cache(maxsize=2)
+def _driver_profile(version: str) -> Draft7Validator:
+    """Load the bundled built-in driver schema for a configuration family.
+
+    Args:
+        version: Bundled profile version.
+
+    Returns:
+        Offline default/delegated driver validator.
+    """
+    return Draft7Validator(json.loads((_ASSETS / f"driver-{version}.json").read_text()))
 
 
 def _yaml_path(path: YamlPath) -> str:
@@ -151,6 +180,27 @@ def _finding(rule_id: str, origin: _Location, message: str) -> ViolationDict:
     }
 
 
+def _source_excerpt(content: bytes, line: int) -> str:
+    """Select original source at a diagnostic for content-based suppression.
+
+    Args:
+        content: Unexpanded uploaded bytes.
+        line: One-based diagnostic line.
+
+    Returns:
+        Original line and its indented children, or the document fallback.
+    """
+    lines = content.decode("utf-8", errors="replace").splitlines()
+    start = max(0, line - 1)
+    if start >= len(lines):
+        return content.decode("utf-8", errors="replace")
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    end = start + 1
+    while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) > indent):
+        end += 1
+    return "\n".join(lines[start:end])
+
+
 def _locations(
     node: yaml.Node,
     file: str,
@@ -182,7 +232,14 @@ def _locations(
     active = active | {id(node)}
     if isinstance(node, yaml.MappingNode):
         for key, value in node.value:
+            if isinstance(key, yaml.ScalarNode) and key.value == "<<":
+                merged = value.value if isinstance(value, yaml.SequenceNode) else [value]
+                for mapping in reversed(merged):
+                    result.update(_locations(mapping, file, path, active, budget))
+        for key, value in node.value:
             if not isinstance(key, yaml.ScalarNode):
+                raise ValueError("Complex YAML keys are not supported")
+            if key.value == "<<":
                 continue
             child_path = (*path, key.value)
             result.update(_locations(value, file, child_path, active, budget))
@@ -208,6 +265,8 @@ def _expand(source: str, variables: Mapping[str, str]) -> str:
     def replace(match: re.Match[str]) -> str:
         name = match.group(1) or match.group(4)
         if name not in variables:
+            if match.group(2):
+                return match.group(3) or ""
             return match.group(0)
         value = variables[name]
         if not value and match.group(2) == ":-":
@@ -232,13 +291,40 @@ def _load(file: str, content: bytes, variables: Mapping[str, str]) -> _Document:
     Raises:
         ValueError: If config is not a mapping or has an unsafe structure.
         _NeedsContext: If an unresolved substitution determines the root mapping.
+        yaml.YAMLError: If substituted content contains invalid YAML.
     """
     source = content.decode("utf-8")
-    node = yaml.compose(source, Loader=yaml.SafeLoader)
+    expanded = _expand(source, variables)
+    try:
+        expanded_node = yaml.compose(expanded, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        masked_valid = False
+        if _ENV.search(expanded):
+            try:
+                yaml.compose(_ENV.sub("APME_ENV_VALUE", expanded), Loader=yaml.SafeLoader)
+            except yaml.YAMLError:
+                pass
+            else:
+                masked_valid = True
+        if masked_valid:
+            raise _NeedsContext("Configuration structure requires unavailable environment context") from None
+        raise
+    if expanded_node is not None:
+        _locations(expanded_node, file)
+    try:
+        node = yaml.compose(source, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        # Interpolation precedes parsing in Molecule; flow-style ${VAR}
+        # placeholders can be invalid YAML until expanded. Mask them only
+        # for the original line map, never for validation.
+        try:
+            node = yaml.compose(_ENV.sub("APME_ENV_VALUE", source), Loader=yaml.SafeLoader)
+        except yaml.YAMLError:
+            node = None
     locations: dict[YamlPath, _Location] = _locations(node, file) if node is not None else {(): _Location(file)}
     loader = YAML(typ="safe", pure=True)
     loader.version = (1, 1)
-    data: object = loader.load(_expand(source, variables))
+    data: object = loader.load(expanded)
     if data is None:
         data = {}
     if isinstance(data, str) and _unknowns(data):
@@ -356,7 +442,29 @@ def _reference(base: str, raw: str) -> str | None:
     return None if resolved == ".." or resolved.startswith("../") else resolved
 
 
-def _playbook(file: str, content: bytes) -> list[ViolationDict]:
+def _mapping_items(node: yaml.MappingNode) -> dict[str, tuple[yaml.ScalarNode, yaml.Node]]:
+    """Read effective mapping entries after the caller checks YAML limits.
+
+    Args:
+        node: Mapping already assessed for recursion and traversal limits.
+
+    Returns:
+        Effective scalar keys and source nodes, including safe YAML merges.
+    """
+    entries: dict[str, tuple[yaml.ScalarNode, yaml.Node]] = {}
+    for key, value in node.value:
+        if isinstance(key, yaml.ScalarNode) and key.value == "<<":
+            merged = value.value if isinstance(value, yaml.SequenceNode) else [value]
+            for mapping in reversed(merged):
+                if isinstance(mapping, yaml.MappingNode):
+                    entries.update(_mapping_items(mapping))
+    entries.update(
+        (key.value, (key, value)) for key, value in node.value if isinstance(key, yaml.ScalarNode) and key.value != "<<"
+    )
+    return entries
+
+
+def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
     """Inspect scenario YAML structure without evaluating Ansible plugins.
 
     Args:
@@ -364,22 +472,19 @@ def _playbook(file: str, content: bytes) -> list[ViolationDict]:
         content: Playbook bytes.
 
     Returns:
-        Structural/YAML findings for the referenced playbook.
+        Structural findings and unrendered imports for static reference checks.
     """
     try:
         node = yaml.compose(content.decode("utf-8"), Loader=yaml.BaseLoader)
         if node is not None:
             _locations(node, file)
         if not isinstance(node, yaml.SequenceNode):
-            return [_finding("L116", _Location(file), "Scenario playbook must be a list of plays")]
+            return _PlaybookAssessment([_finding("L116", _Location(file), "Scenario playbook must be a list of plays")])
         findings: list[ViolationDict] = []
+        imports: list[tuple[_Location, str]] = []
         for index, play in enumerate(node.value):
-            keys = (
-                {key.value for key, _ in play.value if isinstance(key, yaml.ScalarNode)}
-                if isinstance(play, yaml.MappingNode)
-                else set()
-            )
-            if not keys.intersection({"hosts", "import_playbook", "ansible.builtin.import_playbook"}):
+            entries = _mapping_items(play) if isinstance(play, yaml.MappingNode) else {}
+            if not entries.keys() & {"hosts", "import_playbook", "ansible.builtin.import_playbook"}:
                 findings.append(
                     _finding(
                         "L116",
@@ -387,16 +492,25 @@ def _playbook(file: str, content: bytes) -> list[ViolationDict]:
                         "Scenario play must define hosts or import_playbook",
                     )
                 )
-        return findings
+            for key, value in entries.values():
+                if (
+                    isinstance(key, yaml.ScalarNode)
+                    and key.value in {"import_playbook", "ansible.builtin.import_playbook"}
+                    and isinstance(value, yaml.ScalarNode)
+                ):
+                    imports.append((_Location(file, key.start_mark.line + 1, (index, key.value)), value.value))
+        return _PlaybookAssessment(findings, imports)
     except (yaml.YAMLError, UnicodeError, ValueError, RecursionError) as error:
         mark = getattr(error, "problem_mark", None)
-        return [
-            _finding(
-                "L116",
-                _Location(file, mark.line + 1 if mark is not None else 1),
-                "Scenario playbook contains invalid YAML",
-            )
-        ]
+        return _PlaybookAssessment(
+            [
+                _finding(
+                    "L116",
+                    _Location(file, mark.line + 1 if mark is not None else 1),
+                    "Scenario playbook contains invalid YAML",
+                )
+            ]
+        )
 
 
 def _migrate_native(document: _Document) -> None:
@@ -447,13 +561,72 @@ def _migrate_native(document: _Document) -> None:
             document.origins.update(source_origins)
 
 
-def _references(document: _Document, scenario: str, files: Mapping[str, bytes]) -> list[ViolationDict]:
+def _assess_playbook(
+    file: str, files: Mapping[str, bytes], cache: PlaybookCache, scenario: str, active: frozenset[str] = frozenset()
+) -> list[ViolationDict]:
+    """Assess each referenced snapshot playbook at most once per request.
+
+    Args:
+        file: Snapshot-relative playbook.
+        files: Uploaded snapshot.
+        cache: Request-local findings keyed by source and scenario context.
+        scenario: Scenario supplying the known Molecule context.
+        active: Current import chain for cycle and depth limits.
+
+    Returns:
+        Cached structural findings, treated as immutable by callers.
+    """
+    if file in active:
+        return [_finding("L116", _Location(file), "Scenario playbook imports form a cycle")]
+    if len(active) > 64:
+        return [_finding("L115", _Location(file), "Playbook import depth exceeds the static assessment limit")]
+    key = (file, scenario)
+    if key not in cache:
+        assessment = _playbook(file, files[file])
+        cache[key] = assessment.findings
+        directories = {
+            "project": posixpath.normpath(f"{_VIRTUAL_ROOT}/{_project_root(scenario)}"),
+            "scenario": posixpath.normpath(f"{_VIRTUAL_ROOT}/{PurePosixPath(scenario).parent}"),
+        }
+        for origin, value in assessment.imports:
+            value = re.sub(
+                r"{{\s*molecule_(project|scenario)_directory\s*}}",
+                lambda match: directories[match.group(1)],
+                value,
+            )
+            reference = _reference(str(PurePosixPath(file).parent), value)
+            if reference is None:
+                cache[key].append(
+                    _finding(
+                        "L115", origin, "Playbook import needs unavailable context; expressions were not evaluated"
+                    )
+                )
+            elif reference not in files:
+                cache[key].append(_finding("L113", origin, "Imported playbook is absent from the supplied scan"))
+            else:
+                # Keep each file's findings once in the request cache. Copying
+                # transitive findings into each parent expands import DAGs.
+                if reference in active | {file}:
+                    cache[key].append(_finding("L116", origin, "Scenario playbook imports form a cycle"))
+                elif len(active) >= 64:
+                    cache[(reference, scenario)] = [
+                        _finding("L115", origin, "Playbook import depth exceeds the static assessment limit")
+                    ]
+                else:
+                    _assess_playbook(reference, files, cache, scenario, active | {file})
+    return cache[key]
+
+
+def _references(
+    document: _Document, scenario: str, files: Mapping[str, bytes], cache: PlaybookCache
+) -> list[ViolationDict]:
     """Check configured playbooks, inventory links, and Galaxy requirement files.
 
     Args:
         document: Effective scenario config.
         scenario: Molecule config path.
         files: Complete supplied snapshot, including non-YAML artifacts.
+        cache: Request-local playbook assessment cache.
 
     Returns:
         Reference, context, and playbook findings.
@@ -463,6 +636,7 @@ def _references(document: _Document, scenario: str, files: Mapping[str, bytes]) 
     section = "ansible" if native else "provisioner"
     ansible = document.data.get(section)
     paths: list[tuple[YamlPath, YAMLValue, bool]] = []
+    findings: list[ViolationDict] = []
     dependency = document.data.get("dependency")
     if isinstance(dependency, dict) and dependency.get("name") == "galaxy" and dependency.get("enabled") is not False:
         options = dependency.get("options")
@@ -478,22 +652,23 @@ def _references(document: _Document, scenario: str, files: Mapping[str, bytes]) 
         driver_name = driver.get("name") if isinstance(driver, dict) else "default"
         selected = playbooks.get(driver_name) if isinstance(driver_name, str) else None
         for stage, value in playbooks.items():
+            if _unknowns(str(stage)):
+                continue
             path: YamlPath = (section, "playbooks", stage)
             if isinstance(value, dict):
                 if not native and stage == driver_name:
                     paths.extend(((*path, name), item, True) for name, item in value.items() if name in _STAGES)
-                elif native:
+                elif native or stage in _STAGES:
                     paths.append((path, value, True))
             elif stage in _STAGES:
                 if not isinstance(selected, dict) or stage not in selected:
                     paths.append((path, value, True))
-            elif path in document.origins:
-                paths.append((path, value, True))
+            elif path in document.origins and not _unknowns(str(stage)):
+                findings.append(_finding("L112", _origin(document, path, scenario), "Unknown Molecule playbook stage"))
     inventory = provisioner.get("inventory") if isinstance(provisioner, dict) else None
     if isinstance(inventory, dict) and isinstance(inventory.get("links"), dict):
         links = cast(YAMLDict, inventory["links"])
         paths.extend((("provisioner", "inventory", "links", key), value, False) for key, value in links.items())
-    findings: list[ViolationDict] = []
     checked: set[str] = set()
     for path, value, is_playbook in paths:
         verifier = document.data.get("verifier")
@@ -540,17 +715,20 @@ def _references(document: _Document, scenario: str, files: Mapping[str, bytes]) 
             continue
         if is_playbook and reference in files and reference not in checked:
             checked.add(reference)
-            findings.extend(_playbook(reference, files[reference]))
+            findings.extend(_assess_playbook(reference, files, cache, scenario))
     return findings
 
 
-def _sequences(document: _Document, scenario: str, files: Mapping[str, bytes]) -> list[ViolationDict]:
+def _sequences(
+    document: _Document, scenario: str, files: Mapping[str, bytes], cache: PlaybookCache
+) -> list[ViolationDict]:
     """Validate action names and references for supported action arguments.
 
     Args:
         document: Effective scenario.
         scenario: Config file path.
         files: Supplied snapshot.
+        cache: Request-local playbook assessment cache.
 
     Returns:
         Invalid-action and action-reference findings.
@@ -578,6 +756,8 @@ def _sequences(document: _Document, scenario: str, files: Mapping[str, bytes]) -
                 )
                 continue
             if action not in {"side_effect", "verify"}:
+                if any(arguments):
+                    findings.append(_finding("L114", origin, "Playbook arguments are ignored by this lifecycle action"))
                 continue
             verifier = document.data.get("verifier")
             if (
@@ -601,23 +781,24 @@ def _sequences(document: _Document, scenario: str, files: Mapping[str, bytes]) -
                         _finding("L113", origin, "Action playbook reference is absent from the supplied scan")
                     )
                 else:
-                    findings.extend(_playbook(reference, files[reference]))
+                    findings.extend(_assess_playbook(reference, files, cache, scenario))
     return findings
 
 
-def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
+def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict], frozenset[str]]:
     """Validate all supplied Molecule scenarios without requiring a graph.
 
     Args:
         files: Uploaded paths mapped to bytes; never server filesystem paths.
 
     Returns:
-        Deterministically ordered, deduplicated L112-L116 findings.
+        Deterministically ordered file findings and resolved static playbook paths.
     """
     scenarios = sorted(file for file in files if PurePosixPath(file).name in {"molecule.yml", "molecule.yaml"})
     if not scenarios:
-        return []
+        return [], frozenset()
     findings: list[ViolationDict] = []
+    playbook_cache: PlaybookCache = {}
     for scenario in scenarios:
         root = _project_root(scenario)
         directory = str(PurePosixPath(scenario).parent)
@@ -626,15 +807,17 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
             "MOLECULE_SCENARIO_DIRECTORY": posixpath.normpath(f"{_VIRTUAL_ROOT}/{directory}"),
             "MOLECULE_SCENARIO_NAME": PurePosixPath(directory).name,
         }
+        environment_values: dict[str, str] = {}
         environment_file = posixpath.normpath(posixpath.join(root, ".env.yml"))
         if environment_file in files:
             try:
                 environment = _load(environment_file, files[environment_file], {})
-                variables.update(
+                environment_values.update(
                     (key, str(value))
                     for key, value in environment.data.items()
                     if isinstance(value, str | int | float | bool)
                 )
+                variables.update(environment_values)
             except (YAMLError, yaml.YAMLError, UnicodeError, ValueError, RecursionError):
                 findings.append(
                     _finding(
@@ -668,6 +851,35 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
         if not valid:
             continue
         version = NATIVE_PROFILE_VERSION if {"ansible", "shared_state"} & supplied.data.keys() else PROFILE_VERSION
+        scenario_config = supplied.data.get("scenario")
+        derived_name = PurePosixPath(directory).name
+        if version == NATIVE_PROFILE_VERSION and "extensions/molecule/" in directory:
+            derived_name = directory.rsplit("extensions/molecule/", 1)[-1] or derived_name
+        name = scenario_config.get("name", derived_name) if isinstance(scenario_config, dict) else derived_name
+        if (
+            "MOLECULE_SCENARIO_NAME" not in environment_values
+            and isinstance(name, str)
+            and name != variables["MOLECULE_SCENARIO_NAME"]
+        ):
+            variables["MOLECULE_SCENARIO_NAME"] = name
+            supplied = _Document({}, {(): _Location(scenario)})
+            try:
+                for file in layers:
+                    _merge(supplied, _load(file, files[file], variables))
+            except _NeedsContext:
+                findings.append(
+                    _finding("L115", _Location(file), "Configuration root requires unavailable environment context")
+                )
+                continue
+            except (YAMLError, yaml.YAMLError, UnicodeError, ValueError, RecursionError):
+                findings.append(
+                    _finding(
+                        "L112",
+                        _Location(file),
+                        "Molecule config must contain valid YAML with unique keys and mapping structure",
+                    )
+                )
+                continue
         if version == NATIVE_PROFILE_VERSION:
             _migrate_native(supplied)
         validator, defaults = _profile(version)
@@ -682,9 +894,19 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
                     "Value needs environment or template context; dependent checks are incomplete",
                 )
             )
-        for schema_error in validator.iter_errors(effective.data):
+        validators = [validator]
+        driver = effective.data.get("driver")
+        if isinstance(driver, dict) and driver.get("name") in ("default", "delegated"):
+            validators.append(_driver_profile(version))
+        for schema_error in (error for profile in validators for error in profile.iter_errors(effective.data)):
             path = tuple(schema_error.absolute_path)
             if any(path[: len(item)] == item for item in unknown):
+                continue
+            if (
+                path[:1] == ("dependency",)
+                and ("dependency", "name") in unknown
+                and {"then", "else"}.intersection(schema_error.absolute_schema_path)
+            ):
                 continue
             if (
                 schema_error.validator == "additionalProperties"
@@ -712,8 +934,11 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
                         f"Configuration violates Molecule {version} schema ({schema_error.validator})",
                     )
                 )
-        driver = effective.data.get("driver")
-        if isinstance(driver, dict) and driver.get("name") != "default" and not _unknowns(driver.get("name")):
+        if (
+            isinstance(driver, dict)
+            and driver.get("name") not in ("default", "delegated")
+            and not _unknowns(driver.get("name"))
+        ):
             findings.append(
                 _finding(
                     "L115",
@@ -721,10 +946,40 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
                     "Core schema checked; external driver installation and driver-specific schema were not assessed",
                 )
             )
-        findings.extend(_references(effective, scenario, files))
-        findings.extend(_sequences(effective, scenario, files))
+        findings.extend(_references(effective, scenario, files, playbook_cache))
+        findings.extend(_sequences(effective, scenario, files, playbook_cache))
+    findings.extend(finding for cached in playbook_cache.values() for finding in cached)
     unique = {
         (str(item["rule_id"]), str(item["file"]), str(item["line"]), str(item["path"]), str(item["message"])): item
         for item in findings
     }
-    return [unique[key] for key in sorted(unique)]
+    result = [unique[key] for key in sorted(unique)]
+    for finding in result:
+        finding["original_yaml"] = _source_excerpt(
+            files.get(str(finding["file"]), b""), int(str(finding.get("line") or 1))
+        )
+    return result, frozenset(file for file, _scenario in playbook_cache)
+
+
+def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
+    """Validate supplied Molecule scenarios using only uploaded bytes.
+
+    Args:
+        files: Uploaded snapshot paths mapped to bytes.
+
+    Returns:
+        Deterministically ordered Native file findings.
+    """
+    return _molecule_assessment(files)[0]
+
+
+def molecule_playbook_paths(files: Mapping[str, bytes]) -> frozenset[str]:
+    """Identify resolved scenario references to exclude from runtime checks.
+
+    Args:
+        files: Uploaded snapshot paths mapped to bytes.
+
+    Returns:
+        Snapshot-relative playbooks assessed statically, including shared files.
+    """
+    return _molecule_assessment(files)[1]

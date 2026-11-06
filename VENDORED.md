@@ -9,7 +9,7 @@
 - v24.9.0, commit `4e2592e5d77b181133243b8b685933f6daff3897` (legacy).
 - v26.11.0, commit `ada645a132b9332c291696f553d93cce788b5410` (native/shared state).
 
-Schemas are copied unchanged. Defaults JSON comes from the literal mapping in
+Core and default/delegated driver schemas are copied unchanged. Defaults JSON comes from the literal mapping in
 24.9.0 `Config._get_defaults` and 26.11.0 `constants.DEFAULT_CONFIG`, extracted
 without importing or executing Molecule code.
 

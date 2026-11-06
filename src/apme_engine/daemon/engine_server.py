@@ -94,7 +94,7 @@ from apme_engine.daemon.session import (
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
-from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
+from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs, parse_noqa
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.rule_ids import normalize_rule_id
@@ -382,6 +382,24 @@ def _enrich_violations_from_graph(
         )
         if co_fixes:
             v["co_fixes"] = co_fixes  # type: ignore[assignment]
+
+
+def _filter_file_noqa(violations: list[ViolationDict]) -> list[ViolationDict]:
+    """Apply source-local noqa to file findings after rule enforcement.
+
+    Args:
+        violations: Findings with original source excerpts and override metadata.
+
+    Returns:
+        Findings excluding unenforced, explicitly suppressed file diagnostics.
+    """
+    return [
+        violation
+        for violation in violations
+        if not str(violation.get("path", "")).startswith("$")
+        or violation.get("_enforced")
+        or str(violation.get("rule_id", "")).upper() not in parse_noqa(str(violation.get("original_yaml", "")))
+    ]
 
 
 def _collect_ai_triage_candidates(session: SessionState) -> list[ViolationDict]:
@@ -1455,6 +1473,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     divergent,
                 )
             violations = _apply_rule_configs(violations, configs)
+        violations = _filter_file_noqa(violations)
         _attach_snippets(violations, files)
 
         total_ms = (time.monotonic() - scan_t0) * 1000
@@ -2189,6 +2208,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     *[loop.run_in_executor(None, _file_proto_from_path, fp, temp_dir) for fp in file_paths]
                 )
             )
+            supplied_paths = {file.path for file in rel_files}
+            rel_files.extend(file for file in formatted_files if file.path not in supplied_paths)
             (
                 violations,
                 _,
@@ -3607,7 +3628,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             remaining_violations=remaining_protos,
             fixed_violations=fixed_protos,
         )
-        session.remaining_ai = list(remaining)
+        session.remaining_ai = [v for v in remaining if not str(v.get("path", "")).startswith("$")]
+        session.remaining_manual = [v for v in remaining if str(v.get("path", "")).startswith("$")]
 
         proposed_proposals: list[Proposal] = []
         ai_built: list[Proposal] = []
