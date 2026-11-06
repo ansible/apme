@@ -1,9 +1,8 @@
 """OPA hierarchy payload from ContentGraph (ADR-044).
 
-Produces the same JSON structure as ``opa_payload.build_hierarchy_payload()``
-but derived from a ``ContentGraph`` instead of ``AnsibleRunContext`` lists.
-Used during Phase 1 for shadow-run validation: the output of this function
-must match the old pipeline's output.
+Produces the established OPA hierarchy fields from a ``ContentGraph`` instead
+of ``AnsibleRunContext`` lists. It also carries task collection search order
+for the Ansible validator; OPA rules ignore that additive field.
 
 Public API
 ----------
@@ -16,8 +15,11 @@ from __future__ import annotations
 import datetime
 import logging
 from typing import cast
+from urllib.parse import urlsplit
 
 from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeType
+from apme_engine.graph.rules._module_risk_mapping import get_risk_profile, resolve_field
+from apme_engine.graph.sensitivity import redact_urls_in_text
 
 from .models import Annotation, Location, RiskAnnotation, YAMLDict, YAMLValue
 
@@ -63,6 +65,163 @@ _TASK_OPTION_KEYS: frozenset[str] = frozenset(
 )
 
 _L066_TASK_TYPES: frozenset[NodeType] = frozenset({NodeType.TASK, NodeType.BLOCK})
+_REMOTE_URL_SCHEMES = frozenset(
+    {
+        "ftp",
+        "ftps",
+        "git",
+        "git+http",
+        "git+https",
+        "git+ssh",
+        "http",
+        "https",
+        "ssh",
+        "svn",
+        "svn+http",
+        "svn+https",
+        "svn+ssh",
+    }
+)
+_SCP_SOURCE_MODULES = frozenset({"git", "subversion"})
+
+
+def _inbound_risk_annotation(node: ContentNode, module_options: YAMLDict) -> YAMLDict | None:
+    """Build the inbound transfer annotation consumed by R118, when applicable.
+
+    The graph serializer is the active risk annotation boundary. It derives
+    this annotation from the same module risk profiles used by graph rules,
+    while keeping the annotation shape expected by the OPA bundle.
+
+    Args:
+        node: Task or handler node being serialized.
+        module_options: Effective module options including task-level args.
+
+    Returns:
+        Serialized inbound risk annotation, or ``None`` when the task is not
+        an inbound-transfer module.
+    """
+    module_name = node.module.rsplit(".", 1)[-1]
+    profile = get_risk_profile(node.module)
+    if profile is None and node.module.startswith("ansible.legacy."):
+        profile = get_risk_profile(module_name)
+    if profile is None or profile.risk_type != "inbound":
+        return None
+
+    src = resolve_field(module_options, profile, "src")
+    dest = resolve_field(module_options, profile, "dest")
+    if not src or not _is_remote_source(src, module_name):
+        return None
+
+    # unarchive only reads from the managed node when explicitly told to;
+    # scheme-less templated sources are retained as potentially remote.
+    if module_name == "unarchive":
+        remote_src = module_options.get("remote_src", False)
+        remote_src_enabled = (
+            remote_src is True
+            or remote_src == 1
+            or (isinstance(remote_src, str) and remote_src.strip().lower() in {"1", "true", "yes", "y", "on"})
+        )
+        if not remote_src_enabled:
+            return None
+
+    annotation: YAMLDict = {
+        "type": "risk_annotation",
+        "key": "",
+        "risk_type": "inbound_transfer",
+    }
+    if src is not None:
+        is_mutable = "{{" in src or "{%" in src
+        src = redact_urls_in_text(src)
+        is_url = (
+            "{{" in src
+            or "{%" in src
+            or _has_remote_url_scheme(src)
+            or module_name == "get_url"
+            or (module_name in _SCP_SOURCE_MODULES and _is_scp_style_remote_source(src))
+        )
+        annotation["src"] = {
+            "type": "url" if is_url else "file",
+            "value": src,
+            "is_mutable": is_mutable,
+        }
+    if dest is not None:
+        annotation["dest"] = {
+            "type": "file",
+            "value": redact_urls_in_text(dest),
+            "is_mutable": "{{" in dest or "{%" in dest,
+        }
+    return annotation
+
+
+def _is_remote_source(source: str, module_name: str) -> bool:
+    """Return whether a source is remote or dynamically resolved.
+
+    Templated values without a URI scheme are treated as potentially remote.
+    Explicit ``file://`` URLs and ordinary paths are local; supported remote
+    URI schemes and SCP-style Git/SVN locations are remote.
+
+    Args:
+        source: Source string from a task's module options.
+        module_name: Unqualified Ansible module name.
+
+    Returns:
+        True for a potentially remote source, otherwise False.
+    """
+    if len(source) >= 3 and source[0].isalpha() and source[1] == ":" and source[2] in "/\\":
+        return False
+
+    try:
+        scheme = urlsplit(source).scheme.lower()
+    except ValueError:
+        return False
+    if scheme in _REMOTE_URL_SCHEMES:
+        return True
+    # urlsplit interprets a bare SCP hostname as a URI scheme. Preserve
+    # explicit local/unsupported URLs, but allow host:path through below.
+    if scheme == "file" or "://" in source:
+        return False
+
+    if "{{" in source or "{%" in source:
+        return True
+
+    # Git/SVN commonly accept scp-like forms such as ``git@host:org/repo``.
+    return module_name in _SCP_SOURCE_MODULES and _is_scp_style_remote_source(source)
+
+
+def _has_remote_url_scheme(source: str) -> bool:
+    """Return whether a source uses a known remote URL scheme.
+
+    Args:
+        source: Source string to inspect.
+
+    Returns:
+        True when the URI scheme is supported as a remote source.
+    """
+    try:
+        return urlsplit(source).scheme.lower() in _REMOTE_URL_SCHEMES
+    except ValueError:
+        return False
+
+
+def _is_scp_style_remote_source(source: str) -> bool:
+    """Return whether a source uses a remote scp-style host:path form.
+
+    Args:
+        source: Source string to inspect.
+
+    Returns:
+        True when the source has a host and path separated by a colon.
+    """
+    host, separator, path = source.partition(":")
+    return bool(
+        separator
+        and host
+        and path
+        and not any(character.isspace() for character in host)
+        and "/" not in host
+        and not (len(host) == 1 and host.isalpha())
+        and not source.startswith(("./", "../"))
+    )
 
 
 def json_safe(v: YAMLValue) -> YAMLValue:
@@ -96,9 +255,13 @@ def _location_to_dict(loc: Location | None) -> YAMLDict | None:
     """
     if loc is None or getattr(loc, "is_empty", False):
         return None
+    location_type = getattr(loc, "type", "") or ""
+    value = json_safe(getattr(loc, "value", "")) or ""
+    if location_type == "url" and isinstance(value, str):
+        value = redact_urls_in_text(value)
     return {
-        "type": getattr(loc, "type", "") or "",
-        "value": json_safe(getattr(loc, "value", "")) or "",
+        "type": location_type,
+        "value": value,
         "is_mutable": getattr(loc, "is_mutable", False),
     }
 
@@ -179,9 +342,8 @@ def content_node_to_opa_dict(
 ) -> YAMLDict:
     """Serialize a ``ContentNode`` to the OPA node dict format.
 
-    The output shape matches ``opa_payload.node_to_dict(RunTarget)`` so
-    that OPA rules see identical input regardless of which pipeline
-    produced it.
+    The output retains ``opa_payload.node_to_dict(RunTarget)`` fields and adds
+    collection search context for the Ansible validator's plugin resolution.
 
     Args:
         node: ContentNode to serialize.
@@ -240,16 +402,27 @@ def content_node_to_opa_dict(
                 d["line"] = [max(1, play_index + 1), max(1, play_index + 1)]
 
     elif opa_type == "taskcall":
+        module_options = node.effective_module_options
         d["module"] = node.module
         d["original_module"] = node.module
         d["name"] = node.name if node.name else None
+        task_args = node.options.get("args")
+        if isinstance(task_args, str) and ("{{" in task_args or "{%" in task_args):
+            d["args_templated"] = True
 
         anns: list[YAMLValue] = []
+        has_inbound_annotation = False
         for an in node.annotations:
+            if getattr(an, "type", "") == "risk_annotation" and getattr(an, "risk_type", "") == "inbound_transfer":
+                has_inbound_annotation = True
             try:
                 anns.append(annotation_to_dict(cast(Annotation, an)))
             except Exception:
                 logger.debug("annotation_to_dict failed on %s", node.node_id)
+        if not has_inbound_annotation:
+            inbound_annotation = _inbound_risk_annotation(node, module_options)
+            if inbound_annotation is not None:
+                anns.append(inbound_annotation)
         d["annotations"] = anns
 
         task_opts: YAMLDict = {}
@@ -262,7 +435,7 @@ def content_node_to_opa_dict(
         d["options"] = task_opts
 
         mo: YAMLDict = {}
-        for k, v in node.module_options.items():
+        for k, v in module_options.items():
             try:
                 mo[str(k)] = json_safe(v)
             except Exception:
@@ -274,6 +447,8 @@ def content_node_to_opa_dict(
         if "_raw" in mo and "_raw_params" not in mo:
             mo["_raw_params"] = mo["_raw"]
         d["module_options"] = mo
+        if node.collections_in_play:
+            d["collections_in_play"] = list(node.collections_in_play)
 
     elif opa_type == "blockcall":
         d["name"] = node.name if node.name else None
@@ -298,9 +473,9 @@ def build_hierarchy_from_graph(
 ) -> YAMLDict:
     """Build OPA hierarchy payload from a ContentGraph.
 
-    The output is structurally identical to
-    ``opa_payload.build_hierarchy_payload()`` so that OPA Rego rules
-    consume it without modification.
+    The hierarchy retains the established OPA payload shape, with additive
+    task collection context for the Ansible validator. OPA Rego rules consume
+    the payload without modification.
 
     Args:
         graph: ContentGraph to serialize.

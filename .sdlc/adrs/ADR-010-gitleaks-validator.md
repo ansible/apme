@@ -28,7 +28,9 @@ Secret detection was needed. Several tools were evaluated:
 
 **Use Gitleaks as a dedicated validator in its own container, exposed via gRPC.**
 
-The previously planned native SEC rules (R502–R504) were superseded.
+The earlier proposal to assign Gitleaks findings numeric R5xx IDs was superseded.
+Gitleaks findings use the `SEC:*` namespace; R501 is separately allocated to
+the collection dependency suggestion described in ADR-058.
 
 ## Rationale
 
@@ -82,13 +84,10 @@ async def validate(self, request: ValidateRequest) -> ValidateResponse:
 
 ### Rule IDs
 
-Gitleaks findings map to R5xx rules:
-- R501: AWS credentials
-- R502: Private keys
-- R503: Generic secrets
-- etc.
+Gitleaks findings use the `SEC:*` namespace and retain Gitleaks rule metadata
+in the finding details. No numeric R5xx IDs are assigned to Gitleaks.
 
 ## Related Decisions
 
 - ADR-001: gRPC communication
-- ADR-008: Rule ID conventions (R5xx)
+- ADR-008: Rule ID conventions (`SEC:*` for Gitleaks)

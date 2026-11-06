@@ -317,7 +317,9 @@ End-of-Phase-2 gates (from ADR-044):
       stores only the authored `module` name; module resolution to FQCNs
       occurs through the convergence loop (Ansible validator re-scan),
       not through pre-mutation. All ~30 graph rules updated to use
-      `node.module` directly. L037 disabled (requires convergence data).
+      `node.module` directly. At Phase 2 completion, the graph L037 heuristic
+      was disabled; REQ-022 later added semantic L037 emission through the
+      Ansible plugin-introspection validator.
 
 ### Phase 3 — Progression + provenance: IN PROGRESS
 

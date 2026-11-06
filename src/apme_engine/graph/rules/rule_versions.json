@@ -35,7 +35,7 @@
 {"rule_id":"L034","filepath":"apme_engine/graph/rules/L034_unused_override.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L035","filepath":"apme_engine/graph/rules/L035_unnecessary_set_fact.py","commit_id":"6c8602264e9189357c8d9e08111fb0cdf16be5df"}
 {"rule_id":"L036","filepath":"apme_engine/graph/rules/L036_unnecessary_include_vars.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
-{"rule_id":"L037","filepath":"apme_engine/graph/rules/L037_unresolved_module.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
+{"rule_id":"L037","filepath":"apme_engine/validators/ansible/rules/M001_M004_introspect.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L038","filepath":"apme_engine/graph/rules/L038_unresolved_role.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L039","filepath":"apme_engine/graph/rules/L039_undefined_variable.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L040","filepath":"apme_engine/graph/rules/L040_no_tabs.py","commit_id":"0000000000000000000000000000000000000000"}
@@ -93,5 +93,8 @@
 {"rule_id":"L104","filepath":"apme_engine/graph/rules/L104_galaxy_runtime.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"L105","filepath":"apme_engine/graph/rules/L105_galaxy_repository.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"L111","filepath":"apme_engine/graph/rules/L111_inventory_group_hyphens_graph.py","commit_id":"0000000000000000000000000000000000000000"}
+{"rule_id":"L112","filepath":"apme_engine/graph/rules/L112_latest_vcs_version_graph.py","commit_id":"0000000000000000000000000000000000000000"}
+{"rule_id":"L113","filepath":"apme_engine/graph/rules/L113_role_name_graph.py","commit_id":"0000000000000000000000000000000000000000"}
+{"rule_id":"L114","filepath":"apme_engine/graph/rules/L114_collection_version_graph.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"Sample101","filepath":"ansible_risk_insight/rules/sample_rule.py","commit_id":"d2fa33d401e398641ee8cf6cb6589b378395e9bd"}
 

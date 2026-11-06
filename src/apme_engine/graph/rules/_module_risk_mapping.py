@@ -10,7 +10,10 @@ declared ``module`` field and then read the relevant fields from
 The mapping is derived from the legacy per-module annotators in
 ``apme_engine/engine/annotators/ansible.builtin/`` but is kept
 as a static table so graph rules have no dependency on that
-pipeline.
+pipeline. Short module names use the built-in aliases in this table;
+when a collection shadows one of those names, the profile may not match
+the plugin Ansible resolves. Third-party collection modules are not
+covered unless added explicitly.
 """
 
 from __future__ import annotations
@@ -180,11 +183,40 @@ _PREFIX = "ansible.builtin."
 RISK_PROFILES.update({k.removeprefix(_PREFIX): v for k, v in list(RISK_PROFILES.items()) if k.startswith(_PREFIX)})
 
 
+def short_module_name_is_ambiguous(module: str, collections_in_play: list[str] | None = None) -> bool:
+    """Return whether a declared collection can shadow a short module name.
+
+    Args:
+        module: Declared module name.
+        collections_in_play: Collection search order for the task's play.
+
+    Returns:
+        True when the short name may resolve to a non-builtin collection plugin.
+    """
+    if module.count("."):
+        return False
+    collections = [collection for collection in (collections_in_play or []) if collection]
+    if module == "hg":
+        # hg is provided by community.general, not ansible.builtin. Skip only
+        # when an earlier non-builtin collection could shadow that known alias.
+        for collection in collections:
+            if collection == "ansible.builtin":
+                continue
+            return collection != "community.general"
+        return False
+    for collection in collections:
+        # Once ansible.builtin is reached, a later collection cannot shadow
+        # this built-in short name under Ansible's declared search order.
+        return collection != "ansible.builtin"
+    return False
+
+
 def get_risk_profile(module: str) -> RiskProfile | None:
     """Look up the risk profile for a module.
 
     Accepts both FQCN (``ansible.builtin.copy``) and short
-    (``copy``) module names.
+    (``copy``) module names. Short names map to built-in profiles;
+    collection shadowing is not resolved here.
 
     Args:
         module: Declared module name from the task.
@@ -193,7 +225,9 @@ def get_risk_profile(module: str) -> RiskProfile | None:
         Matching ``RiskProfile``, or ``None`` if the module has
         no risk mapping.
     """
-    return RISK_PROFILES.get(module) if module else None
+    if not module:
+        return None
+    return RISK_PROFILES.get(module)
 
 
 def resolve_field(

@@ -1,4 +1,4 @@
-"""M001-M004 / M048: Plugin introspection via ansible-core's find_plugin_with_context().
+"""L037, M001-M004 / M048: Plugin introspection via ansible-core's find_plugin_with_context().
 
 Uses the venv's ansible-core to resolve modules and detect:
   M001 - FQCN resolution (module resolved to a different canonical name)
@@ -6,12 +6,15 @@ Uses the venv's ansible-core to resolve modules and detect:
   M003 - Module redirect (module name redirected to new FQCN)
   M004 - Removed module (tombstoned, raises AnsiblePluginRemovedError)
   M048 - Prefer ansible.builtin when a non-builtin FQCN has a builtin twin
+  L037 - Module name that Ansible's module and action loaders cannot resolve
 """
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -24,13 +27,20 @@ data = json.loads(sys.stdin.read())
 module_names = data.get("modules", [])
 results = {}
 
-from ansible.plugins.loader import init_plugin_loader, module_loader
+from ansible.plugins.loader import action_loader, init_plugin_loader, module_loader
 
 # Required so FQCN lookups (ansible.builtin.*, collections) resolve.
 init_plugin_loader()
 
+collection_list = data.get("collection_list")
+if not isinstance(collection_list, list) or not collection_list:
+    collection_list = None
+
 for name in module_names:
     info = {
+        "resolved": None,
+        "action_resolved": None,
+        "resolution_error": False,
         "fqcn": "",
         "deprecated": False,
         "warnings": [],
@@ -42,7 +52,10 @@ for name in module_names:
         "builtin_alternative_error": "",
     }
     try:
-        ctx = module_loader.find_plugin_with_context(name, ignore_deprecated=False)
+        ctx = module_loader.find_plugin_with_context(
+            name, ignore_deprecated=False, collection_list=collection_list
+        )
+        info["resolved"] = bool(ctx.resolved)
         if ctx.resolved:
             info["fqcn"] = getattr(ctx, "resolved_fqcn", "") or ""
             info["deprecated"] = bool(getattr(ctx, "deprecated", False))
@@ -54,6 +67,16 @@ for name in module_names:
         if "Removed" in err_name or "removed" in str(e).lower():
             info["removed"] = True
             info["removal_msg"] = str(e)
+        else:
+            info["resolution_error"] = True
+
+    try:
+        action_ctx = action_loader.find_plugin_with_context(
+            name, ignore_deprecated=False, collection_list=collection_list
+        )
+        info["action_resolved"] = bool(action_ctx.resolved)
+    except Exception:
+        info["resolution_error"] = True
 
     # Prefer-builtin twin: only when the original name resolved to a
     # non-builtin / non-legacy FQCN. Short-name lookup finds real
@@ -80,11 +103,37 @@ for name in module_names:
 json.dump(results, sys.stdout)
 """)
 
+_TRUST_PROJECT_CODE_ENV = "APME_ANSIBLE_TRUST_PROJECT_CODE"
+_PROJECT_PLUGIN_PATH_ENV = (
+    "ANSIBLE_COLLECTIONS_PATH",
+    "ANSIBLE_COLLECTIONS_PATHS",
+    "ANSIBLE_LIBRARY",
+    "ANSIBLE_ACTION_PLUGINS",
+    "ANSIBLE_COLLECTIONS_SCAN_SYS_PATH",
+)
+
+
+def _trusts_project_code(env_extra: dict[str, str] | None) -> bool:
+    """Return whether the administrator explicitly trusts project plugins.
+
+    Args:
+        env_extra: Optional trusted validator environment overrides.
+
+    Returns:
+        True when project-controlled Ansible config and plugin paths are enabled.
+    """
+    value = os.environ.get(_TRUST_PROJECT_CODE_ENV, "")
+    if env_extra is not None and _TRUST_PROJECT_CODE_ENV in env_extra:
+        value = env_extra[_TRUST_PROJECT_CODE_ENV]
+    return value.strip().lower() in {"1", "true", "yes"}
+
 
 def _run_introspection(
     module_names: list[str],
     venv_root: Path,
     env_extra: dict[str, str] | None = None,
+    collection_list: list[str] | None = None,
+    project_root: Path | None = None,
 ) -> dict[str, object]:
     """Run plugin introspection in the venv's Python. Returns {name: info_dict}.
 
@@ -95,15 +144,75 @@ def _run_introspection(
         module_names: List of module names to introspect.
         venv_root: Path to ansible venv root.
         env_extra: Optional extra environment variables.
+        collection_list: Ansible collection search order for these tasks.
+        project_root: Scan root used as the subprocess working directory so
+            Ansible can load project-level configuration and plugin paths.
 
     Returns:
-        Dict mapping module name to info dict (fqcn, deprecated, etc.).
+        Dict mapping module name to info dict (resolved, fqcn, deprecated, etc.).
     """
     if not module_names:
         return {}
 
+    trust_project_code = _trusts_project_code(env_extra)
     venv_str = str(venv_root)
     introspect_ctx = plugin_cache.introspect_context_suffix(venv_str, env_extra)
+    if collection_list is not None:
+        introspect_ctx = f"{introspect_ctx}|task-collections:{json.dumps(collection_list, separators=(',', ':'))}"
+    if trust_project_code and project_root is not None:
+        try:
+            working_directory = project_root.resolve()
+        except (OSError, RuntimeError):
+            working_directory = project_root.absolute()
+        introspect_ctx = f"{introspect_ctx}|working-directory:{working_directory}"
+    introspect_ctx = f"{introspect_ctx}|project-code:{'trusted' if trust_project_code else 'isolated'}"
+
+    if trust_project_code:
+        config_override = (
+            env_extra.get("ANSIBLE_CONFIG") if env_extra is not None and "ANSIBLE_CONFIG" in env_extra else None
+        )
+        if config_override is None:
+            config_override = os.environ.get("ANSIBLE_CONFIG")
+        home_override = env_extra.get("HOME") if env_extra is not None and "HOME" in env_extra else None
+        if home_override is None:
+            home_override = os.environ.get("HOME")
+        home_directory = Path(home_override).expanduser() if home_override else Path.home()
+        if not home_directory.is_absolute():
+            home_directory = (project_root or Path.cwd()) / home_directory
+
+        # Trusted project config can change plugin resolution, so fingerprint
+        # the selected files as well as the project working directory.
+        config_candidates: list[Path] = []
+        if config_override:
+            if config_override == "~":
+                override_path = home_directory
+            elif config_override.startswith("~/"):
+                override_path = home_directory / config_override[2:]
+            else:
+                override_path = Path(config_override).expanduser()
+            if not override_path.is_absolute():
+                override_path = (project_root or Path.cwd()) / override_path
+            config_candidates.append(override_path)
+        else:
+            if project_root is not None:
+                config_candidates.append(project_root / "ansible.cfg")
+            config_candidates.extend((home_directory / ".ansible.cfg", Path("/etc/ansible/ansible.cfg")))
+
+        config_fingerprints: list[str] = []
+        for candidate in config_candidates:
+            try:
+                resolved_config = candidate.resolve()
+            except (OSError, RuntimeError):
+                resolved_config = candidate.absolute()
+            try:
+                contents = resolved_config.read_bytes()
+            except OSError:
+                if config_override and candidate == config_candidates[0]:
+                    config_fingerprints.append(f"missing:{resolved_config}")
+                continue
+            config_fingerprints.append(f"{resolved_config}:{hashlib.sha256(contents).hexdigest()}")
+        if config_fingerprints:
+            introspect_ctx = f"{introspect_ctx}|ansible-config:{'|'.join(config_fingerprints)}"
     cached_results, uncached = plugin_cache.partition(
         "introspect",
         venv_str,
@@ -124,17 +233,44 @@ def _run_introspection(
     if env_extra:
         env.update(env_extra)
 
-    payload: dict[str, object] = {"modules": uncached}
+    payload: dict[str, object] = {
+        "modules": uncached,
+        "collection_list": collection_list or [],
+    }
 
     try:
-        result = subprocess.run(
-            [str(python), "-c", _SCRIPT],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-        )
+        if trust_project_code:
+            result = subprocess.run(
+                [str(python), "-c", _SCRIPT],
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+                cwd=project_root if project_root is not None and project_root.is_dir() else None,
+            )
+        else:
+            # Do not let untrusted scan-root config or local plugin paths make
+            # the resolver execute project-controlled Python in this process.
+            with tempfile.TemporaryDirectory(prefix="apme-ansible-introspect-") as isolated_dir:
+                isolated_path = Path(isolated_dir)
+                isolated_home = isolated_path / "home"
+                isolated_home.mkdir()
+                for variable in _PROJECT_PLUGIN_PATH_ENV:
+                    env.pop(variable, None)
+                env["HOME"] = str(isolated_home)
+                env["ANSIBLE_HOME"] = str(isolated_home / ".ansible")
+                env["ANSIBLE_CONFIG"] = str(isolated_path / "ansible.cfg")
+                Path(env["ANSIBLE_CONFIG"]).write_text("[defaults]\n", encoding="utf-8")
+                result = subprocess.run(
+                    [str(python), "-c", _SCRIPT],
+                    input=json.dumps(payload),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=env,
+                    cwd=isolated_path,
+                )
     except subprocess.TimeoutExpired:
         sys.stderr.write("Plugin introspection timed out\n")
         return cached_results
@@ -156,6 +292,8 @@ def _run_introspection(
         if twin_err:
             sys.stderr.write(f"M048 twin lookup failed for {name}: {twin_err}\n")
             continue
+        if info.get("resolution_error"):
+            continue
         resolved_fqcn = str(info.get("fqcn", ""))
         plugin_cache.put(
             "introspect",
@@ -176,39 +314,59 @@ def run(
     task_nodes: list[dict[str, object]],
     venv_root: Path,
     env_extra: dict[str, str] | None = None,
+    project_root: Path | None = None,
     **_kwargs: object,
 ) -> list[dict[str, object]]:
-    """Run plugin introspection and return M001-M004 / M048 violations.
+    """Run plugin introspection and return L037, M001-M004, and M048 violations.
 
     Args:
         task_nodes: List of task node dicts.
         venv_root: Path to ansible venv root.
         env_extra: Optional extra environment variables.
+        project_root: Root directory for Ansible configuration and plugin paths.
         **_kwargs: Ignored keyword arguments.
 
     Returns:
-        List of violation dicts for M001, M002, M003, M004, and M048.
+        List of violation dicts for L037, M001, M002, M003, M004, and M048.
     """
-    module_set: set[str] = set()
+    modules_by_collection_list: dict[tuple[str, ...], set[str]] = {}
     for n in task_nodes:
         om = str(n.get("original_module", "") or n.get("module", ""))
-        if om:
-            module_set.add(om)
-    unique_modules = list(module_set)
-    if not unique_modules:
+        if om and "{{" not in om and "{%" not in om:
+            raw_collections = n.get("collections_in_play", [])
+            collections = (
+                tuple(str(value) for value in raw_collections if value)
+                if isinstance(raw_collections, list | tuple)
+                else ()
+            )
+            modules_by_collection_list.setdefault(collections, set()).add(om)
+    if not modules_by_collection_list:
         return []
 
-    intro = _run_introspection(unique_modules, venv_root, env_extra)
+    intro: dict[tuple[str, tuple[str, ...]], object] = {}
+    for collections, module_names in modules_by_collection_list.items():
+        group_results = _run_introspection(
+            sorted(module_names),
+            venv_root,
+            env_extra,
+            collection_list=list(collections),
+            project_root=project_root,
+        )
+        intro.update({(name, collections): info for name, info in group_results.items()})
     if not intro:
         return []
 
     violations = []
     for node in task_nodes:
         module_name = str(node.get("original_module", "") or node.get("module", ""))
-        if not module_name:
+        if not module_name or "{{" in module_name or "{%" in module_name:
             continue
 
-        info_raw = intro.get(module_name)
+        raw_collections = node.get("collections_in_play", [])
+        collections = (
+            tuple(str(value) for value in raw_collections if value) if isinstance(raw_collections, list | tuple) else ()
+        )
+        info_raw = intro.get((module_name, collections))
         if not isinstance(info_raw, dict):
             continue
         info = info_raw
@@ -234,6 +392,24 @@ def run(
             if removal_fqcn:
                 m004["resolved_fqcn"] = removal_fqcn
             violations.append(m004)
+            continue
+
+        # L037: use Ansible's plugin loader result instead of guessing from
+        # the module spelling. Valid short names and collection FQCNs resolve
+        # through the same runtime used by the scan.
+        if info.get("resolved") is False and info.get("action_resolved") is False and not info.get("resolution_error"):
+            violations.append(
+                {
+                    "rule_id": "L037",
+                    "severity": "medium",
+                    "message": f"Module {module_name} could not be resolved by Ansible",
+                    "file": file_path,
+                    "line": line_num,
+                    "path": node.get("key", ""),
+                    "scope": "task",
+                    "original_module": module_name,
+                }
+            )
             continue
 
         # M001: FQCN resolution

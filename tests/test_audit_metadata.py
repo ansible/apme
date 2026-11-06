@@ -9,7 +9,7 @@ from apme_engine.graph.audit_metadata import (
     sanitize_audit_metadata_value,
     serialize_audit_metadata_value,
 )
-from apme_engine.graph.sensitivity import redact_url_userinfo, value_looks_sensitive
+from apme_engine.graph.sensitivity import redact_url_userinfo, redact_urls_in_text, value_looks_sensitive
 
 
 def test_redact_url_userinfo_strips_credentials() -> None:
@@ -33,6 +33,74 @@ def test_redact_url_userinfo_preserves_at_in_query_and_fragment() -> None:
     fragment_url = "https://example.com/path#user@secret"
     assert redact_url_userinfo(query_url) == query_url
     assert redact_url_userinfo(fragment_url) == fragment_url
+
+
+def test_redact_scp_source_query() -> None:
+    """SCP-style Git sources redact query values without breaking parsing."""
+    raw = "git@github.com:org/repo.git?token=secret"
+    assert redact_urls_in_text(raw) == "git@github.com:org/repo.git?[REDACTED]"
+
+
+def test_redact_scp_credentials_containing_url_scheme_delimiter() -> None:
+    """Redact SCP credentials before a later URL-like substring is scanned."""
+    raw = "alice:secret://[REDACTED]@host:repo"
+
+    assert redact_urls_in_text(raw) == "[REDACTED]@host:repo"
+
+
+def test_redact_url_inside_scp_path() -> None:
+    """Redact nested URL credentials and query values in an SCP path."""
+    raw = "git@host:path/https://user:secret@other/path?token=hidden"
+    expected = "git@host:path/https://[REDACTED]@other/path?[REDACTED]"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_credentials_in_url_nested_in_url_path() -> None:
+    """Redact credentials and query data in proxy-style nested URL paths."""
+    raw = "https://proxy.example/https://user:secret@host/org/repo.git?t=hidden"
+
+    assert redact_urls_in_text(raw) == "https://proxy.example/https://[REDACTED]@host/org/repo.git?[REDACTED]"
+
+
+def test_redact_scp_source_preserves_template_and_path_after_inner_url_query() -> None:
+    """Redact a URL query inside Jinja without truncating its source path."""
+    raw = "git@host:{{ lookup('url', 'https://x?token=secret') }}/artifact"
+    expected = "git@host:{{ lookup('url', 'https://x?[REDACTED]') }}/artifact"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_scp_source_redacts_outer_query_after_template() -> None:
+    """Redact an SCP query outside Jinja while preserving the template."""
+    raw = "git@host:{{ {'k': 'v'} }}/artifact?token=secret"
+    expected = "git@host:{{ {'k': 'v'} }}/artifact?[REDACTED]"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_url_preserves_template_and_path_before_outer_query() -> None:
+    """Redact a URL query outside Jinja without truncating the path."""
+    raw = "https://host/{{ repo | default('x?y') }}/suffix?token=secret#fragment"
+    expected = "https://host/{{ repo | default('x?y') }}/suffix?[REDACTED]#[REDACTED]"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_url_credentials_and_query_inside_template() -> None:
+    """Redact nested URL credentials and tokens inside an outer URL template."""
+    raw = "https://host/{{ lookup('url', 'https://u:secret@x?token=hidden') }}/artifact"
+    expected = "https://host/{{ lookup('url', 'https://[REDACTED]@x?[REDACTED]') }}/artifact"
+
+    assert redact_urls_in_text(raw) == expected
+
+
+def test_redact_scp_source_nested_url_credentials_and_query_inside_template() -> None:
+    """Redact nested URL credentials and tokens inside an SCP source template."""
+    raw = "git@host:{{ lookup('url', 'https://u:secret@x?token=hidden') }}/artifact"
+    expected = "git@host:{{ lookup('url', 'https://[REDACTED]@x?[REDACTED]') }}/artifact"
+
+    assert redact_urls_in_text(raw) == expected
 
 
 def test_value_looks_sensitive_openssh_private_key() -> None:

@@ -12,6 +12,7 @@ from apme_engine.graph.rules._module_risk_mapping import (
     get_risk_profile,
     resolve_field,
 )
+from apme_engine.graph.sensitivity import redact_urls_in_text
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
 
@@ -101,7 +102,7 @@ class DownloadExecGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
-        detail: YAMLDict = {"command": cmd}
+        detail: YAMLDict = {"command": redact_urls_in_text(cmd)}
 
         preceding = _preceding_tasks(graph, parent_play.node_id, node)
         for task_node in preceding:
@@ -119,8 +120,8 @@ class DownloadExecGraphRule(GraphRule):
 
             sib_dest = resolve_field(sib_mo, sib_profile, "dest")
             if sib_dest and sib_dest in cmd:
-                detail["src"] = sib_src
-                detail["executed_file"] = sib_dest
+                detail["src"] = redact_urls_in_text(sib_src)
+                detail["executed_file"] = redact_urls_in_text(sib_dest)
                 return GraphRuleResult(
                     verdict=True,
                     detail=detail,

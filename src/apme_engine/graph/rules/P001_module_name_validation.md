@@ -5,24 +5,23 @@ description: Validate module name (Ansible required).
 scope: task
 status: delegated
 status_reason: >
-  Emitted by the Ansible validator via find_plugin_with_context() argspec
-  validation (L058/L059). Not a native GraphRule — the Ansible validator
-  owns module name resolution.
+  Module resolution is emitted by L037 when Ansible's plugin loader cannot
+  resolve a module, while M001 reports non-canonical short-name resolution.
+  Argspec rules L058/L059 validate arguments only after resolution.
 ---
 
 ## Module name validation (P001)
 
-Validate module name (Ansible required). This policy check is **delegated to
-the Ansible validator** which resolves module names via
-`find_plugin_with_context()`. The equivalent runtime checks are emitted as
-L058/L059 by the Ansible validator's argspec validation pipeline.
+Validates task module names through ansible-core's
+`find_plugin_with_context()`. An unresolved module is reported as L037; M001
+reports when a resolvable short name has a canonical FQCN. Argspec rules
+L058/L059 perform separate argument checks after a module resolves.
 
 ### Status
 
 **Delegated** — no native `_graph.py` implementation. The Ansible validator
-owns module name resolution via L058 (docstring-based) and L059
-(mock/patch-based) argspec validation. P001 is a policy-level alias for
-these checks; the runtime rule_id in scan output is L058 or L059.
+emits L037 for unresolved modules and M001 for canonical FQCN suggestions.
+The L058/L059 argspec validators do not report unresolved names themselves.
 
 ### Example: pass
 

@@ -1,7 +1,7 @@
 ---
 rule_id: R101
 validator: native
-description: Task executes parameterized command (annotation-based)
+description: Task executes a parameterized command.
 scope: task
 ai_prompt: |
   This rule flags tasks that execute commands built from variables. Evaluate
@@ -17,7 +17,7 @@ ai_prompt: |
 
 ## Command exec (R101)
 
-The rule checks whether a task executes a parameterized command that could be overwritten (e.g. variable in command args). It relies on annotations from the engine (CMD_EXEC + is_mutable_cmd). Depends on annotator.
+The rule checks mapped command modules and flags a command value containing Jinja syntax. It uses APME's local module risk profile to identify the command field; it does not consume ARI annotations.
 
 ### Example: pass
 

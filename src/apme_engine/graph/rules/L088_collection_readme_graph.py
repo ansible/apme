@@ -1,4 +1,4 @@
-"""GraphRule L088: collection README should document supported ansible-core versions."""
+"""GraphRule L088: collection root should contain a README file."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class CollectionReadmeGraphRule(GraphRule):
     """
 
     rule_id: str = "L088"
-    description: str = "Collection README should document supported ansible-core versions"
+    description: str = "Collection root should contain a README file"
     enabled: bool = True
     name: str = "CollectionReadme"
     version: str = "v0.0.1"

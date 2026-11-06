@@ -11,7 +11,8 @@ rules, ID conventions, severity assignments, and coverage analysis.
 | [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md) | Auto-generated remediation tier analysis and promotion candidates |
 | [LINT_RULE_MAPPING.md](LINT_RULE_MAPPING.md) | ansible-lint name cross-references and historical renumbering |
 | [RULE_DOC_FORMAT.md](RULE_DOC_FORMAT.md) | Frontmatter format for per-rule `.md` files |
-| [ANSIBLELINT_COVERAGE.md](ANSIBLELINT_COVERAGE.md) | Coverage vs ansible-lint, gap analysis |
+| [APME_ANSIBLE_LINT_ARI_REVIEW.md](APME_ANSIBLE_LINT_ARI_REVIEW.md) | Detailed source review vs ansible-lint and Ansible Risk Insights (ARI) |
+| [ANSIBLELINT_COVERAGE.md](ANSIBLELINT_COVERAGE.md) | Legacy link to the current coverage review |
 
 ## Authoritative sources
 

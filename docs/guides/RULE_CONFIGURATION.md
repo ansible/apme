@@ -240,9 +240,9 @@ APME uses prefixed numeric IDs (per ADR-008):
 
 | Prefix | Category | Examples |
 |--------|----------|----------|
-| **L** | Lint (style, correctness) | L002–L059 |
-| **M** | Modernize (ansible-core migration) | M001–M004 |
-| **R** | Risk/security (annotation-based) | R101–R501 |
+| **L** | Lint (style, correctness) | L002–L114 (with gaps) |
+| **M** | Modernize (ansible-core migration) | M001–M048 (with gaps) |
+| **R** | Risk/security and advisory rules | R101–R501 (with gaps) |
 | **P** | Policy (requires ansible runtime) | P001–P004 |
 | **A** | AAP-specific (platform compatibility) | A001–A099 |
 | **SEC** | Secrets (Gitleaks) | SEC:* |

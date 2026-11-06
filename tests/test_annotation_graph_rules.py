@@ -600,7 +600,7 @@ class TestR105OutboundTransferGraphRule:
         assert result.verdict is True
         assert result.detail is not None
         assert result.detail["to"] == "{{ callback_url }}"
-        assert result.detail["from"] == "data"
+        assert result.detail["from"] == "[REDACTED]"
 
     def test_get_not_matched(self, rule: OutboundTransferGraphRule) -> None:
         """GET method does not match the outbound profile.
@@ -981,6 +981,27 @@ class TestR103DownloadExecGraphRule:
         assert result.detail is not None
         assert result.detail["src"] == "{{ malicious_url }}"
         assert result.detail["executed_file"] == "/tmp/install.sh"
+
+    def test_download_then_exec_redacts_url_in_destination(self, rule: DownloadExecGraphRule) -> None:
+        """Do not expose URL credentials embedded in the executed destination.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        dest = "/tmp/{{ 'https://user:secret@host/file' | hash('sha256') }}"
+        g, _, exec_id = _make_two_tasks(
+            task1_module="ansible.builtin.get_url",
+            task1_options={"url": "{{ malicious_url }}", "dest": dest},
+            task1_line=5,
+            task2_module="ansible.builtin.shell",
+            task2_options={"_raw_params": dest},
+            task2_line=15,
+        )
+
+        result = rule.process(g, exec_id)
+
+        assert result is not None and result.verdict and result.detail is not None
+        assert "user:secret@" not in str(result.detail["executed_file"])
 
     def test_no_preceding_inbound(self, rule: DownloadExecGraphRule) -> None:
         """Command without prior inbound does not trigger.

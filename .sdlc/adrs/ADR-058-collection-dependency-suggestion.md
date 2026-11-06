@@ -12,7 +12,7 @@ Proposed
 
 Rule R501 ("Suggest collection/role dependency") is a planned advisory rule that suggests which Ansible collection provides a given module when the module cannot be resolved. Today, the engine handles FQCN modules well (ADR-032 extracts `collection_set` from FQCN usage), but **short module names** (e.g. `nmcli`, `lvg`, `firewalld`) cannot be resolved without knowing which collection provides them.
 
-When the native validator encounters an unresolved module (L037), users get a "module could not be resolved" finding but no actionable guidance on which collection to install. R501 would close this gap by suggesting the providing collection.
+When the Ansible validator encounters an unresolved module (L037), users get a "module could not be resolved" finding but no actionable guidance on which collection to install. R501 would close this gap by suggesting the providing collection.
 
 ### Forces
 
@@ -26,7 +26,7 @@ When the native validator encounters an unresolved module (L037), users get a "m
 
 **We will build a static module-to-collection mapping bundled with the engine image, and expose it to R501 via a lightweight lookup function.**
 
-The mapping is a JSON file (`module_collection_map.json`) generated at image build time by querying a reference set of popular collections. R501 applies the same unresolved-module detection criteria as L037 (short module name on a task or handler, not an include/import action, not a resolved FQCN) and consults the static map — if the short name appears in the map, R501 emits an advisory finding suggesting the collection.
+The mapping is a JSON file (`module_collection_map.json`) generated at image build time by querying a reference set of popular collections. R501 considers unresolved short module names on tasks or handlers (not include/import actions or FQCNs), using the same ansible-core resolution context as L037, then consults the static map. If a short name appears in the map, R501 emits an advisory finding suggesting the collection.
 
 ### Mapping structure
 
@@ -53,12 +53,12 @@ A build-time script (`tools/generate_module_map.py`) installs a curated list of 
 R501 is an **advisory/suggestion** rule (severity INFO, consistent with other reporting rules such as R401):
 
 - Fires once per PLAYBOOK node (aggregate, not per-task), walking all task and handler descendants — same pattern as R401
-- Collects unresolved short module names that match L037's detection criteria and appear in the static map
+- Collects unresolved short module names, using L037's ansible-core resolution context, that appear in the static map
 - Emits one finding per playbook listing suggested collections (e.g. `Unresolved modules may require: community.general (nmcli, lvg), ansible.posix (firewalld). Consider adding them to requirements.yml.`)
 - Violation detail includes the module names and file/line references so users can locate affected tasks
 - Does not fire for FQCN modules (already resolved by ADR-032)
 - Does not fire for `ansible.builtin` modules
-- Does not depend on L037 having fired — R501 runs its own `match()` logic independently, but complements L037 when both are enabled
+- Does not depend on a separate L037 finding — R501 can evaluate candidate short names independently, but uses the same semantic resolution context to avoid suggesting collections for resolvable modules
 
 ## Alternatives Considered
 
@@ -105,7 +105,7 @@ R501 is an **advisory/suggestion** rule (severity INFO, consistent with other re
 **Cons**:
 - OPA operates on the hierarchy JSON which has already resolved FQCNs — short names may be normalized away
 - Large data blob in Rego is awkward to maintain and test
-- Misaligned with the native validator's role (L037 is a native rule; R501 should complement it)
+- Misaligned with the Ansible validator's role (L037 is emitted by ansible-core plugin resolution; R501 should complement it)
 
 **Why not chosen**: OPA is the wrong layer — module resolution context lives in the native validator's ContentGraph, not the hierarchy payload.
 
@@ -152,7 +152,7 @@ R501 is an **advisory/suggestion** rule (severity INFO, consistent with other re
 2. **Phase 2**: Implement R501 GraphRule consuming the static mapping
 3. **Phase 3**: Add mapping regeneration to the container build pipeline
 4. **Curated collection list**: Start with collections in the `ansible` meta-package, `community.general`, `community.network`, `ansible.posix`, `ansible.windows`, and major cloud providers (`amazon.aws`, `google.cloud`, `azure.azcollection`)
-5. **L037 dependency**: L037 is currently disabled (`enabled=False` in its GraphRule). R501 should ship enabled but delivers the most value when L037 is also enabled — consider enabling L037 in the same implementation phase or documenting the pairing in release notes.
+5. **L037 integration**: The old graph heuristic remains disabled; L037 is now emitted by the Ansible validator using ansible-core's module and action plugin loaders with task collection context. R501 should use the same resolution context before suggesting a collection, while remaining independently reportable.
 6. **Severity catalog alignment**: Update `severity_defaults.py` and `RULE_CATALOG.md` from medium to INFO when R501 is implemented (ADR-043 central table pattern).
 
 ## Related Decisions
@@ -176,3 +176,4 @@ R501 is an **advisory/suggestion** rule (severity INFO, consistent with other re
 |------|--------|--------|
 | 2026-06-23 | AI-assisted | Initial proposal |
 | 2026-07-07 | Review | Renumbered ADR-056 → ADR-058 (ADR-056/057 taken upstream); clarified scope, severity, collisions, and L037 relationship |
+| 2026-11-05 | Codex | Updated the L037 relationship after semantic resolution moved to the Ansible validator |

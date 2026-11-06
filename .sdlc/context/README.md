@@ -36,10 +36,10 @@ Context documents answer "How does our system work?" They provide:
 ### Rules & Validation
 | File | Description |
 |------|-------------|
-| `rule-catalog.md` | Validation rules with fixer status (see `docs/rules/RULE_CATALOG.md` for authoritative count) |
+| `rule-catalog.md` | Superseded pointer to the generated rule catalog in `docs/rules/RULE_CATALOG.md` |
 | `rule-doc-format.md` | Standard format for rule documentation |
 | `lint-rule-mapping.md` | Rule ID cross-mapping and migration guide |
-| `ansiblelint-coverage.md` | Coverage comparison with ansible-lint rules |
+| `ansiblelint-coverage.md` | Superseded pointer to the current ansible-lint and ARI review |
 | `ansible-core-migration.md` | Breaking changes in ansible-core 2.19/2.20 |
 
 ### Project & Process

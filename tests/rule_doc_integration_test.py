@@ -38,6 +38,7 @@ _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
     "L095": "collection metadata rule; example shows galaxy.yml, not playbook YAML",
     "L096": "collection metadata rule; example shows meta/runtime.yml, not playbook YAML",
     "L105": "collection metadata rule; example shows galaxy.yml, not playbook YAML",
+    "L114": "collection metadata rule; example shows galaxy.yml, not playbook YAML",
     "M030": "ARI engine does not propagate when: to graph node when_expr",
     "L051": "example uses play-level YAML but L051 checks task-level Jinja spacing",
     "M019": "example uses !!omap/!!pairs YAML tags that ruamel normalizes away before graph",

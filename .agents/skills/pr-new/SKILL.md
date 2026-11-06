@@ -230,7 +230,11 @@ artifact type, translate it:
    like ``"outcome"``? When adding fields to an existing
    Pydantic/schema module, match sibling default patterns
    (`Field(default_factory=list)` vs mutable `=[]`)? Across the
-   repo: do proto RPCs have matching servicer methods in `daemon/`?
+   When multiple configuration sources feed a downstream contract,
+   test each source alone and test collisions. Confirm the merge order
+   matches the upstream producer, and every consumer sees the effective
+   values without mutating the authored inputs. Across the repo: do proto
+   RPCs have matching servicer methods in `daemon/`?
    Do rule IDs follow ADR-008 conventions (L/M/R/P/SEC)? Does
    `_DEFAULT_PORTS` match the services actually started? Are
    Markdown indexes consistent across their canonical tables, directory
@@ -263,6 +267,11 @@ artifact type, translate it:
    a token in a *different* grammar in the same string — Jinja
    filters (`{{ x | quote }}`), URLs, or quoted YAML. Strip or
    parse the inner language before applying the outer check.
+   For values accepted by multiple source grammars, also test when a
+   parser assigns another grammar's token a structural meaning (such as
+   `host:path` read as a URI scheme). Redaction and classification must
+   respect each grammar's boundaries and preserve content owned by the
+   other grammar.
    The strip pattern must allow nested tokens of the inner language
    (Jinja dicts ``{{ {'k': 'v'} }}`` — ``[^{}]*`` fails). Leftover
    delimiters after the strip (``{{``) are still uninspectable.

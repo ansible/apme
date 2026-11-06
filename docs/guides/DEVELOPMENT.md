@@ -174,7 +174,7 @@ src/apme_engine/
 │   ├── ansible/
 │   │   ├── __init__.py     AnsibleValidator
 │   │   ├── _venv.py        venv resolution
-│   │   └── rules/          L057–L059, M001–M004 + .md docs
+│   │   └── rules/          L037, L057–L059, M001–M004, M048 + .md docs
 │   └── gitleaks/
 │       ├── __init__.py
 │       └── scanner.py      gitleaks binary wrapper, vault/Jinja filtering
@@ -619,9 +619,9 @@ uv run python scripts/debug/ws-diag.py tests/fixtures/terrible-playbook
 
 | Prefix | Category | Examples |
 |--------|----------|----------|
-| **L** | Lint (style, correctness, best practice) | L002–L059 |
-| **M** | Modernize (ansible-core metadata) | M001–M047 |
-| **R** | Risk/security (annotation-based) | R101–R501, R118 |
+| **L** | Lint (style, correctness, best practice) | L002–L114 (with gaps) |
+| **M** | Modernize (ansible-core metadata) | M001–M048 (with gaps) |
+| **R** | Risk/security and advisory rules | R101–R501 (with gaps) |
 | **P** | Policy (legacy, superseded by L058/L059) | P001–P004 |
 
 Rule IDs are independent of the validator that implements them. The user sees rule IDs; the underlying validator is an implementation detail.

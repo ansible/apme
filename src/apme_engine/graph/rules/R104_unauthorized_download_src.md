@@ -1,7 +1,7 @@
 ---
 rule_id: R104
 validator: native
-description: Download from unauthorized source (annotation-based).
+description: Download from an unauthorized source.
 scope: task
 ai_prompt: |
   This rule flags downloads from non-HTTPS URLs. If the URL targets

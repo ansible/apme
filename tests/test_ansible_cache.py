@@ -507,7 +507,7 @@ class TestPluginCacheCore:
             assert not lock_was_acquired
             return resolve_version(venv_root, namespace, name)
 
-        with patch.object(cache, "_resolve_version", side_effect=check_lock):
+        with patch.dict("os.environ", {}, clear=True), patch.object(cache, "_resolve_version", side_effect=check_lock):
             assert cache.introspect_context_suffix(venv) == "core:2.16.3"
 
     def test_collection_search_fingerprint_prefers_env_extra(self) -> None:
@@ -518,7 +518,7 @@ class TestPluginCacheCore:
                 "ANSIBLE_COLLECTIONS_PATH": "/from-env",
                 "ANSIBLE_CONFIG": "/from-env.cfg",
             },
-            clear=False,
+            clear=True,
         ):
             fp = _collection_search_fingerprint(
                 {
@@ -612,6 +612,94 @@ class TestM001M004CachedPath:
             assert "community.general.ping" in result2
             assert mock_run.call_count == 1  # no additional call
 
+    def test_untrusted_project_config_uses_isolated_environment(self, tmp_path: Path) -> None:
+        """Isolated introspection ignores project config and plugin paths.
+
+        Args:
+            tmp_path: Temporary directory for fake venv and project roots.
+        """
+        from apme_engine.validators.ansible.rules import M001_M004_introspect
+
+        venv = self._make_venv_with_python(tmp_path)
+        project_a = tmp_path / "project-a"
+        project_a.mkdir()
+        (project_a / "ansible.cfg").write_text("[defaults]\ncollections_path = ./collections\n")
+        result_json = json.dumps({"community.general.copy": {"fqcn": "community.general.copy"}})
+        observed_sandboxes: list[tuple[Path, Path, str, Path]] = []
+
+        def capture_sandbox(*_args: object, **kwargs: object) -> object:
+            """Record the isolated process context while its temporary files exist.
+
+            Args:
+                *_args: Positional arguments passed to the subprocess mock.
+                **kwargs: Keyword arguments passed to the subprocess mock.
+
+            Returns:
+                Fake successful subprocess result containing the resolver output.
+            """
+            cwd = Path(str(kwargs["cwd"]))
+            env = kwargs["env"]
+            assert isinstance(env, dict)
+            config_path = Path(str(env["ANSIBLE_CONFIG"]))
+            home_path = Path(str(env["HOME"]))
+            observed_sandboxes.append((cwd, config_path.parent, config_path.read_text(encoding="utf-8"), home_path))
+            return type("Result", (), {"returncode": 0, "stdout": result_json, "stderr": ""})()
+
+        with (
+            patch.object(M001_M004_introspect, "plugin_cache", PluginCache()),
+            patch.dict("os.environ", {"APME_ANSIBLE_TRUST_PROJECT_CODE": "false"}),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.side_effect = capture_sandbox
+            M001_M004_introspect._run_introspection(
+                ["community.general.copy"],
+                venv,
+                project_root=project_a,
+            )
+
+        assert mock_run.call_count == 1
+        isolated_dir, config_dir, config_contents, home_dir = observed_sandboxes[0]
+        assert isolated_dir != project_a.resolve()
+        assert config_dir == isolated_dir
+        assert config_contents == "[defaults]\n"
+        assert home_dir.parent == isolated_dir
+
+    def test_trusted_cwd_collection_path_partitions_cache(self, tmp_path: Path) -> None:
+        """Trusted ``{{CWD}}`` collection paths get distinct entries per project root.
+
+        Args:
+            tmp_path: Temporary directory for fake venv and project roots.
+        """
+        from apme_engine.validators.ansible.rules import M001_M004_introspect
+
+        venv = self._make_venv_with_python(tmp_path)
+        project_a = tmp_path / "project-a"
+        project_b = tmp_path / "project-b"
+        project_a.mkdir()
+        project_b.mkdir()
+        result_json = json.dumps({"community.general.copy": {"fqcn": "community.general.copy"}})
+        env_extra = {
+            "APME_ANSIBLE_TRUST_PROJECT_CODE": "true",
+            "ANSIBLE_COLLECTIONS_PATH": "{{CWD}}/collections",
+        }
+
+        with (
+            patch.object(M001_M004_introspect, "plugin_cache", PluginCache()),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = type("Result", (), {"returncode": 0, "stdout": result_json, "stderr": ""})()
+            for project_root in (project_a, project_b):
+                M001_M004_introspect._run_introspection(
+                    ["community.general.copy"],
+                    venv,
+                    env_extra=env_extra,
+                    project_root=project_root,
+                )
+
+        assert mock_run.call_count == 2
+        assert Path(mock_run.call_args_list[0].kwargs["cwd"]) == project_a
+        assert Path(mock_run.call_args_list[1].kwargs["cwd"]) == project_b
+
     def test_short_form_backfills_fqcn(self, tmp_path: Path) -> None:
         """Short-form names always go to subprocess but FQCN gets backfilled.
 
@@ -650,7 +738,7 @@ class TestM001M004CachedPath:
 
             M001_M004_introspect._run_introspection(["ping"], venv)
 
-            ctx = fresh_cache.introspect_context_suffix(str(venv))
+            ctx = f"{fresh_cache.introspect_context_suffix(str(venv))}|project-code:isolated"
             hit = fresh_cache.get("introspect", str(venv), "ansible.builtin.ping", introspect_context=ctx)
             assert hit is not None
             assert isinstance(hit, dict)
@@ -734,7 +822,7 @@ class TestM001M004CachedPath:
             "removal_msg": "",
             "plugin_path": "",
         }
-        introspect_ctx = fresh_cache.introspect_context_suffix(str(venv))
+        introspect_ctx = f"{fresh_cache.introspect_context_suffix(str(venv))}|project-code:isolated"
         fresh_cache.put(
             "introspect",
             str(venv),

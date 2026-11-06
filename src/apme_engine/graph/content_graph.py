@@ -411,6 +411,7 @@ class ContentNode:
         violation_ledger: Mutable violation lifecycle records keyed by
             ``(node_id, rule_id)``.  Single source of truth for violation
             status and attribution.
+        collections_in_play: Collection search order in scope for task nodes.
         MAX_PROGRESSION: Upper bound on progression length per node (class-level).
     """
 
@@ -480,6 +481,9 @@ class ContentNode:
     # Violation ledger — single source of truth for violation lifecycle
     violation_ledger: dict[ViolationKey, ViolationRecord] = field(default_factory=dict)
 
+    # Task-level Ansible search context for short module names.
+    collections_in_play: list[str] = field(default_factory=list)
+
     @property
     def node_type(self) -> NodeType:
         """Return the node's type from its identity."""
@@ -489,6 +493,20 @@ class ContentNode:
     def node_id(self) -> str:
         """Return the node's stable string identifier."""
         return str(self.identity)
+
+    @property
+    def effective_module_options(self) -> YAMLDict:
+        """Return task arguments with Ansible's task-level ``args`` applied.
+
+        Ansible treats the task-level ``args`` mapping as lower priority than
+        arguments specified directly in the module mapping. Return a fresh
+        mapping so callers can normalize the two sources without changing the
+        node's authored data.
+        """
+        task_args = self.options.get("args")
+        effective_options = dict(task_args) if isinstance(task_args, dict) else {}
+        effective_options.update(self.module_options)
+        return effective_options
 
     MAX_PROGRESSION: ClassVar[int] = 20
 
@@ -1921,6 +1939,7 @@ _CONTENT_NODE_SIMPLE_FIELDS: tuple[str, ...] = (
     "collection_files",
     "module_line_count",
     "module_functions_without_return_type",
+    "collections_in_play",
 )
 
 

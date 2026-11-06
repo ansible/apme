@@ -12,6 +12,7 @@ from apme_engine.graph.rules._module_risk_mapping import (
     get_risk_profile,
     resolve_field,
 )
+from apme_engine.graph.sensitivity import redact_urls_in_text
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
 
@@ -91,10 +92,10 @@ class InboundTransferGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
-        detail: YAMLDict = {"from": src}
+        detail: YAMLDict = {"from": redact_urls_in_text(src)}
         dest = resolve_field(mo, profile, "dest")
         if dest:
-            detail["to"] = dest
+            detail["to"] = redact_urls_in_text(dest)
         return GraphRuleResult(
             verdict=True,
             detail=detail,

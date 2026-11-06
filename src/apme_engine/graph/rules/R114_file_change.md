@@ -1,7 +1,7 @@
 ---
 rule_id: R114
 validator: native
-description: File change (annotation-based).
+description: File operation uses a parameterized path or source.
 scope: task
 ai_prompt: |
   R114 flags file operations (copy, template, file, etc.) where path or src
@@ -43,7 +43,7 @@ ai_prompt: |
 
 ## File change (R114)
 
-File change with mutable path/src (annotation-based). Depends on FILE_CHANGE + is_mutable_path/is_mutable_src annotation.
+Flags mapped file operations when a path or source value contains Jinja syntax. It reads the field from APME's local module-risk profile and does not consume ARI mutability annotations.
 
 ### Example: pass
 

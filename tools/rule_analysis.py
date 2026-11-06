@@ -47,7 +47,7 @@ ANSIBLE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "ansible" / "ru
 PREFIX_CATEGORIES: dict[str, str] = {
     "L": "Lint (style, correctness, best practice)",
     "M": "Modernize (ansible-core migration)",
-    "R": "Risk / security (annotation-based)",
+    "R": "Risk / security and advisory rules",
     "P": "Policy (legacy runtime validation)",
     "A": "AAP-specific (platform compatibility)",
     "SEC": "Secrets (Gitleaks)",

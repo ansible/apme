@@ -301,6 +301,7 @@ class AnsibleValidator:
             task_nodes=task_nodes,
             venv_root=self._venv_root,
             env_extra=self._env_extra,
+            project_root=root_dir,
         )
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(m_violations)

@@ -1,7 +1,9 @@
 """L058: Argspec validation (docstring-based).
 
 Parses the module's DOCUMENTATION string to extract the argument spec.
-Safe (no code execution), fast, but may drift from the actual argument_spec in code.
+The target module is not imported, but resolving documentation fragments can
+import fragment plugin code. Fast, but may drift from the actual
+argument_spec in code. Do not use with untrusted collections.
 """
 
 import json
@@ -24,8 +26,10 @@ module_names = data.get("modules", [])
 
 specs = {}
 try:
-    from ansible.plugins.loader import module_loader
+    from ansible.plugins.loader import fragment_loader, init_plugin_loader, module_loader
     from ansible.utils.plugin_docs import get_docstring
+
+    init_plugin_loader()
 
     for name in module_names:
         ctx = module_loader.find_plugin_with_context(name, ignore_deprecated=True)
@@ -33,7 +37,7 @@ try:
             continue
         path = ctx.plugin_resolved_path
         try:
-            doc, _, _, _ = get_docstring(path, fragment_loader=None, is_module=True)
+            doc, _, _, _ = get_docstring(path, fragment_loader=fragment_loader, is_module=True)
         except Exception:
             continue
         if not doc:
@@ -185,11 +189,20 @@ def run(
     task_modules: dict[str, bool] = {}
     tasks_for_check: list[dict[str, object]] = []
     for node in task_nodes:
+        if node.get("args_templated") is True:
+            continue
         module = node.get("module", "")
         module_options = node.get("module_options")
-        if not module or not isinstance(module_options, dict) or not module_options:
+        if not module or not isinstance(module_options, dict):
             continue
         module_str = str(module)
+        collections = node.get("collections_in_play", [])
+        if (
+            module_str.count(".") < 2
+            and isinstance(collections, list | tuple)
+            and any(str(name) not in {"ansible.builtin", "ansible.legacy"} for name in collections)
+        ):
+            continue
         task_modules[module_str] = True
         tasks_for_check.append(
             {

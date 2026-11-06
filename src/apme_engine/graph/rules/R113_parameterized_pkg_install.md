@@ -1,13 +1,13 @@
 ---
 rule_id: R113
 validator: native
-description: Parameterized package install (annotation-based).
+description: Package installation uses a parameterized package name.
 scope: task
 ---
 
 ## Parameterized pkg install (R113)
 
-Package install with variable package name (annotation-based).
+Flags package installation tasks whose package name contains Jinja syntax.
 
 ### Example: violation
 

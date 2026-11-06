@@ -2,8 +2,8 @@
 
 Loads the actual module code, patches AnsibleModule.__init__ to capture
 the real argument_spec, then validates user args against it. More accurate
-than docstring (L058) -- catches mutually_exclusive, required_together,
-required_if -- but executes module import code.
+than docstring (L058) for mutually_exclusive and required_together groups;
+it does not enforce required_if or required_one_of and imports module code.
 """
 
 import json
@@ -29,8 +29,10 @@ class _CapturedSpec(Exception):
 
 specs = {}
 try:
-    from ansible.plugins.loader import module_loader
+    from ansible.plugins.loader import init_plugin_loader, module_loader
     from unittest.mock import patch
+
+    init_plugin_loader()
 
     for name in module_names:
         try:
@@ -278,11 +280,20 @@ def run(
     task_modules: dict[str, bool] = {}
     tasks_for_check: list[dict[str, object]] = []
     for node in task_nodes:
+        if node.get("args_templated") is True:
+            continue
         module = node.get("module", "")
         module_options = node.get("module_options")
-        if not module or not isinstance(module_options, dict) or not module_options:
+        if not module or not isinstance(module_options, dict):
             continue
         module_str = str(module)
+        collections = node.get("collections_in_play", [])
+        if (
+            module_str.count(".") < 2
+            and isinstance(collections, list | tuple)
+            and any(str(name) not in {"ansible.builtin", "ansible.legacy"} for name in collections)
+        ):
+            continue
         task_modules[module_str] = True
         tasks_for_check.append(
             {

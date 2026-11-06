@@ -1,7 +1,7 @@
 ---
 rule_id: R109
 validator: native
-description: Key/config change (annotation-based).
+description: Key or configuration change uses a parameterized value.
 scope: task
 ---
 
