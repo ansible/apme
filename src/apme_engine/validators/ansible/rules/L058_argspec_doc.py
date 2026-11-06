@@ -189,6 +189,8 @@ def run(
     task_modules: dict[str, bool] = {}
     tasks_for_check: list[dict[str, object]] = []
     for node in task_nodes:
+        if node.get("args_templated") is True:
+            continue
         module = node.get("module", "")
         module_options = node.get("module_options")
         if not module or not isinstance(module_options, dict):

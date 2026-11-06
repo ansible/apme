@@ -406,6 +406,9 @@ def content_node_to_opa_dict(
         d["module"] = node.module
         d["original_module"] = node.module
         d["name"] = node.name if node.name else None
+        task_args = node.options.get("args")
+        if isinstance(task_args, str) and ("{{" in task_args or "{%" in task_args):
+            d["args_templated"] = True
 
         anns: list[YAMLValue] = []
         has_inbound_annotation = False

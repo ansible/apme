@@ -121,7 +121,7 @@ class DownloadExecGraphRule(GraphRule):
             sib_dest = resolve_field(sib_mo, sib_profile, "dest")
             if sib_dest and sib_dest in cmd:
                 detail["src"] = redact_urls_in_text(sib_src)
-                detail["executed_file"] = sib_dest
+                detail["executed_file"] = redact_urls_in_text(sib_dest)
                 return GraphRuleResult(
                     verdict=True,
                     detail=detail,

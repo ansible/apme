@@ -56,6 +56,13 @@ def test_redact_url_inside_scp_path() -> None:
     assert redact_urls_in_text(raw) == expected
 
 
+def test_redact_credentials_in_url_nested_in_url_path() -> None:
+    """Redact credentials and query data in proxy-style nested URL paths."""
+    raw = "https://proxy.example/https://user:secret@host/org/repo.git?t=hidden"
+
+    assert redact_urls_in_text(raw) == "https://proxy.example/https://[REDACTED]@host/org/repo.git?[REDACTED]"
+
+
 def test_redact_scp_source_preserves_template_and_path_after_inner_url_query() -> None:
     """Redact a URL query inside Jinja without truncating its source path."""
     raw = "git@host:{{ lookup('url', 'https://x?token=secret') }}/artifact"

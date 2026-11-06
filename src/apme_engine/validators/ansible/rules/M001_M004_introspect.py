@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -102,6 +103,30 @@ for name in module_names:
 json.dump(results, sys.stdout)
 """)
 
+_TRUST_PROJECT_CODE_ENV = "APME_ANSIBLE_TRUST_PROJECT_CODE"
+_PROJECT_PLUGIN_PATH_ENV = (
+    "ANSIBLE_COLLECTIONS_PATH",
+    "ANSIBLE_COLLECTIONS_PATHS",
+    "ANSIBLE_LIBRARY",
+    "ANSIBLE_ACTION_PLUGINS",
+    "ANSIBLE_COLLECTIONS_SCAN_SYS_PATH",
+)
+
+
+def _trusts_project_code(env_extra: dict[str, str] | None) -> bool:
+    """Return whether the administrator explicitly trusts project plugins.
+
+    Args:
+        env_extra: Optional trusted validator environment overrides.
+
+    Returns:
+        True when project-controlled Ansible config and plugin paths are enabled.
+    """
+    value = os.environ.get(_TRUST_PROJECT_CODE_ENV, "")
+    if env_extra is not None and _TRUST_PROJECT_CODE_ENV in env_extra:
+        value = env_extra[_TRUST_PROJECT_CODE_ENV]
+    return value.strip().lower() in {"1", "true", "yes"}
+
 
 def _run_introspection(
     module_names: list[str],
@@ -129,58 +154,65 @@ def _run_introspection(
     if not module_names:
         return {}
 
+    trust_project_code = _trusts_project_code(env_extra)
     venv_str = str(venv_root)
     introspect_ctx = plugin_cache.introspect_context_suffix(venv_str, env_extra)
     if collection_list is not None:
         introspect_ctx = f"{introspect_ctx}|task-collections:{json.dumps(collection_list, separators=(',', ':'))}"
-    config_override = (
-        env_extra.get("ANSIBLE_CONFIG") if env_extra is not None and "ANSIBLE_CONFIG" in env_extra else None
-    )
-    if config_override is None:
-        config_override = os.environ.get("ANSIBLE_CONFIG")
-    home_override = env_extra.get("HOME") if env_extra is not None and "HOME" in env_extra else None
-    if home_override is None:
-        home_override = os.environ.get("HOME")
-    home_directory = Path(home_override).expanduser() if home_override else Path.home()
-    if not home_directory.is_absolute():
-        home_directory = (project_root or Path.cwd()) / home_directory
-
-    # Fingerprint existing Ansible config candidates because they affect plugin
-    # resolution. Do not include a missing project ansible.cfg path: many scans
-    # use distinct temporary roots, and that would defeat caching when they all
-    # use the same home/system config. An explicit ANSIBLE_CONFIG path is kept
-    # even when missing so creating it invalidates an earlier unresolved cache.
-    config_candidates: list[Path] = []
-    if config_override:
-        if config_override == "~":
-            override_path = home_directory
-        elif config_override.startswith("~/"):
-            override_path = home_directory / config_override[2:]
-        else:
-            override_path = Path(config_override).expanduser()
-        if not override_path.is_absolute():
-            override_path = (project_root or Path.cwd()) / override_path
-        config_candidates.append(override_path)
-    else:
-        if project_root is not None:
-            config_candidates.append(project_root / "ansible.cfg")
-        config_candidates.extend((home_directory / ".ansible.cfg", Path("/etc/ansible/ansible.cfg")))
-
-    config_fingerprints: list[str] = []
-    for candidate in config_candidates:
+    if trust_project_code and project_root is not None:
         try:
-            resolved_config = candidate.resolve()
+            working_directory = project_root.resolve()
         except (OSError, RuntimeError):
-            resolved_config = candidate.absolute()
-        try:
-            contents = resolved_config.read_bytes()
-        except OSError:
-            if config_override and candidate == config_candidates[0]:
-                config_fingerprints.append(f"missing:{resolved_config}")
-            continue
-        config_fingerprints.append(f"{resolved_config}:{hashlib.sha256(contents).hexdigest()}")
-    if config_fingerprints:
-        introspect_ctx = f"{introspect_ctx}|ansible-config:{'|'.join(config_fingerprints)}"
+            working_directory = project_root.absolute()
+        introspect_ctx = f"{introspect_ctx}|working-directory:{working_directory}"
+    introspect_ctx = f"{introspect_ctx}|project-code:{'trusted' if trust_project_code else 'isolated'}"
+
+    if trust_project_code:
+        config_override = (
+            env_extra.get("ANSIBLE_CONFIG") if env_extra is not None and "ANSIBLE_CONFIG" in env_extra else None
+        )
+        if config_override is None:
+            config_override = os.environ.get("ANSIBLE_CONFIG")
+        home_override = env_extra.get("HOME") if env_extra is not None and "HOME" in env_extra else None
+        if home_override is None:
+            home_override = os.environ.get("HOME")
+        home_directory = Path(home_override).expanduser() if home_override else Path.home()
+        if not home_directory.is_absolute():
+            home_directory = (project_root or Path.cwd()) / home_directory
+
+        # Trusted project config can change plugin resolution, so fingerprint
+        # the selected files as well as the project working directory.
+        config_candidates: list[Path] = []
+        if config_override:
+            if config_override == "~":
+                override_path = home_directory
+            elif config_override.startswith("~/"):
+                override_path = home_directory / config_override[2:]
+            else:
+                override_path = Path(config_override).expanduser()
+            if not override_path.is_absolute():
+                override_path = (project_root or Path.cwd()) / override_path
+            config_candidates.append(override_path)
+        else:
+            if project_root is not None:
+                config_candidates.append(project_root / "ansible.cfg")
+            config_candidates.extend((home_directory / ".ansible.cfg", Path("/etc/ansible/ansible.cfg")))
+
+        config_fingerprints: list[str] = []
+        for candidate in config_candidates:
+            try:
+                resolved_config = candidate.resolve()
+            except (OSError, RuntimeError):
+                resolved_config = candidate.absolute()
+            try:
+                contents = resolved_config.read_bytes()
+            except OSError:
+                if config_override and candidate == config_candidates[0]:
+                    config_fingerprints.append(f"missing:{resolved_config}")
+                continue
+            config_fingerprints.append(f"{resolved_config}:{hashlib.sha256(contents).hexdigest()}")
+        if config_fingerprints:
+            introspect_ctx = f"{introspect_ctx}|ansible-config:{'|'.join(config_fingerprints)}"
     cached_results, uncached = plugin_cache.partition(
         "introspect",
         venv_str,
@@ -207,15 +239,38 @@ def _run_introspection(
     }
 
     try:
-        result = subprocess.run(
-            [str(python), "-c", _SCRIPT],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-            cwd=project_root if project_root is not None and project_root.is_dir() else None,
-        )
+        if trust_project_code:
+            result = subprocess.run(
+                [str(python), "-c", _SCRIPT],
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+                cwd=project_root if project_root is not None and project_root.is_dir() else None,
+            )
+        else:
+            # Do not let untrusted scan-root config or local plugin paths make
+            # the resolver execute project-controlled Python in this process.
+            with tempfile.TemporaryDirectory(prefix="apme-ansible-introspect-") as isolated_dir:
+                isolated_path = Path(isolated_dir)
+                isolated_home = isolated_path / "home"
+                isolated_home.mkdir()
+                for variable in _PROJECT_PLUGIN_PATH_ENV:
+                    env.pop(variable, None)
+                env["HOME"] = str(isolated_home)
+                env["ANSIBLE_HOME"] = str(isolated_home / ".ansible")
+                env["ANSIBLE_CONFIG"] = str(isolated_path / "ansible.cfg")
+                Path(env["ANSIBLE_CONFIG"]).write_text("[defaults]\n", encoding="utf-8")
+                result = subprocess.run(
+                    [str(python), "-c", _SCRIPT],
+                    input=json.dumps(payload),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=env,
+                    cwd=isolated_path,
+                )
     except subprocess.TimeoutExpired:
         sys.stderr.write("Plugin introspection timed out\n")
         return cached_results

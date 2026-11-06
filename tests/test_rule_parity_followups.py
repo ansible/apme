@@ -126,6 +126,17 @@ def test_task_level_args_have_lower_precedence_than_module_options() -> None:
     assert payload["annotations"] == []
 
 
+def test_templated_task_args_are_marked_for_runtime_validators() -> None:
+    """Mark templated task-level args whose mapping is unavailable statically."""
+    node = ContentNode(
+        identity=NodeIdentity(path="task", node_type=NodeType.TASK),
+        module="ansible.builtin.copy",
+        options={"args": "{{ copy_args }}"},
+    )
+
+    assert content_node_to_opa_dict(node)["args_templated"] is True
+
+
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     "remote_src", [True, "yes", "on", 1, False, "false", None]
 )
@@ -299,11 +310,12 @@ def test_l114_semver(version: str, violation: bool) -> None:
     assert result.verdict is violation
 
 
-def test_l037_runtime_resolution(tmp_path: Path) -> None:
+def test_l037_runtime_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Use real module/action loaders and a project-configured local action.
 
     Args:
         tmp_path: Temporary project root.
+        monkeypatch: Pytest environment patcher.
     """
     actions = tmp_path / "actions"
     actions.mkdir()
@@ -311,6 +323,7 @@ def test_l037_runtime_resolution(tmp_path: Path) -> None:
         "# Resolution must not execute actions.\nraise RuntimeError('executed')\n"
     )
     (tmp_path / "ansible.cfg").write_text("[defaults]\naction_plugins = ./actions\n")
+    monkeypatch.setenv("APME_ANSIBLE_TRUST_PROJECT_CODE", "true")
     nodes: list[dict[str, object]] = [
         {"module": name, "file": "site.yml", "line": [3, 4], "key": name}
         for name in ("debug", "ansible.legacy.custom_action", "nonexistent_collection.missing.plugin")
@@ -323,6 +336,32 @@ def test_l037_runtime_resolution(tmp_path: Path) -> None:
     assert unresolved[0]["line"] == 3
 
 
+def test_l037_ignores_project_plugin_paths_without_explicit_trust(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not load project-configured action plugins for untrusted content.
+
+    Args:
+        tmp_path: Temporary project root.
+        monkeypatch: Pytest environment patcher.
+    """
+    actions = tmp_path / "actions"
+    actions.mkdir()
+    (actions / "custom_action.py").write_text("raise RuntimeError('project code executed')\n")
+    (tmp_path / "ansible.cfg").write_text("[defaults]\naction_plugins = ./actions\n")
+    monkeypatch.delenv("APME_ANSIBLE_TRUST_PROJECT_CODE", raising=False)
+    nodes: list[dict[str, object]] = [
+        {"module": "ansible.legacy.custom_action", "file": "site.yml", "line": [3, 4], "key": "task"},
+    ]
+
+    violations = M001_M004_introspect.run(nodes, Path(sys.prefix), project_root=tmp_path)
+
+    unresolved = [v for v in violations if v["rule_id"] == "L037"]
+    assert len(unresolved) == 1
+    assert unresolved[0]["original_module"] == "ansible.legacy.custom_action"
+
+
 def test_argspec_omitted_arguments() -> None:
     """Both runtime argspec validators report required args on empty tasks."""
     nodes: list[dict[str, object]] = [
@@ -331,3 +370,19 @@ def test_argspec_omitted_arguments() -> None:
     for validator in (L058_argspec_doc, L059_argspec_mock):
         violations = validator.run(nodes, Path(sys.prefix))
         assert any("url" in str(v["message"]) and "required" in str(v["message"]).lower() for v in violations)
+
+
+def test_argspec_validators_skip_templated_task_args() -> None:
+    """Avoid false missing-argument reports when task-level args are dynamic."""
+    nodes: list[dict[str, object]] = [
+        {
+            "module": "ansible.builtin.copy",
+            "module_options": {},
+            "args_templated": True,
+            "key": "task",
+            "line": [2, 3],
+        },
+    ]
+
+    for validator in (L058_argspec_doc, L059_argspec_mock):
+        assert validator.run(nodes, Path(sys.prefix)) == []

@@ -135,7 +135,11 @@ def _redact_query_fragment_preserving_templates(value: str, *, outer_url: bool =
         is_entire_value = match.span() == (0, len(value))
         if is_entire_value:
             if outer_url:
-                return embedded_url
+                authority = re.match(r"(?i)^[a-z][a-z0-9+.-]*://[^/?#]*", embedded_url)
+                if authority is None:
+                    return embedded_url
+                prefix, path_and_suffix = embedded_url[: authority.end()], embedded_url[authority.end() :]
+                return prefix + _URL_LITERAL_RE.sub(redact_nested_url, path_and_suffix)
             # Avoid equal-size recursion when an SCP path is itself a URL.
             # The common query pass below will redact its query after userinfo.
             return redact_url_userinfo(embedded_url)
