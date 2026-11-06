@@ -69,11 +69,15 @@ def test_l112_scenario_override_replaces_inherited_error() -> None:
     )
 
 
-def test_l112_does_not_mislabel_new_native_syntax_as_red_hat_baseline() -> None:
-    """Native syntax is outside the verified 24.9.0 compatibility profile."""
-    findings = _scan("ansible:\n  playbooks:\n    converge: converge.yml\n")
-    assert any(item["rule_id"] == "L112" and "24.9.0" in str(item["message"]) for item in findings)
-    assert any(item["path"] == "$.ansible" for item in findings)
+def test_l112_accepts_native_example_from_ansible_lint_issue_5119() -> None:
+    """The original native example passes schema, reference, and sequence checks."""
+    source = (
+        "dependency:\n  name: galaxy\n"
+        "ansible:\n  executor:\n    backend: ansible-playbook\n"
+        "  playbooks:\n    converge: converge.yml\n"
+        "scenario:\n  name: default\n  test_sequence:\n    - converge\n"
+    )
+    assert _scan(source, {"molecule/default/converge.yml": PLAYBOOK}) == []
 
 
 def test_l112_one_bad_scenario_does_not_prevent_others() -> None:
@@ -487,3 +491,163 @@ def test_molecule_playbooks_retain_ordinary_native_lint_rules(tmp_path: Path, di
     )
     result = _run_native(request)
     assert any(item["rule_id"] == "L026" and "converge.yml" in str(item["file"]) for item in result.violations)
+
+
+def test_native_inherited_empty_scenario_and_shared_state() -> None:
+    """An empty scenario inherits native config without legacy required fields."""
+    shared = b"ansible:\n  playbooks:\n    converge: ../shared/site.yml\nshared_state: true\n"
+    assert _scan("", {".config/molecule/config.yml": shared, "molecule/shared/site.yml": PLAYBOOK}) == []
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "source",
+    [
+        "ansible: []\n",
+        "ansible:\n  executor:\n    backend: unknown-backend\n",
+        "ansible:\n  executor:\n    args:\n      ansible_playbook: wrong-type\n",
+        "ansible:\n  executor:\n    unexpected_option: true\n",
+        "ansible: {}\nshared_state: wrong-type\n",
+    ],
+)
+def test_native_schema_rejects_invalid_structure(source: str) -> None:
+    """Native support validates actual executor and shared-state structure.
+
+    Args:
+        source: Native configuration with an invalid setting.
+    """
+    findings = _scan(source)
+    assert any(item["rule_id"] == "L112" for item in findings)
+
+
+def test_native_missing_playbook_has_native_source_location() -> None:
+    """Native paths participate in reference checks with precise attribution."""
+    findings = _scan("ansible:\n  playbooks:\n    converge: missing.yml\n")
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L113"
+    assert findings[0]["path"] == "$.ansible.playbooks.converge"
+    assert findings[0]["line"] == 3
+
+
+def test_native_referenced_playbook_structure_is_validated() -> None:
+    """Native referenced YAML is assessed without invoking Molecule."""
+    findings = _scan(
+        "ansible:\n  playbooks:\n    converge: converge.yml\n",
+        {"molecule/default/converge.yml": b"settings: data\n"},
+    )
+    assert any(item["rule_id"] == "L116" for item in findings)
+
+
+def test_native_retains_upstream_converge_filename_fallback() -> None:
+    """The newer provisioner still accepts playbook.yml as converge.yml fallback."""
+    assert (
+        _scan(
+            "ansible:\n  playbooks:\n    converge: converge.yml\n",
+            {"molecule/default/playbook.yml": PLAYBOOK},
+        )
+        == []
+    )
+
+
+def test_native_unknown_reference_remains_incomplete() -> None:
+    """Dynamic native references produce one coverage notice, not schema errors."""
+    findings = _scan("ansible:\n  playbooks:\n    converge: ${PLAYBOOK_PATH}\n")
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L115"
+
+
+def test_native_reference_overrides_inherited_value() -> None:
+    """Native overrides replace inherited references without stale diagnostics."""
+    assert (
+        _scan(
+            "ansible:\n  playbooks:\n    converge: converge.yml\n",
+            {
+                ".config/molecule/config.yml": b"ansible:\n  playbooks:\n    converge: missing.yml\n",
+                "molecule/default/converge.yml": PLAYBOOK,
+            },
+        )
+        == []
+    )
+
+
+def test_native_migration_preserves_upstream_legacy_precedence_and_origins() -> None:
+    """Explicit legacy settings replace native ones after layers are merged."""
+    findings = _scan(
+        "ansible:\n  playbooks:\n    converge: converge.yml\n",
+        {
+            ".config/molecule/config.yml": b"provisioner:\n  playbooks:\n    converge: missing.yml\n",
+            "molecule/default/converge.yml": PLAYBOOK,
+        },
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L113"
+    assert findings[0]["file"] == ".config/molecule/config.yml"
+    assert findings[0]["path"] == "$.provisioner.playbooks.converge"
+    assert findings[0]["line"] == 3
+
+
+def test_native_migrated_args_retain_source_for_schema_error() -> None:
+    """Errors after migration point to supplied legacy settings rather than defaults."""
+    findings = _scan("shared_state: true\nprovisioner:\n  ansible_args: wrong-type\n")
+    schema = [item for item in findings if item["rule_id"] == "L112"]
+    assert len(schema) == 1
+    assert schema[0]["path"] == "$.provisioner.ansible_args"
+    assert schema[0]["line"] == 3
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "source",
+    [
+        "ansible: []\nprovisioner:\n  playbooks:\n    converge: missing.yml\n",
+        "ansible:\n  executor: []\nprovisioner:\n  ansible_args: []\n",
+        "ansible:\n  executor:\n    args: []\nprovisioner:\n  ansible_args: []\n",
+        "ansible: {}\nprovisioner: []\n",
+    ],
+)
+def test_native_invalid_migration_parents_do_not_abort_validation(source: str) -> None:
+    """Malformed mixed configuration remains a schema diagnostic.
+
+    Args:
+        source: Native/legacy combination with a malformed parent node.
+    """
+    assert any(item["rule_id"] == "L112" for item in _scan(source))
+
+
+def test_native_sequences_and_playbook_arguments_receive_checks() -> None:
+    """Native scenarios retain action checks and support repeated verify stages."""
+    source = "ansible: {}\nscenario:\n  test_sequence:\n    - verify check.yml\n    - verify check.yml\n"
+    assert _scan(source, {"molecule/default/check.yml": PLAYBOOK}) == []
+    assert any(item["rule_id"] == "L113" for item in _scan(source))
+    assert any(item["rule_id"] == "L114" for item in _scan(source.replace("verify check.yml", "veriffy")))
+
+
+def test_native_and_legacy_scenarios_are_independent() -> None:
+    """Mixed repositories can contain both families in one uploaded snapshot."""
+    assert (
+        _scan(
+            "provisioner:\n  playbooks:\n    converge: converge.yml\n",
+            {
+                "molecule/default/converge.yml": PLAYBOOK,
+                "molecule/native/molecule.yml": b"ansible:\n  playbooks:\n    converge: converge.yml\n",
+                "molecule/native/converge.yml": PLAYBOOK,
+            },
+        )
+        == []
+    )
+
+
+def test_bundled_molecule_profiles_have_verified_provenance() -> None:
+    """Both offline schemas are immutable snapshots with matching hashes."""
+    import hashlib
+    import json
+
+    from apme_engine.validators.native import molecule
+
+    assets = Path(molecule.__file__).parent / "molecule_data"
+    manifest = json.loads((assets / "provenance.json").read_text())
+    assert manifest["minimum_version"] == "24.9.0"
+    assert {profile["version"] for profile in manifest["profiles"]} == {"24.9.0", "26.11.0"}
+    for profile in manifest["profiles"]:
+        assert len(profile["commit"]) == 40
+        blob = (assets / f"molecule-{profile['version']}.json").read_bytes()
+        assert hashlib.sha256(blob).hexdigest() == profile["schema_sha256"]
+        assert profile["commit"] in profile["schema_url"]

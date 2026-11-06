@@ -4,17 +4,22 @@
 
 **Location:** `src/apme_engine/validators/native/molecule_data/`
 
-**Source:** `ansible/molecule` v24.9.0, commit
-`4e2592e5d77b181133243b8b685933f6daff3897`. The schema is copied unchanged;
-the defaults JSON is derived from the literal mapping returned by
-`Config._get_defaults`. No Molecule Python code is imported or executed.
+**Source:** `ansible/molecule` released snapshots:
+
+- v24.9.0, commit `4e2592e5d77b181133243b8b685933f6daff3897` (legacy).
+- v26.11.0, commit `ada645a132b9332c291696f553d93cce788b5410` (native/shared state).
+
+Schemas are copied unchanged. Defaults JSON comes from the literal mapping in
+24.9.0 `Config._get_defaults` and 26.11.0 `constants.DEFAULT_CONFIG`, extracted
+without importing or executing Molecule code.
 
 **License:** MIT, with Cisco Systems and Red Hat copyright notices retained in
-the adjacent `LICENSE`. `provenance.json` records the schema hash and source.
+the adjacent `LICENSE`. `provenance.json` records the source commits and hashes.
 
-**Why vendored:** Reproducible offline validation against a release documented
-as distributed with AAP 2.5. This does not assert support for all upstream
-versions or third-party drivers. See `docs/guides/MOLECULE.md` for updates.
+**Why vendored:** Reproducible offline validation for Molecule 24.9.0+ covering
+legacy and native syntax. The minimum baseline is documented with AAP 2.5;
+newer upstream compatibility does not establish Red Hat support for every
+release or driver. See `docs/guides/MOLECULE.md` for updates.
 
 **Validation dependency review (ADR-019):** `jsonschema` implements JSON Schema
 references, conditionals, and type validation, which are unsuitable for a small
