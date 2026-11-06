@@ -700,8 +700,8 @@ class TestM001M004CachedPath:
         assert Path(mock_run.call_args_list[0].kwargs["cwd"]) == project_a
         assert Path(mock_run.call_args_list[1].kwargs["cwd"]) == project_b
 
-    def test_short_form_backfills_fqcn(self, tmp_path: Path) -> None:
-        """Short-form names always go to subprocess but FQCN gets backfilled.
+    def test_alias_metadata_does_not_backfill_canonical_fqcn(self, tmp_path: Path) -> None:
+        """Alias deprecations and redirects must not leak to canonical lookups.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -720,9 +720,9 @@ class TestM001M004CachedPath:
             {
                 "ping": {
                     "fqcn": "ansible.builtin.ping",
-                    "deprecated": False,
-                    "warnings": [],
-                    "redirects": [],
+                    "deprecated": True,
+                    "warnings": ["Alias is deprecated"],
+                    "redirects": ["ping", "ansible.builtin.ping"],
                     "removed": False,
                     "removal_msg": "",
                     "plugin_path": "/some/path",
@@ -740,9 +740,7 @@ class TestM001M004CachedPath:
 
             ctx = f"{fresh_cache.introspect_context_suffix(str(venv))}|project-code:isolated"
             hit = fresh_cache.get("introspect", str(venv), "ansible.builtin.ping", introspect_context=ctx)
-            assert hit is not None
-            assert isinstance(hit, dict)
-            assert hit["fqcn"] == "ansible.builtin.ping"
+            assert hit is None
 
     def test_twin_lookup_error_skips_cache(self, tmp_path: Path) -> None:
         """Twin lookup failures are logged and not cached as no-twin results.

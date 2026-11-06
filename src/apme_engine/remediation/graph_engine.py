@@ -35,6 +35,7 @@ from apme_engine.graph.scanner import (
 from apme_engine.remediation.ai_provider import AIProviderError
 from apme_engine.remediation.partition import is_ai_escalatable, partition_violations
 from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.remediation.transforms.M001_fqcn import enrich_fqcn_targets
 from apme_engine.rule_ids import normalize_rule_id
 
 if TYPE_CHECKING:
@@ -991,6 +992,7 @@ def _record_violations(
         dirty_node_ids: When set, dirty nodes absent from violations
             get a snapshot entry recorded.
     """
+    enrich_fqcn_targets(violations)
     by_node: dict[str, list[ViolationDict]] = defaultdict(list)
     for v in violations:
         node_id = str(v.get("path", ""))

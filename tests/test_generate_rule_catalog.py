@@ -443,13 +443,13 @@ class TestNativeDocRuleTestStatus:
 class TestFQCNRemediationTier:
     """FQCN suggestions without safe automatic equivalence stay manual."""
 
-    def test_l026_and_m048_are_manual_even_with_registered_fixers(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Catalog rows must not advertise conditional or unsafe rewrites as automatic.
+    def test_l026_is_automatic_and_m048_stays_manual(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Distinguish runtime qualification from a builtin replacement suggestion.
 
         Args:
             monkeypatch: Pytest fixture for replacing catalog discovery inputs.
         """
-        assert _mod.enrich_rule("L026", "Native", "", has_fixer=True).remediation_tier == "manual"
+        assert _mod.enrich_rule("L026", "Native", "", has_fixer=True).remediation_tier == "auto"
         assert _mod.enrich_rule("M048", "Ansible", "", has_fixer=True).remediation_tier == "manual"
 
         rows = [
@@ -464,7 +464,7 @@ class TestFQCNRemediationTier:
         monkeypatch.setattr(_mod, "_get_severity", lambda _rule_id: "low")
 
         collected = _mod._collect_all_rules()
-        assert {rule.rule_id for rule in collected if rule.has_fixer} == set()
+        assert {rule.rule_id for rule in collected if rule.has_fixer} == {"L026"}
 
 
 class TestParseFrontmatterYamlFallback:

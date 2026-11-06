@@ -9,7 +9,6 @@ Uses the venv's ansible-core to resolve modules and detect:
   L037 - Module name that Ansible's module and action loaders cannot resolve
 """
 
-import hashlib
 import json
 import os
 import subprocess
@@ -21,7 +20,7 @@ from pathlib import Path
 from apme_engine.validators.ansible.cache import plugin_cache
 
 _SCRIPT = textwrap.dedent("""\
-import json, sys
+import json, os, re, sys
 
 data = json.loads(sys.stdin.read())
 module_names = data.get("modules", [])
@@ -36,12 +35,27 @@ collection_list = data.get("collection_list")
 if not isinstance(collection_list, list) or not collection_list:
     collection_list = None
 
+def lookup(loader, name):
+    return loader.find_plugin_with_context(
+        name, ignore_deprecated=False, check_aliases=True, collection_list=collection_list
+    )
+
+def same_plugin(original, replacement):
+    if bool(original.resolved) != bool(replacement.resolved):
+        return False
+    if not original.resolved:
+        return True
+    before = getattr(original, "plugin_resolved_path", "") or ""
+    after = getattr(replacement, "plugin_resolved_path", "") or ""
+    return bool(before and after and os.path.realpath(before) == os.path.realpath(after))
+
 for name in module_names:
     info = {
         "resolved": None,
         "action_resolved": None,
         "resolution_error": False,
         "fqcn": "",
+        "resolution_reason": "",
         "deprecated": False,
         "warnings": [],
         "redirects": [],
@@ -51,13 +65,11 @@ for name in module_names:
         "builtin_alternative": "",
         "builtin_alternative_error": "",
     }
+    ctx = action_ctx = None
     try:
-        ctx = module_loader.find_plugin_with_context(
-            name, ignore_deprecated=False, collection_list=collection_list
-        )
+        ctx = lookup(module_loader, name)
         info["resolved"] = bool(ctx.resolved)
         if ctx.resolved:
-            info["fqcn"] = getattr(ctx, "resolved_fqcn", "") or ""
             info["deprecated"] = bool(getattr(ctx, "deprecated", False))
             info["warnings"] = list(getattr(ctx, "deprecation_warnings", None) or [])
             info["redirects"] = list(getattr(ctx, "redirect_list", None) or [])
@@ -71,12 +83,40 @@ for name in module_names:
             info["resolution_error"] = True
 
     try:
-        action_ctx = action_loader.find_plugin_with_context(
-            name, ignore_deprecated=False, collection_list=collection_list
-        )
+        action_ctx = lookup(action_loader, name)
         info["action_resolved"] = bool(action_ctx.resolved)
     except Exception:
         info["resolution_error"] = True
+
+    # Prefer the action's canonical name (including action-only plugins),
+    # then the module's. A usable spelling must preserve BOTH selections:
+    # qualifying a builtin action must not bypass a local module override.
+    if ctx is not None and action_ctx is not None and not info["resolution_error"]:
+        contexts = [c for c in (action_ctx, ctx) if c.resolved]
+        candidates = [getattr(c, "resolved_fqcn", "") or "" for c in contexts]
+        if contexts and "." not in name:
+            candidates.append("ansible.legacy." + name)
+        for candidate in dict.fromkeys(candidates):
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*){2,}", candidate):
+                continue
+            try:
+                if not same_plugin(action_ctx, lookup(action_loader, candidate)):
+                    continue
+                if not same_plugin(ctx, lookup(module_loader, candidate)):
+                    continue
+            except Exception:
+                continue
+            info["fqcn"] = candidate
+            selected = contexts[0]
+            info["plugin_path"] = getattr(selected, "plugin_resolved_path", "") or ""
+            info["deprecated"] = any(bool(getattr(c, "deprecated", False)) for c in contexts)
+            info["warnings"] = list(dict.fromkeys(
+                warning for c in contexts for warning in (getattr(c, "deprecation_warnings", None) or [])
+            ))
+            info["redirects"] = list(getattr(selected, "redirect_list", None) or [])
+            break
+        if contexts and not info["fqcn"]:
+            info["resolution_reason"] = "No FQCN preserves the selected module and action plugins"
 
     # Prefer-builtin twin: only when the original name resolved to a
     # non-builtin / non-legacy FQCN. Short-name lookup finds real
@@ -156,69 +196,23 @@ def _run_introspection(
 
     trust_project_code = _trusts_project_code(env_extra)
     venv_str = str(venv_root)
-    introspect_ctx = plugin_cache.introspect_context_suffix(venv_str, env_extra)
-    if collection_list is not None:
-        introspect_ctx = f"{introspect_ctx}|task-collections:{json.dumps(collection_list, separators=(',', ':'))}"
-    if trust_project_code and project_root is not None:
-        try:
-            working_directory = project_root.resolve()
-        except (OSError, RuntimeError):
-            working_directory = project_root.absolute()
-        introspect_ctx = f"{introspect_ctx}|working-directory:{working_directory}"
-    introspect_ctx = f"{introspect_ctx}|project-code:{'trusted' if trust_project_code else 'isolated'}"
-
+    introspect_ctx = ""
+    cached_results: dict[str, object]
     if trust_project_code:
-        config_override = (
-            env_extra.get("ANSIBLE_CONFIG") if env_extra is not None and "ANSIBLE_CONFIG" in env_extra else None
+        # Local plugins and project collections can change without a version
+        # bump. Re-resolve them rather than reusing a daemon-wide result.
+        cached_results, uncached = {}, module_names
+    else:
+        introspect_ctx = plugin_cache.introspect_context_suffix(venv_str, env_extra)
+        if collection_list is not None:
+            introspect_ctx = f"{introspect_ctx}|task-collections:{json.dumps(collection_list, separators=(',', ':'))}"
+        introspect_ctx += "|project-code:isolated"
+        cached_results, uncached = plugin_cache.partition(
+            "introspect",
+            venv_str,
+            module_names,
+            introspect_context=introspect_ctx,
         )
-        if config_override is None:
-            config_override = os.environ.get("ANSIBLE_CONFIG")
-        home_override = env_extra.get("HOME") if env_extra is not None and "HOME" in env_extra else None
-        if home_override is None:
-            home_override = os.environ.get("HOME")
-        home_directory = Path(home_override).expanduser() if home_override else Path.home()
-        if not home_directory.is_absolute():
-            home_directory = (project_root or Path.cwd()) / home_directory
-
-        # Trusted project config can change plugin resolution, so fingerprint
-        # the selected files as well as the project working directory.
-        config_candidates: list[Path] = []
-        if config_override:
-            if config_override == "~":
-                override_path = home_directory
-            elif config_override.startswith("~/"):
-                override_path = home_directory / config_override[2:]
-            else:
-                override_path = Path(config_override).expanduser()
-            if not override_path.is_absolute():
-                override_path = (project_root or Path.cwd()) / override_path
-            config_candidates.append(override_path)
-        else:
-            if project_root is not None:
-                config_candidates.append(project_root / "ansible.cfg")
-            config_candidates.extend((home_directory / ".ansible.cfg", Path("/etc/ansible/ansible.cfg")))
-
-        config_fingerprints: list[str] = []
-        for candidate in config_candidates:
-            try:
-                resolved_config = candidate.resolve()
-            except (OSError, RuntimeError):
-                resolved_config = candidate.absolute()
-            try:
-                contents = resolved_config.read_bytes()
-            except OSError:
-                if config_override and candidate == config_candidates[0]:
-                    config_fingerprints.append(f"missing:{resolved_config}")
-                continue
-            config_fingerprints.append(f"{resolved_config}:{hashlib.sha256(contents).hexdigest()}")
-        if config_fingerprints:
-            introspect_ctx = f"{introspect_ctx}|ansible-config:{'|'.join(config_fingerprints)}"
-    cached_results, uncached = plugin_cache.partition(
-        "introspect",
-        venv_str,
-        module_names,
-        introspect_context=introspect_ctx,
-    )
 
     if not uncached:
         return cached_results
@@ -292,15 +286,15 @@ def _run_introspection(
         if twin_err:
             sys.stderr.write(f"M048 twin lookup failed for {name}: {twin_err}\n")
             continue
-        if info.get("resolution_error"):
+        if info.get("resolution_error") or trust_project_code:
             continue
-        resolved_fqcn = str(info.get("fqcn", ""))
+        # Redirect/deprecation metadata belongs to the requested spelling.
+        # Backfilling it under the target would taint a later canonical lookup.
         plugin_cache.put(
             "introspect",
             venv_str,
             name,
             info,
-            resolved_fqcn=resolved_fqcn,
             introspect_context=introspect_ctx,
         )
 
@@ -429,6 +423,20 @@ def run(
                 }
             )
 
+        if not fqcn and info.get("resolution_reason") and str(module_name).count(".") < 2:
+            violations.append(
+                {
+                    "rule_id": "M001",
+                    "severity": "high",
+                    "message": f"Cannot qualify module {module_name}: {info['resolution_reason']}",
+                    "file": file_path,
+                    "line": line_num,
+                    "path": node.get("key", ""),
+                    "scope": "task",
+                    "original_module": module_name,
+                }
+            )
+
         # M048: Prefer ansible.builtin when a non-builtin FQCN has a builtin twin.
         # Short names are owned by M001; only already-FQCN module names fire here.
         # resolved_fqcn is the rewrite target (builtin), matching M001/M003 polarity.
@@ -476,7 +484,7 @@ def run(
 
         # M003: Redirects
         redirects = info.get("redirects", [])
-        if len(redirects) > 1:
+        if len(redirects) > 1 and fqcn and fqcn != module_name:
             chain = " -> ".join(redirects)
             violations.append(
                 {
@@ -488,7 +496,7 @@ def run(
                     "path": node.get("key", ""),
                     "scope": "task",
                     "original_module": module_name,
-                    "resolved_fqcn": str(redirects[-1]) if redirects else "",
+                    "resolved_fqcn": fqcn,
                     "redirect_chain": [str(r) for r in redirects],
                 }
             )

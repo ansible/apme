@@ -37,10 +37,9 @@ _RULE_SCOPE_NAMES: dict[str, str] = {
 AI_PROPOSABLE_SCOPES = frozenset({"task", "block"})
 # Keep in sync with apme_engine.remediation.partition.CROSS_FILE_RULES.
 CROSS_FILE_RULES = frozenset({"R111", "R112", "L006", "L080"})
-# These findings need a human to verify the resolved target. L026 currently
-# emits no resolver target, and an M048 builtin twin is not proof of semantic
-# equivalence with the collection module.
-FQCN_MANUAL_REVIEW_RULES = frozenset({"L026", "M048"})
+# An M048 builtin twin is not proof of semantic equivalence with the
+# collection module. Canonical-name fixes use runtime resolver targets.
+FQCN_MANUAL_REVIEW_RULES = frozenset({"M048"})
 
 GRAPH_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
 NATIVE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"

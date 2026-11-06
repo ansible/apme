@@ -15,10 +15,48 @@ from ruamel.yaml.comments import CommentedMap
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.transforms._helpers import get_module_key, rename_key
+from apme_engine.rule_ids import normalize_rule_id
 
 _FQCN_FROM_MSG_RE = re.compile(
     r"(?:Use FQCN|FQCN for module):\s*\S+\s*->\s*(\S+)",
 )
+_FQCN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}")
+
+
+def enrich_fqcn_targets(violations: list[ViolationDict]) -> None:
+    """Share runtime resolver targets with short-name findings for the same task.
+
+    Only canonical-name and redirect findings supply targets. A builtin twin
+    suggestion does not prove equivalence. Match the file, node ID, and original
+    module together so a resolution cannot leak between tasks or stale scans.
+
+    Args:
+        violations: Findings from one scan, updated in place.
+    """
+    targets: dict[tuple[str, str, str], set[str]] = {}
+    for violation in violations:
+        if normalize_rule_id(str(violation.get("rule_id", ""))) not in {"M001", "M003"}:
+            continue
+        original = str(violation.get("original_module", ""))
+        node_id = str(violation.get("path", ""))
+        target = _resolve_fqcn(violation, original)
+        if original and node_id and target:
+            key = (str(violation.get("file", "")), node_id, original)
+            targets.setdefault(key, set()).add(target)
+
+    for violation in violations:
+        if normalize_rule_id(str(violation.get("rule_id", ""))) not in {"L002", "L026"}:
+            continue
+        if has_fqcn_target(violation):
+            continue
+        key = (
+            str(violation.get("file", "")),
+            str(violation.get("path", "")),
+            str(violation.get("original_module", "")),
+        )
+        candidates = targets.get(key, set())
+        if len(candidates) == 1:
+            violation["resolved_fqcn"] = next(iter(candidates))
 
 
 def _resolve_fqcn(violation: ViolationDict, current_key: str) -> str | None:
@@ -74,17 +112,12 @@ def _is_valid_fqcn(candidate: str, current_key: str) -> bool:
     Returns:
         True if candidate is a well-formed FQCN.
     """
-    if candidate == current_key:
-        return False
-    if " " in candidate or "#" in candidate:
-        return False
-    if "/" in candidate or "\\" in candidate:
-        return False
-    if candidate.startswith("taskfile"):
-        return False
-    if candidate.endswith((".yml", ".yaml", ".json")):
-        return False
-    return "." in candidate
+    return (
+        candidate != current_key
+        and not candidate.startswith("taskfile")
+        and not candidate.endswith((".yml", ".yaml", ".json"))
+        and _FQCN_RE.fullmatch(candidate) is not None
+    )
 
 
 def fix_fqcn(task: CommentedMap, violation: ViolationDict) -> bool:
@@ -97,8 +130,34 @@ def fix_fqcn(task: CommentedMap, violation: ViolationDict) -> bool:
     Returns:
         True if a change was applied.
     """
+    for action_key in ("action", "local_action"):
+        if action_key in task:
+            action = task[action_key]
+            value = action.get("module") if isinstance(action, dict) else action
+            if not isinstance(value, str):
+                return False
+            match = re.match(r"^(\s*)(\S+)([\s\S]*)$", value)
+            if match is None:
+                return False
+            original = str(violation.get("original_module", ""))
+            current = match.group(2)
+            if original and original != current:
+                return False
+            target = _resolve_fqcn(violation, current)
+            if target is None:
+                return False
+            replacement = type(value)(match.group(1) + target + match.group(3))
+            if isinstance(action, dict):
+                action["module"] = replacement
+            else:
+                task[action_key] = replacement
+            return True
+
     module_key = get_module_key(task)
     if module_key is None:
+        return False
+    original = str(violation.get("original_module", ""))
+    if original and module_key != original:
         return False
 
     fqcn = _resolve_fqcn(violation, module_key)
@@ -106,4 +165,6 @@ def fix_fqcn(task: CommentedMap, violation: ViolationDict) -> bool:
         return False
 
     rename_key(task, module_key, fqcn)
+    if module_key in task.ca.items:
+        task.ca.items[fqcn] = task.ca.items.pop(module_key)
     return True

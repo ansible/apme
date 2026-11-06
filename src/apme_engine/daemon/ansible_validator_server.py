@@ -63,6 +63,7 @@ def _run_ansible_validate(
     req_id: str,
     venv_path: str,
     content_graph_data: bytes = b"",
+    check_syntax: bool = True,
 ) -> _AnsibleResult:
     """Run Ansible validation against a session-scoped venv provided by Engine.
 
@@ -73,6 +74,7 @@ def _run_ansible_validate(
         req_id: Request ID for logging.
         venv_path: Session venv path from Engine (read-only).
         content_graph_data: Serialized ContentGraph for L057 node resolution.
+        check_syntax: Run syntax checks as well as node-level plugin checks.
 
     Returns:
         _AnsibleResult with violations and version.
@@ -101,7 +103,9 @@ def _run_ansible_validate(
             root_dir=str(temp_dir),
         )
         validator = AnsibleValidator(venv_root=venv_root)
-        run_result = validator.run_with_timing(scan_context, content_graph_data=content_graph_data)
+        run_result = validator.run_with_timing(
+            scan_context, content_graph_data=content_graph_data, check_syntax=check_syntax
+        )
         return _AnsibleResult(
             run_result=run_result,
             ansible_core_version=raw_version,
@@ -167,6 +171,7 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     req_id,
                     request.venv_path or "",
                     bytes(request.content_graph_data),
+                    not bool(request.dirty_node_ids),
                 )
 
                 total_ms = (time.monotonic() - t0) * 1000

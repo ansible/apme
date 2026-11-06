@@ -2575,7 +2575,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     )
                     ext_names.append("opa")
 
-            # Ansible task checks: hierarchy with dirty task nodes (L057 skipped — no files)
+            # Ansible: dirty task payload plus the same project config/plugins
+            # used in the initial scan. dirty_node_ids skips full syntax checks.
             ans_addr = os.environ.get("ANSIBLE_GRPC_ADDRESS")
             if not ans_addr:
                 raise RequiredValidatorDependencyError(
@@ -2608,6 +2609,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             ValidateRequest(
                                 request_id=f"{scan_id}-rescan",
                                 hierarchy_payload=json.dumps(ans_payload, default=str).encode(),
+                                files=[File(path=p, content=c) for p, c in session.working_files.items()],
+                                dirty_node_ids=sorted(dirty_ids),
                                 venv_path=session.venv_path,
                                 session_id=ans_opts.session_id if ans_opts else "",
                                 ansible_core_version=(ans_opts.ansible_core_version if ans_opts else ""),

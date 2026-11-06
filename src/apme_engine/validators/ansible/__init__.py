@@ -241,12 +241,15 @@ class AnsibleValidator:
         self,
         context: ScanContext,
         content_graph_data: bytes = b"",
+        *,
+        check_syntax: bool = True,
     ) -> AnsibleRunResult:
-        """Run all ansible checks and return violations + per-rule timing.
+        """Run ansible checks and return violations + per-rule timing.
 
         Args:
             context: Scan context with hierarchy payload and root dir.
             content_graph_data: Serialized ContentGraph for L057 node resolution.
+            check_syntax: Run project syntax checks; false for task-only rescans.
 
         Returns:
             AnsibleRunResult with violations and rule timings.
@@ -262,7 +265,7 @@ class AnsibleValidator:
         if content_graph_data:
             node_lookup = build_node_lookup(content_graph_data)
 
-        if root_dir and root_dir.is_dir():
+        if check_syntax and root_dir and root_dir.is_dir():
             t0 = time.monotonic()
             l057 = L057_syntax.run(
                 venv_root=self._venv_root,

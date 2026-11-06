@@ -807,8 +807,8 @@ class TestFQCNTransform:
         assert "ansible.builtin.debug" in result.content
         assert "\n  debug:" not in result.content
 
-    def test_escalates_without_resolved_fqcn(self) -> None:
-        """Verifies no fix when violation lacks resolved_fqcn (escalates to AI)."""
+    def test_no_fix_without_resolved_fqcn(self) -> None:
+        """Findings without a resolver target remain for manual review."""
         content = textwrap.dedent("""\
         - name: Copy file
           copy:
