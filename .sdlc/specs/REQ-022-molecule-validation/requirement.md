@@ -10,9 +10,11 @@
 
 Automatically validate Molecule configuration, scenario references, action
 sequences, and Ansible scenario playbooks during ordinary APME assessment.
-Use L-series rules tagged `molecule`. The compatibility target is the Molecule
-distribution delivered with Red Hat Ansible development tools; upstream
-version numbers alone do not establish Red Hat support.
+Use L-series rules tagged `molecule`. The user-selected compatibility target is
+Molecule 24.9.0 and newer, including legacy provisioner configuration and native
+Ansible configuration.
+The minimum baseline comes from Red Hat Ansible development tools; compatibility
+with newer upstream syntax does not itself establish Red Hat support.
 
 ## User Stories
 
@@ -117,10 +119,22 @@ Ansible YAML and retain ordinary playbook validation coverage.
 
 ## Compatibility Decision
 
-Use the publicly documented AAP 2.5 / Molecule 24.9.0 distribution as the initial
-schema profile, under the user's instruction to select a verified Red Hat
-baseline. This does not assert that an old package build remains the currently
-supported patch release. Newer native configuration requires a verified target.
+Use Molecule 24.9.0 as the minimum baseline (user decision, 2026-11-06).
+Automatically recognize both configuration families from merged supplied layers:
+legacy configuration uses the pinned 24.9.0 schema/defaults; native `ansible:` or
+`shared_state` uses the pinned 26.11.0 schema/defaults. Migrate explicitly supplied
+legacy provisioner settings for the native family using upstream precedence,
+retaining original source locations. Profiles describe syntax contracts rather
+than proving the installed Molecule version. Future syntax changes require
+bundled profile updates; scans never fetch schemas or run Molecule.
+
+### Scenario: Modern native configuration
+
+- **GIVEN**: Native `ansible:` configuration in a shared or scenario file
+- **WHEN**: APME checks the project
+- **THEN**: The configuration is accepted when valid, executor settings and
+  shared-state types are checked, and native playbook references and sequence
+  arguments receive the same static checks as legacy references.
 
 ## References
 
@@ -134,5 +148,5 @@ supported patch release. Newer native configuration requires a verified target.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-11-05 | Codex | Captured scope and user decisions; compatibility target pending |
-
 | 2026-11-05 | Codex | Implemented L112-L116, graph/file integration, scenario discovery, and verified coverage |
+| 2026-11-06 | Codex | Set minimum to 24.9.0+, added native profile and regression coverage |

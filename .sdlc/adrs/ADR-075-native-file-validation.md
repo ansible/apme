@@ -57,7 +57,8 @@ can perform using an existing contract.
 
 ## Implementation Notes
 
-REQ-022 defines Molecule scope and the initial ADT 24.9.0 compatibility profile.
+REQ-022 defines a Molecule 24.9.0+ minimum compatibility target, with pinned
+legacy (24.9.0) and native/shared-state (26.11.0) profiles.
 Add tests for independent file validation and preserve graph rule behavior.
 
 ## Related Decisions
@@ -81,3 +82,4 @@ Add tests for independent file validation and preserve graph rule behavior.
 | 2026-11-05 | Codex | Proposed file validation design for Molecule rules |
 | 2026-11-05 | Codex | Accepted within the user-authorized static validation scope; no invariant changes |
 | 2026-11-05 | Codex | Implemented and verified file rules, catalog integration, and session reporting |
+| 2026-11-06 | Codex | Extended configuration compatibility to 24.9.0+ with native schema and source-preserving migration |

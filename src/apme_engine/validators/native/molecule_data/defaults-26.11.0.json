@@ -1,0 +1,111 @@
+{
+  "ansible": {
+    "cfg": {},
+    "executor": {
+      "backend": "ansible-playbook",
+      "args": {
+        "ansible_navigator": [],
+        "ansible_playbook": []
+      }
+    },
+    "env": {},
+    "playbooks": {
+      "cleanup": "cleanup.yml",
+      "create": "create.yml",
+      "converge": "converge.yml",
+      "destroy": "destroy.yml",
+      "prepare": "prepare.yml",
+      "side_effect": "side_effect.yml",
+      "verify": "verify.yml"
+    }
+  },
+  "dependency": {
+    "name": "galaxy",
+    "command": null,
+    "enabled": true,
+    "options": {},
+    "env": {}
+  },
+  "driver": {
+    "name": "default",
+    "provider": {
+      "name": null
+    },
+    "options": {
+      "managed": true
+    },
+    "ssh_connection_options": [],
+    "safe_files": []
+  },
+  "platforms": [],
+  "prerun": true,
+  "role_name_check": 0,
+  "shared_state": false,
+  "provisioner": {
+    "name": "ansible",
+    "connection_options": {},
+    "options": {},
+    "inventory": {
+      "hosts": {},
+      "host_vars": {},
+      "group_vars": {},
+      "links": {}
+    },
+    "children": {},
+    "log": true
+  },
+  "scenario": {
+    "name": "default",
+    "check_sequence": [
+      "dependency",
+      "cleanup",
+      "destroy",
+      "create",
+      "prepare",
+      "converge",
+      "check",
+      "cleanup",
+      "destroy"
+    ],
+    "cleanup_sequence": [
+      "cleanup"
+    ],
+    "converge_sequence": [
+      "dependency",
+      "create",
+      "prepare",
+      "converge"
+    ],
+    "create_sequence": [
+      "dependency",
+      "create",
+      "prepare"
+    ],
+    "destroy_sequence": [
+      "dependency",
+      "cleanup",
+      "destroy"
+    ],
+    "test_sequence": [
+      "dependency",
+      "cleanup",
+      "destroy",
+      "syntax",
+      "create",
+      "prepare",
+      "converge",
+      "idempotence",
+      "side_effect",
+      "verify",
+      "cleanup",
+      "destroy"
+    ]
+  },
+  "verifier": {
+    "name": "ansible",
+    "enabled": true,
+    "options": {},
+    "env": {},
+    "additional_files_or_dirs": []
+  }
+}

@@ -34,7 +34,11 @@ prevent assessment of independent scenarios.
 
 ## Compatibility
 
-The first profile is Molecule 24.9.0, documented as distributed with Red Hat
-ADT/AAP 2.5. The schema is pinned to upstream commit
-4e2592e5d77b181133243b8b685933f6daff3897. A broad numeric condition such as
-molecule>=6 is not a Red Hat lifecycle/support assertion.
+The minimum compatibility target is Molecule 24.9.0+. Legacy configuration uses
+24.9.0 (commit 4e2592e5d77b181133243b8b685933f6daff3897); native/shared-state
+configuration uses 26.11.0 (commit ada645a132b9332c291696f553d93cce788b5410).
+Select the family from merged user config before applying defaults. Explicit
+legacy provisioner settings replace native equivalents during migration while
+retaining their original file/line/path. Native references and sequences receive
+the same checks as legacy inputs. Family selection does not assert the
+installed Molecule version or Red Hat support for every upstream release.

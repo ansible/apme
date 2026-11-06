@@ -1,4 +1,4 @@
-"""Read-only Molecule file checks for the Red Hat ADT 24.9.0 baseline.
+"""Read-only Molecule file checks for legacy and native configuration, 24.9.0+.
 
 All inputs come from the uploaded snapshot. This module never imports Molecule,
 executes project code, reads host configuration, or resolves network schemas.
@@ -24,6 +24,7 @@ from ruamel.yaml.error import YAMLError
 from apme_engine.graph.types import RuleMetadata, RuleScope, Severity, ViolationDict, YAMLDict, YAMLValue
 
 PROFILE_VERSION = "24.9.0"
+NATIVE_PROFILE_VERSION = "26.11.0"
 _ASSETS = Path(__file__).parent / "molecule_data"
 _VIRTUAL_ROOT = "/__apme_project__"
 _ENV = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^{}]*))?\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -99,15 +100,18 @@ class _Document:
     origins: dict[YamlPath, _Location] = field(default_factory=dict)
 
 
-@lru_cache(maxsize=1)
-def _profile() -> tuple[Draft7Validator, YAMLDict]:
+@lru_cache(maxsize=2)
+def _profile(version: str = PROFILE_VERSION) -> tuple[Draft7Validator, YAMLDict]:
     """Load trusted bundled schema and defaults.
+
+    Args:
+        version: Bundled configuration-family profile version.
 
     Returns:
         Schema validator and immutable-by-convention baseline defaults.
     """
-    schema = json.loads((_ASSETS / f"molecule-{PROFILE_VERSION}.json").read_text())
-    defaults = cast(YAMLDict, json.loads((_ASSETS / f"defaults-{PROFILE_VERSION}.json").read_text()))
+    schema = json.loads((_ASSETS / f"molecule-{version}.json").read_text())
+    defaults = cast(YAMLDict, json.loads((_ASSETS / f"defaults-{version}.json").read_text()))
     return Draft7Validator(schema), defaults
 
 
@@ -395,6 +399,54 @@ def _playbook(file: str, content: bytes) -> list[ViolationDict]:
         ]
 
 
+def _migrate_native(document: _Document) -> None:
+    """Apply upstream legacy-to-native precedence while retaining source paths.
+
+    Molecule merges user layers before migration; explicitly supplied legacy
+    fields replace their native equivalents. Defaults must be applied later.
+    Invalid parent structures are left intact for schema diagnostics.
+
+    Args:
+        document: Merged user configuration, before profile defaults.
+    """
+    provisioner = document.data.get("provisioner")
+    if not isinstance(provisioner, dict):
+        return
+    mappings: dict[str, tuple[str, ...]] = {
+        "ansible_args": ("executor", "args", "ansible_playbook"),
+        "config_options": ("cfg",),
+        "env": ("env",),
+        "playbooks": ("playbooks",),
+    }
+    if not any(key in provisioner for key in mappings):
+        return
+    native = document.data.setdefault("ansible", {})
+    if not isinstance(native, dict):
+        return
+    for key, destination in mappings.items():
+        if key not in provisioner:
+            continue
+        target = native
+        for part in destination[:-1]:
+            child = target.setdefault(part, {})
+            if not isinstance(child, dict):
+                break
+            target = child
+        else:
+            target[destination[-1]] = provisioner.pop(key)
+            old_path: YamlPath = ("provisioner", key)
+            new_path: YamlPath = ("ansible", *destination)
+            source_origins = {
+                new_path + path[len(old_path) :]: origin
+                for path, origin in document.origins.items()
+                if path[: len(old_path)] == old_path
+            }
+            for path in list(document.origins):
+                if path[: len(new_path)] == new_path or path[: len(old_path)] == old_path:
+                    del document.origins[path]
+            document.origins.update(source_origins)
+
+
 def _references(document: _Document, scenario: str, files: Mapping[str, bytes]) -> list[ViolationDict]:
     """Check configured playbooks, inventory links, and Galaxy requirement files.
 
@@ -407,8 +459,9 @@ def _references(document: _Document, scenario: str, files: Mapping[str, bytes]) 
         Reference, context, and playbook findings.
     """
     provisioner = document.data.get("provisioner")
-    if not isinstance(provisioner, dict):
-        return []
+    native = "ansible" in document.data
+    section = "ansible" if native else "provisioner"
+    ansible = document.data.get(section)
     paths: list[tuple[YamlPath, YAMLValue, bool]] = []
     dependency = document.data.get("dependency")
     if isinstance(dependency, dict) and dependency.get("name") == "galaxy" and dependency.get("enabled") is not False:
@@ -419,22 +472,24 @@ def _references(document: _Document, scenario: str, files: Mapping[str, bytes]) 
                 for key in ("role-file", "requirements-file")
                 if key in options
             )
-    playbooks = provisioner.get("playbooks")
+    playbooks = ansible.get("playbooks") if isinstance(ansible, dict) else None
     if isinstance(playbooks, dict):
         driver = document.data.get("driver")
         driver_name = driver.get("name") if isinstance(driver, dict) else "default"
         selected = playbooks.get(driver_name) if isinstance(driver_name, str) else None
         for stage, value in playbooks.items():
-            path: YamlPath = ("provisioner", "playbooks", stage)
+            path: YamlPath = (section, "playbooks", stage)
             if isinstance(value, dict):
-                if stage == driver_name:
+                if not native and stage == driver_name:
                     paths.extend(((*path, name), item, True) for name, item in value.items() if name in _STAGES)
+                elif native:
+                    paths.append((path, value, True))
             elif stage in _STAGES:
                 if not isinstance(selected, dict) or stage not in selected:
                     paths.append((path, value, True))
             elif path in document.origins:
                 paths.append((path, value, True))
-    inventory = provisioner.get("inventory")
+    inventory = provisioner.get("inventory") if isinstance(provisioner, dict) else None
     if isinstance(inventory, dict) and isinstance(inventory.get("links"), dict):
         links = cast(YAMLDict, inventory["links"])
         paths.extend((("provisioner", "inventory", "links", key), value, False) for key, value in links.items())
@@ -518,7 +573,7 @@ def _sequences(document: _Document, scenario: str, files: Mapping[str, bytes]) -
                     _finding(
                         "L114",
                         origin,
-                        f"Unknown action for Molecule {PROFILE_VERSION}; use a supported lifecycle action",
+                        "Unknown Molecule action; use a supported lifecycle action",
                     )
                 )
                 continue
@@ -562,7 +617,6 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
     scenarios = sorted(file for file in files if PurePosixPath(file).name in {"molecule.yml", "molecule.yaml"})
     if not scenarios:
         return []
-    validator, defaults = _profile()
     findings: list[ViolationDict] = []
     for scenario in scenarios:
         root = _project_root(scenario)
@@ -589,13 +643,13 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
                         "Environment file could not be assessed; substitutions remain unknown",
                     )
                 )
-        effective = _Document(copy.deepcopy(defaults), {(): _Location(scenario)})
+        supplied = _Document({}, {(): _Location(scenario)})
         base = posixpath.normpath(posixpath.join(root, ".config/molecule/config.yml"))
         layers = ([base] if base in files else []) + [scenario]
         valid = True
         for file in layers:
             try:
-                _merge(effective, _load(file, files[file], variables))
+                _merge(supplied, _load(file, files[file], variables))
             except _NeedsContext:
                 findings.append(
                     _finding("L115", _Location(file), "Configuration root requires unavailable environment context")
@@ -613,6 +667,12 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
                 valid = False
         if not valid:
             continue
+        version = NATIVE_PROFILE_VERSION if {"ansible", "shared_state"} & supplied.data.keys() else PROFILE_VERSION
+        if version == NATIVE_PROFILE_VERSION:
+            _migrate_native(supplied)
+        validator, defaults = _profile(version)
+        effective = _Document(copy.deepcopy(defaults), {(): _Location(scenario)})
+        _merge(effective, supplied)
         unknown = _unknowns(effective.data)
         for path in unknown:
             findings.append(
@@ -641,7 +701,7 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
                             _finding(
                                 "L112",
                                 _origin(effective, key_path, scenario),
-                                f"Configuration key is not supported by Molecule {PROFILE_VERSION}",
+                                f"Configuration key is not supported by the Molecule {version} profile",
                             )
                         )
             else:
@@ -649,7 +709,7 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
                     _finding(
                         "L112",
                         _origin(effective, path, scenario),
-                        f"Configuration violates Molecule {PROFILE_VERSION} schema ({schema_error.validator})",
+                        f"Configuration violates Molecule {version} schema ({schema_error.validator})",
                     )
                 )
         driver = effective.data.get("driver")

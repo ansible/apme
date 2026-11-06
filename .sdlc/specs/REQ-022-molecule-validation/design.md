@@ -20,9 +20,11 @@ values explicitly rather than using the daemon's environment.
 
 ## Profiles and references
 
-Pin a released schema with upstream provenance, redistribution notices, and the
-Red Hat package evidence. Never refresh schemas during scans. Native and legacy
-syntax support must follow the chosen release; accepting a newer upstream
+Keep the 24.9.0 legacy snapshot and add the 26.11.0 native snapshot with
+upstream provenance and redistribution notices. Select the profile from merged
+user config (`ansible` or `shared_state` selects native), migrate explicit
+legacy settings with source attribution, then apply the selected defaults.
+Never refresh schemas during scans. Native and legacy syntax support must follow the chosen release; accepting a newer upstream
 schema does not establish vendor support. Driver-specific plugin validation is
 limited to trusted bundled schemas and never imports project plugins.
 
@@ -48,6 +50,7 @@ rechecking dependent scenarios with an updated snapshot.
 
 Use tox for rule tests, Native RPC behavior, engine no-hierarchy behavior,
 catalog registration, file/line locations, suppression/severity overrides, and
-ordinary scenario playbook coverage. Include fixtures for native syntax only
-if it belongs to the selected profile. Validate redistribution/package data and
-that no Molecule command or untrusted loader is invoked.
+ordinary scenario playbook coverage. Include the native example from issue
+#5119, inherited native configuration, malformed executor settings, and mixed
+legacy/native repositories. Validate redistribution/package data and that no
+Molecule command or untrusted loader is invoked.
