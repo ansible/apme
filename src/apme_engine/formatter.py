@@ -26,6 +26,7 @@ YAML_EXTENSIONS = {".yml", ".yaml"}
 JINJA_NORMALIZE_RE = re.compile(r"\{\{(\s*)(.*?)(\s*)\}\}")
 
 _JINJA_PIPE_RE = re.compile(r"(?<!\|)\|(?!\|)")
+_YAML_COMMENT_KEY_RE = re.compile(r"^(?P<indent> *)(?P<key>[^#\s][^:]*):(?:\s|$)")
 _BLOCK_SCALAR_HEADER_RE = re.compile(
     r"^(?P<indent> *)(?:.*?:\s*|-\s+)"
     r"(?:(?:&[^\s]+|![^\s]+)\s+)*"
@@ -251,11 +252,13 @@ def _collapse_blank_lines(text: str) -> str:
     block_parent_indent: int | None = None
     block_content_indent: int | None = None
     block_explicit_indent: int | None = None
+    block_keep_trailing_blanks = False
+    pending_scalar_blanks: list[str] = []
 
     for line in text.split("\n"):
         if block_parent_indent is not None:
             if line.strip() == "":
-                result.append(line)
+                pending_scalar_blanks.append(line)
                 continue
 
             line_indent = len(line) - len(line.lstrip(" "))
@@ -263,10 +266,18 @@ def _collapse_blank_lines(text: str) -> str:
             if line_indent <= block_parent_indent or (
                 min_content_indent is not None and line_indent < min_content_indent
             ):
+                if block_keep_trailing_blanks:
+                    result.extend(pending_scalar_blanks)
+                elif pending_scalar_blanks and (not result or result[-1].strip() != ""):
+                    result.append("")
+                pending_scalar_blanks.clear()
                 block_parent_indent = None
                 block_content_indent = None
                 block_explicit_indent = None
+                block_keep_trailing_blanks = False
             else:
+                result.extend(pending_scalar_blanks)
+                pending_scalar_blanks.clear()
                 if block_content_indent is None and block_explicit_indent is None:
                     block_content_indent = line_indent
                 result.append(line)
@@ -278,7 +289,10 @@ def _collapse_blank_lines(text: str) -> str:
             result.append("")
         else:
             result.append(line)
-            header = _BLOCK_SCALAR_HEADER_RE.match(line)
+            # Strip YAML comments before checking the header. Otherwise a
+            # colon and ``|`` or ``>`` in comment text can look like a scalar.
+            header_text = _without_yaml_comment(line).rstrip()
+            header = _BLOCK_SCALAR_HEADER_RE.match(header_text) if header_text else None
             if header is not None:
                 block_parent_indent = len(header.group("indent"))
                 modifiers = header.group("modifiers")
@@ -286,6 +300,147 @@ def _collapse_blank_lines(text: str) -> str:
                 block_explicit_indent = (
                     block_parent_indent + int(indent_indicator.group()) if indent_indicator is not None else None
                 )
+                block_keep_trailing_blanks = "+" in modifiers
+    if pending_scalar_blanks:
+        if block_keep_trailing_blanks:
+            result.extend(pending_scalar_blanks)
+        elif not result or result[-1].strip() != "":
+            result.append("")
+    return "\n".join(result)
+
+
+def _without_yaml_comment(line: str) -> str:
+    """Return a YAML line without its unquoted trailing comment.
+
+    A hash starts a YAML comment only outside quotes and when preceded by
+    whitespace (or at the beginning of the line). This keeps ``: |`` text in
+    comments and quoted scalars from being mistaken for block headers.
+
+    Args:
+        line: YAML line to inspect.
+
+    Returns:
+        The part of the line before a YAML comment, if present.
+    """
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quote = None
+        elif quote == "'":
+            if char == "'":
+                if index + 1 < len(line) and line[index + 1] == "'":
+                    index += 1
+                else:
+                    quote = None
+        elif char in {'"', "'"}:
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+        index += 1
+    return line
+
+
+def _is_task_mapping_key(lines: list[str], index: int, indent: int) -> bool:
+    """Return whether a mapping key belongs to a task item at this indent.
+
+    Args:
+        lines: Formatted YAML lines.
+        index: Index of the mapping key line.
+        indent: Indentation of the key line.
+
+    Returns:
+        True when the key is a direct child of a task list item.
+    """
+    for item_index in range(index - 1, -1, -1):
+        match = _TASK_ITEM_RE.match(lines[item_index])
+        if match is None:
+            continue
+        item_indent = len(match.group(1))
+        if item_indent + 2 != indent:
+            if item_indent < indent - 2:
+                return False
+            continue
+        return _is_task_list_item(lines, item_index, item_indent)
+    return False
+
+
+def _is_task_list_item(lines: list[str], index: int, item_indent: int) -> bool:
+    """Return whether a list item is directly inside a task list.
+
+    Args:
+        lines: Formatted YAML lines.
+        index: Index of the list item line.
+        item_indent: Indentation of the list dash.
+
+    Returns:
+        True when the list item belongs to a known task-list key.
+    """
+    if item_indent == 0 and _is_bare_task_list(lines):
+        return True
+    for parent_index in range(index - 1, -1, -1):
+        parent = _YAML_COMMENT_KEY_RE.match(lines[parent_index])
+        if parent is None:
+            continue
+        parent_indent = len(parent.group("indent"))
+        if parent_indent < item_indent - 2:
+            return False
+        if parent_indent == item_indent - 2:
+            return parent.group("key").strip("- ") in _TASK_LIST_KEYS
+    return False
+
+
+def _strip_task_internal_blanks(text: str) -> str:
+    """Remove blank lines between sibling keys inside a reordered task.
+
+    Key reordering can move a blank-line comment token with its key and leave
+    a formatting gap inside the task. Task spacing is added separately after
+    this pass, so blank lines between task items remain intact.
+
+    Args:
+        text: YAML text after scalar-aware blank-line collapsing.
+
+    Returns:
+        Text without blank lines between sibling task keys.
+    """
+    lines = text.split("\n")
+    result: list[str] = []
+    for index, line in enumerate(lines):
+        if line.strip() != "":
+            result.append(line)
+            continue
+
+        previous = index - 1
+        while previous >= 0 and lines[previous].strip() == "":
+            previous -= 1
+        following = index + 1
+        while following < len(lines) and lines[following].strip() == "":
+            following += 1
+        if previous < 0 or following >= len(lines):
+            result.append(line)
+            continue
+
+        previous_key = _YAML_COMMENT_KEY_RE.match(lines[previous])
+        following_key = _YAML_COMMENT_KEY_RE.match(lines[following])
+        if previous_key is not None and following_key is not None:
+            indent = len(previous_key.group("indent"))
+            if indent == len(following_key.group("indent")) and _is_task_mapping_key(lines, previous, indent):
+                continue
+            task_item = _TASK_ITEM_RE.match(lines[previous])
+            if task_item is not None:
+                item_indent = len(task_item.group(1))
+                if len(following_key.group("indent")) == item_indent + 2 and _is_task_list_item(
+                    lines, previous, item_indent
+                ):
+                    continue
+        result.append(line)
     return "\n".join(result)
 
 
@@ -834,6 +989,7 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
         formatted = yaml.dumps(data)
         formatted = _fix_jinja_spacing(formatted)
         formatted = _collapse_blank_lines(formatted)
+        formatted = _strip_task_internal_blanks(formatted)
         formatted = _add_task_spacing(formatted)
     except Exception as exc:
         return FormatResult(

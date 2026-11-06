@@ -9,9 +9,9 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 | Tier | Count | % of 162 |
 |------|-------|--------|
-| Tier 1 — auto (has transform) | 26 | 16% |
+| Tier 1 — auto (has transform) | 24 | 15% |
 | Tier 2 — AI (task/block, no fixer) | 71 | 44% |
-| Tier 3 — manual | 65 | 40% |
+| Tier 3 — manual | 67 | 41% |
 
 ### Promotion potential
 
@@ -25,13 +25,14 @@ Analysis of default remediation routing for all rules. Regenerate with:
 |--------|-------|
 | info severity | 19 |
 | cross-file / data-flow context | 4 |
+| FQCN target or semantic equivalence needs review | 2 |
 | playbook scope | 11 |
 | collection scope | 10 |
 | role scope | 11 |
 | play scope | 7 |
 | inventory scope | 3 |
 
-## Tier 1 — Auto (26 rules)
+## Tier 1 — Auto (24 rules)
 
 | Rule ID | Validator | Severity | Scope | Description |
 |---------|-----------|----------|-------|-------------|
@@ -49,7 +50,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L021 | OPA | low | task | Set mode explicitly for file/copy/template. |
 | L022 | OPA | low | task | Shell with pipe should set set -o pipefail. |
 | L025 | OPA | low | task | Task/play name should start with uppercase. |
-| L026 | Native | low | task | Tasks should use FQCN for modules. |
 | L043 | Native | low | task | Bare variable in with_* loop directive; use {{ var }}. |
 | L046 | Native | low | task | Avoid raw/command/shell without args key. |
 | L084 | Native | low | task | Task names in included sub-task files should use a prefix. |
@@ -60,7 +60,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M006 | OPA | high | task | become with ignore_errors will not catch timeout in 2.19+. |
 | M008 | OPA | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | OPA | high | task | with_* loops are deprecated; use loop instead. |
-| M048 | Ansible | low | task | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. |
 
 ## Tier 2 — AI (71 rules)
 
@@ -145,7 +144,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | R115 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | SEC:* | critical | task | Task/block scope — AI can propose fix (Tier 2) |
 
-## Tier 3 — Manual (65 rules)
+## Tier 3 — Manual (67 rules)
 
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
@@ -154,6 +153,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L016 | OPA | info | task | — | Info severity — informational, no auto-fix |
 | L019 | OPA | low | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
 | L023 | OPA | info | play | — | Info severity — informational, no auto-fix |
+| L026 | Native | low | task | — | Resolver target or module equivalence requires human review |
 | L027 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L034 | Native | low | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | L038 | Native | medium | role | — | Scope 'role' — play/role/collection not AI-proposable |
@@ -205,6 +205,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M025 | OPA | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | M029 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
 | M047 | Native | medium | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
+| M048 | Ansible | low | task | — | Resolver target or module equivalence requires human review |
 | R108 | Native | medium | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | R111 | Native | medium | task | — | Project-level context required (cross-file or data-flow consumers) |
 | R112 | Native | medium | task | — | Project-level context required (cross-file or data-flow consumers) |

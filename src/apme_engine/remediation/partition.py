@@ -133,7 +133,7 @@ def partition_violations(
         if bare_id in CROSS_FILE_RULES:
             v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
             tier3.append(v)
-        elif bare_id in FQCN_RULES and not has_fqcn_target(v):
+        elif bare_id in FQCN_RULES and not is_finding_resolvable(v, registry):
             v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
         elif is_finding_resolvable(v, registry):
@@ -170,7 +170,7 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
         return RemediationClass.MANUAL_REVIEW
-    if bare_id in FQCN_RULES and not has_fqcn_target(violation):
+    if bare_id in FQCN_RULES:
         return RemediationClass.MANUAL_REVIEW
     if _get_scope(violation) not in AI_PROPOSABLE_SCOPES:
         return RemediationClass.MANUAL_REVIEW

@@ -58,7 +58,6 @@ def build_default_registry() -> TransformRegistry:
     reg.register("M002", node=fix_fqcn)
     reg.register("M003", node=fix_fqcn)
     reg.register("M004", node=fix_fqcn)
-    reg.register("M048", node=fix_fqcn)
 
     # Keep L002 for backward compatibility with older scan results.
     reg.register("L002", node=fix_fqcn)

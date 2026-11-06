@@ -8,6 +8,7 @@ import pytest
 
 from apme_engine.formatter import (
     FormatResult,
+    _collapse_blank_lines,
     check_idempotent,
     format_content,
     format_directory,
@@ -30,6 +31,53 @@ def _fmt(text: str, filename: str = "test.yml") -> FormatResult:
         FormatResult from format_content.
     """
     return format_content(textwrap.dedent(text), filename=filename)
+
+
+class TestCollapseBlankLines:
+    """Verify blank-line cleanup distinguishes layout from YAML scalar data."""
+
+    def test_comment_text_does_not_start_block_scalar(self) -> None:
+        """Colons and block markers in comments do not protect blank runs."""
+        text = "# example: |\n\n\nkey: value\nvalue: text # example: >\n\n\nnext: value"
+        expected = "# example: |\n\nkey: value\nvalue: text # example: >\n\nnext: value"
+        assert _collapse_blank_lines(text) == expected
+
+    def test_preserves_blank_runs_inside_block_scalar(self) -> None:
+        """Blank lines between scalar content lines remain data."""
+        text = "message: |-\n  first\n\n\n  second\nnext: value"
+        assert _collapse_blank_lines(text) == text
+
+    def test_collapses_trailing_scalar_blanks_for_clip_chomping(self) -> None:
+        """Trailing blanks in default-chomp scalars collapse with layout blanks."""
+        text = "message: |\n  first\n\n\nnext: value"
+        assert _collapse_blank_lines(text) == "message: |\n  first\n\nnext: value"
+
+    def test_preserves_trailing_scalar_blanks_for_keep_chomping(self) -> None:
+        """Keep-chomp scalars retain trailing blank lines as scalar data."""
+        text = "message: |+\n  first\n\n\nnext: value"
+        assert _collapse_blank_lines(text) == text
+
+    def test_reordered_tasks_have_no_blank_lines_between_keys(self) -> None:
+        """A moved name key does not carry task separation into the task body."""
+        text = textwrap.dedent("""\
+        tasks:
+          - ansible.builtin.debug:
+              msg: first
+
+            name: First
+
+          - ansible.builtin.debug:
+              msg: second
+
+            name: Second
+        """)
+        result = format_content(text)
+        first_name = result.formatted.index("name: First")
+        first_action = result.formatted.index("ansible.builtin.debug", first_name)
+        assert "\n\n" not in result.formatted[first_name:first_action]
+        first_task_end = result.formatted.index("name: Second")
+        between_tasks = result.formatted[first_action:first_task_end]
+        assert between_tasks.count("\n\n") == 1
 
 
 # ---------------------------------------------------------------------------

@@ -37,6 +37,10 @@ _RULE_SCOPE_NAMES: dict[str, str] = {
 AI_PROPOSABLE_SCOPES = frozenset({"task", "block"})
 # Keep in sync with apme_engine.remediation.partition.CROSS_FILE_RULES.
 CROSS_FILE_RULES = frozenset({"R111", "R112", "L006", "L080"})
+# These findings need a human to verify the resolved target. L026 currently
+# emits no resolver target, and an M048 builtin twin is not proof of semantic
+# equivalence with the collection module.
+FQCN_MANUAL_REVIEW_RULES = frozenset({"L026", "M048"})
 
 GRAPH_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
 NATIVE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"
@@ -213,6 +217,8 @@ def get_rule_scope(rule_id: str, validator: str) -> str:
 
 def tier3_breakdown_reason(meta: RuleMetadata) -> str:
     """Return a single Tier 3 reason using classify_remediation_tier precedence."""
+    if meta.rule_id in FQCN_MANUAL_REVIEW_RULES:
+        return "FQCN target or semantic equivalence needs review"
     if meta.severity == "info":
         return "info severity"
     if meta.rule_id in CROSS_FILE_RULES:
@@ -234,6 +240,8 @@ def classify_remediation_tier(
     has_fixer: bool,
 ) -> tuple[str, str]:
     """Return (tier_label, reason) for a rule's default remediation routing."""
+    if rule_id in FQCN_MANUAL_REVIEW_RULES:
+        return "manual", "Resolver target or module equivalence requires human review"
     if has_fixer:
         return "auto", "Deterministic transform registered (Tier 1)"
     if severity == Severity.INFO:

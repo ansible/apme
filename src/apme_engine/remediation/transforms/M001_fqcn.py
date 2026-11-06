@@ -26,8 +26,8 @@ def _resolve_fqcn(violation: ViolationDict, current_key: str) -> str | None:
 
     Checks ``resolved_fqcn`` (from Ansible validator findings and OPA L005)
     and any supplied ``fqcn`` field. Falls back to parsing
-    the violation message for ``"X -> Y"`` patterns.  Returns None when
-    no source carries a usable FQCN so the violation escalates to AI.
+    the violation message for ``"X -> Y"`` patterns. Returns None when no
+    source carries a usable target; those findings remain for manual review.
 
     Args:
         violation: Violation dict (may have resolved_fqcn or fqcn).

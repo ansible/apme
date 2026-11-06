@@ -309,14 +309,10 @@ class TestPartition:
                 f"Remaining {rule_id} should classify as AI_CANDIDATE"
             )
 
-    def test_fqcn_rule_with_target_classifies_as_ai_candidate(self) -> None:
-        """A remaining FQCN finding that kept its resolver target can escalate.
-
-        The rule family is only parked for manual review when the canonical
-        target is missing; with a target there is nothing for AI to invent.
-        """
+    def test_fqcn_rule_with_target_classifies_as_manual_review(self) -> None:
+        """A remaining FQCN finding stays manual because the AI gate rejects it."""
         v: ViolationDict = {"rule_id": "M001", "resolved_fqcn": "ansible.builtin.apt"}
-        assert classify_violation(v) == RemediationClass.AI_CANDIDATE
+        assert classify_violation(v) == RemediationClass.MANUAL_REVIEW
 
     def test_partition_play_scope_to_tier3(self) -> None:
         """Verifies play-scoped violations route to tier3 via scope metadata."""
@@ -356,6 +352,18 @@ class TestPartition:
         assert len(t3) == 2
         for v in t3:
             assert v["remediation_resolution"] == RemediationResolution.MANUAL
+
+    def test_targeted_fqcn_without_registered_transform_routes_to_tier3(self) -> None:
+        """A canonical target alone must not send an unregistered rule to AI."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "M048", "scope": RuleScope.TASK, "resolved_fqcn": "ansible.builtin.copy"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert t1 == []
+        assert t2 == []
+        assert t3 == violations
+        assert t3[0]["remediation_resolution"] == RemediationResolution.MANUAL
 
     def test_partition_block_scope_to_tier2(self) -> None:
         """Verifies block-scoped violations are AI-proposable."""
@@ -460,13 +468,12 @@ class TestDefaultRegistry:
             "L084",
             "M001",
             "M003",
-            "M048",
             "M006",
             "M008",
             "M009",
         ):
             assert rule_id in reg, f"{rule_id} missing from default registry"
-        assert len(reg) == 27
+        assert len(reg) == 26
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +565,15 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_for_echo_builtin(self) -> None:
+        """Keep shell for echo, whose behavior can differ from command's echo."""
+        content = textwrap.dedent("""\
+        - name: Print with shell echo
+          ansible.builtin.shell: echo -e hello
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
     def test_no_change_when_and_present(self) -> None:
         """Verifies no change when && in command."""
         content = textwrap.dedent("""\
@@ -641,6 +657,28 @@ class TestL007ShellToCommand:
         - name: Only chdir
           ansible.builtin.shell:
             chdir: /tmp
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_module_sets_executable(self) -> None:
+        """Keep shell when its module mapping selects an interpreter."""
+        content = textwrap.dedent("""\
+        - name: Run with bash
+          ansible.builtin.shell:
+            cmd: whoami
+            executable: /bin/bash
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_task_args_set_executable(self) -> None:
+        """Keep shell when task-level args selects an interpreter."""
+        content = textwrap.dedent("""\
+        - name: Run with bash
+          ansible.builtin.shell: whoami
+          args:
+            executable: /bin/bash
         """)
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False

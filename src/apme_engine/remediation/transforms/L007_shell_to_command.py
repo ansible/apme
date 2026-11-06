@@ -46,6 +46,7 @@ _SHELL_BUILTINS = frozenset(
         "command",
         "continue",
         "declare",
+        "echo",
         "eval",
         "exit",
         "exec",
@@ -153,12 +154,28 @@ def _extract_command_string(module_args: object) -> str:
     return ""
 
 
+def _has_shell_executable(task: CommentedMap, module_args: object) -> bool:
+    """Return whether the shell task selects a specific interpreter.
+
+    Args:
+        task: Task mapping, which may contain task-level ``args``.
+        module_args: Arguments under the shell module key.
+
+    Returns:
+        True when ``executable`` is set on the module or task arguments.
+    """
+    if isinstance(module_args, dict) and "executable" in module_args:
+        return True
+    task_args = task.get("args")
+    return isinstance(task_args, dict) and "executable" in task_args
+
+
 def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
     """Replace shell with command when the command string uses no shell features.
 
     Inspects free-form, ``cmd``, ``_raw_params``, and ``argv``. Refuses to
-    convert when the command cannot be inspected or contains shell
-    metacharacters.
+    convert when the command cannot be inspected, uses shell features, or
+    selects a custom executable that the command module does not support.
 
     Args:
         task: Task CommentedMap to modify in-place.
@@ -172,6 +189,8 @@ def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
         return False
 
     module_args = task.get(module_key)
+    if _has_shell_executable(task, module_args):
+        return False
     cmd = _extract_command_string(module_args)
     if not cmd or _uses_shell_features(cmd):
         return False

@@ -5,10 +5,28 @@ package apme.rules_test
 import data.apme.rules
 
 test_L007_fires_when_shell_without_shell_features if {
-	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "echo hi"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "whoami"}, "line": [1], "key": "k", "file": "f.yml"}]}
 	node := tree.nodes[0]
 	v := rules.command_instead_of_shell(tree, node)
 	v.rule_id == "L007"
+}
+
+test_L007_does_not_fire_for_echo_builtin if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "echo -e hello"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_module_sets_executable if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "whoami", "executable": "/bin/bash"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_task_args_set_executable if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "whoami"}, "options": {"args": {"executable": "/bin/bash"}}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
 }
 
 test_L007_does_not_fire_when_shell_has_pipe if {

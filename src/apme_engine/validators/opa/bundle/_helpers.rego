@@ -52,6 +52,7 @@ shell_builtin_commands := {
 	"command",
 	"continue",
 	"declare",
+	"echo",
 	"eval",
 	"exit",
 	"exec",
