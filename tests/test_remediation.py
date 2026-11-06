@@ -592,6 +592,25 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_when_jinja_is_used_in_environment_assignment_name(self) -> None:
+        """Retain shell when Jinja renders the name on an environment assignment."""
+        content = textwrap.dedent("""\
+        - name: Set a rendered environment variable
+          ansible.builtin.shell: "{{ var_name }}=bar printenv FOO"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_for_shell_comment_in_raw_params(self) -> None:
+        """Retain shell when raw parameters contain a shell comment."""
+        content = textwrap.dedent("""\
+        - name: Keep explanatory shell comment
+          ansible.builtin.shell:
+            _raw_params: "ls --color=auto # explanation"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
     def test_no_change_when_and_present(self) -> None:
         """Verifies no change when && in command."""
         content = textwrap.dedent("""\

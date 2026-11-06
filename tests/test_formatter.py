@@ -6,8 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
+from apme_engine.engine.yaml_utils import FormattedYAML
 from apme_engine.formatter import (
     FormatResult,
+    _block_scalar_content_lines,
     _collapse_blank_lines,
     _strip_task_internal_blanks,
     check_idempotent,
@@ -57,6 +59,59 @@ class TestCollapseBlankLines:
         """Keep-chomp scalars retain trailing blank lines as scalar data."""
         text = "message: |+\n  first\n\n\nnext: value"
         assert _collapse_blank_lines(text) == text
+
+    def test_sequence_mapping_scalar_stops_before_sibling_key(self) -> None:
+        """An empty dash-first mapping scalar does not absorb its next key."""
+        text = "- key: |2\n\n\n  sibling: value"
+        assert _collapse_blank_lines(text) == "- key: |2\n\n  sibling: value"
+        scalar_content = _block_scalar_content_lines(text.splitlines())
+        assert scalar_content == [False, True, True, False]
+
+    def test_direct_sequence_scalar_keeps_its_explicit_indent(self) -> None:
+        """Direct sequence scalars still use the dash indentation level."""
+        text = "- |2\n  first\n\n\n- second"
+        assert _collapse_blank_lines(text) == "- |2\n  first\n\n- second"
+
+    def test_full_formatter_preserves_task_like_scalar_content(self) -> None:
+        """Task spacing leaves embedded task YAML inside a scalar unchanged."""
+        text = textwrap.dedent("""\
+        tasks:
+          - name: Write embedded task list
+            ansible.builtin.copy:
+              content: |
+                tasks:
+                  - name: Embedded first
+                    ansible.builtin.debug:
+                      msg: first
+                  - name: Embedded second
+                    ansible.builtin.debug:
+                      msg: second
+          - name: Outer second
+            ansible.builtin.debug:
+              msg: done
+        """)
+        expected_content = (
+            "tasks:\n"
+            "  - name: Embedded first\n"
+            "    ansible.builtin.debug:\n"
+            "      msg: first\n"
+            "  - name: Embedded second\n"
+            "    ansible.builtin.debug:\n"
+            "      msg: second\n"
+        )
+
+        result = format_content(text)
+        formatted_data = FormattedYAML(typ="rt", pure=True, version=(1, 1)).load(result.formatted)
+
+        assert result.error is None
+        assert isinstance(formatted_data, dict)
+        formatted_tasks = formatted_data.get("tasks")
+        assert isinstance(formatted_tasks, list)
+        first_task = formatted_tasks[0]
+        assert isinstance(first_task, dict)
+        copy_task = first_task.get("ansible.builtin.copy")
+        assert isinstance(copy_task, dict)
+        assert copy_task.get("content") == expected_content
 
     def test_task_cleanup_preserves_blank_lines_inside_block_scalar(self) -> None:
         """Embedded YAML text in a task scalar is data, not task structure."""

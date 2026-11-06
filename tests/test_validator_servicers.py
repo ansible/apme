@@ -4,6 +4,7 @@ All servicers are now async (grpc.aio), so tests use pytest-asyncio.
 """
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -495,6 +496,36 @@ class TestAnsibleValidatorServicerMigration:
         assert diag.rule_timings[0].elapsed_ms == pytest.approx(120.0)
         assert diag.metadata["ansible_core_version"] == "2.18"
 
+    async def test_validate_stream_reassembles_request_before_validation(self) -> None:
+        """The streamed transport reconstructs the unary request losslessly."""
+        from apme_engine.daemon.ansible_validator_server import AnsibleValidatorServicer, _AnsibleResult
+        from apme_engine.validators.ansible import AnsibleRunResult
+
+        request = validate_pb2.ValidateRequest(
+            request_id="streamed-ans-1",
+            ansible_core_version="2.18",
+            hierarchy_payload=b'{"hierarchy": []}',
+            files=[common_pb2.File(path="plugin.py", content=b"plugin source")],
+        )
+        serialized = request.SerializeToString()
+
+        async def chunks() -> AsyncIterator[validate_pb2.ValidateRequestChunk]:
+            """Yield deliberately small pieces of a serialized request.
+
+            Yields:
+                validate_pb2.ValidateRequestChunk: A part of the serialized request.
+            """
+            for offset in range(0, len(serialized), 7):
+                yield validate_pb2.ValidateRequestChunk(serialized_request_chunk=serialized[offset : offset + 7])
+
+        result = _AnsibleResult(run_result=AnsibleRunResult(violations=[]), ansible_core_version="2.18")
+        with patch("apme_engine.daemon.ansible_validator_server._run_ansible_validate", return_value=result) as run:
+            response = await AnsibleValidatorServicer().ValidateStream(chunks(), FakeGrpcContext())  # type: ignore[arg-type]
+
+        assert response.diagnostics.request_id == "streamed-ans-1"  # type: ignore[attr-defined]
+        sent_files = run.call_args.args[0]
+        assert [(file.path, file.content) for file in sent_files] == [("plugin.py", b"plugin source")]
+
 
 class TestEngineFanOut:
     """Verify Engine uses async fan-out for all backends."""
@@ -519,6 +550,47 @@ class TestEngineFanOut:
                 result = await _call_validator("localhost:50055", request)
 
         mock_stub.Validate.assert_called_once()
+        assert result.violations == []
+
+    async def test_call_validator_streams_oversized_request_in_bounded_chunks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Large Ansible requests use the stream endpoint with bounded messages.
+
+        Args:
+            monkeypatch: Fixture used to lower the limits for this test.
+        """
+        from apme_engine.daemon import engine_server
+        from apme_engine.daemon.engine_server import _call_validator
+
+        monkeypatch.setattr(engine_server, "_GRPC_MAX_MSG", 16)
+        monkeypatch.setattr(engine_server, "_GRPC_STREAM_CHUNK_BYTES", 13)
+        mock_resp = MagicMock()
+        mock_resp.violations = []
+        mock_resp.HasField = MagicMock(return_value=False)
+        mock_stub = MagicMock()
+        mock_stub.Validate = AsyncMock()
+        mock_stub.ValidateStream = AsyncMock(return_value=mock_resp)
+
+        with patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel") as mock_channel:
+            mock_channel_instance = MagicMock()
+            mock_channel_instance.close = AsyncMock()
+            mock_channel.return_value = mock_channel_instance
+            with patch("apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+                request = validate_pb2.ValidateRequest(
+                    request_id="large-ansible-context",
+                    hierarchy_payload=b"hierarchy" * 8,
+                    files=[common_pb2.File(path="plugins/module.py", content=b"source" * 8)],
+                )
+                result = await _call_validator("localhost:50055", request, stream_large_request=True)
+
+        chunks = [chunk async for chunk in mock_stub.ValidateStream.call_args.args[0]]
+        assert all(len(chunk.serialized_request_chunk) <= 13 for chunk in chunks)
+        reconstructed = validate_pb2.ValidateRequest.FromString(
+            b"".join(chunk.serialized_request_chunk for chunk in chunks)
+        )
+        assert reconstructed == request
+        mock_stub.Validate.assert_not_called()
         assert result.violations == []
 
     async def test_call_validator_captures_diagnostics(self) -> None:

@@ -12,7 +12,9 @@ from apme_engine.remediation.transforms._helpers import get_module_key, rename_k
 # Inspected after Jinja ``{{ }}`` is stripped so ``|quote`` is not a pipe.
 # Non-greedy so dict literals like ``{{ {'k': 'v'} }}`` are stripped too.
 _JINJA_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+_JINJA_ENV_ASSIGNMENT_RE = re.compile(r"^\s*[^=\s]*\{\{.*?\}\}[^=\s]*\+?=", re.DOTALL)
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
+_SHELL_COMMENT_RE = re.compile(r"(^|[\s;|&])#")
 _SHELL_CHARS = (
     "|",
     "&&",
@@ -108,6 +110,9 @@ def _uses_shell_features(cmd: str) -> bool:
         True if the non-Jinja remainder is empty, still contains Jinja
         delimiters, or contains shell-specific characters.
     """
+    if _JINJA_ENV_ASSIGNMENT_RE.match(cmd) or _SHELL_COMMENT_RE.search(cmd):
+        return True
+
     stripped = _JINJA_RE.sub(" ", cmd)
     if "{{" in stripped or "}}" in stripped:
         return True

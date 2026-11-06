@@ -94,8 +94,12 @@ formatter:
 ### Blank-Line Cleanup
 
 Line-based cleanup preserves blank lines inside literal and folded block
-scalars. Task-list membership is classified in one forward pass so formatting
-large task lists does not repeat backward searches for each blank line.
+scalars. The task-spacing pass uses the same scalar-content mask, so embedded
+task-like YAML is left as scalar data. Scalar indentation is calculated from
+the mapping key for dash-first mapping headers and from the sequence dash for
+direct sequence scalars. Task-list membership is classified in one forward
+pass so formatting large task lists does not repeat backward searches for each
+blank line.
 
 ## Related Decisions
 
@@ -105,4 +109,4 @@ large task lists does not repeat backward searches for each blank line.
 
 | Date | Author | Change |
 |------|--------|--------|
-| 2026-11-06 | AI agent | Document scalar-safe blank cleanup and linear task-list classification |
+| 2026-11-06 | AI agent | Document scalar-safe cleanup and task spacing, indentation handling, and linear task-list classification |

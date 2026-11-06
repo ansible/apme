@@ -32,6 +32,7 @@ _BLOCK_SCALAR_HEADER_RE = re.compile(
     r"(?:(?:&[^\s]+|![^\s]+)\s+)*"
     r"(?P<style>[>|])(?P<modifiers>(?:[+-]?\d?|\d?[+-]?))(?:\s+#.*)?$",
 )
+_SEQUENCE_MAPPING_HEADER_RE = re.compile(r"^-\s+.+?:")
 
 TASK_KEY_ORDER = [
     "name",
@@ -294,12 +295,8 @@ def _collapse_blank_lines(text: str) -> str:
             header_text = _without_yaml_comment(line).rstrip()
             header = _BLOCK_SCALAR_HEADER_RE.match(header_text) if header_text else None
             if header is not None:
-                block_parent_indent = len(header.group("indent"))
+                block_parent_indent, block_explicit_indent = _block_scalar_indentation(header)
                 modifiers = header.group("modifiers")
-                indent_indicator = re.search(r"\d", modifiers)
-                block_explicit_indent = (
-                    block_parent_indent + int(indent_indicator.group()) if indent_indicator is not None else None
-                )
                 block_keep_trailing_blanks = "+" in modifiers
     if pending_scalar_blanks:
         if block_keep_trailing_blanks:
@@ -348,6 +345,30 @@ def _without_yaml_comment(line: str) -> str:
     return line
 
 
+def _block_scalar_indentation(header: re.Match[str]) -> tuple[int, int | None]:
+    """Return the parent and explicit content indentation for a scalar header.
+
+    A block scalar in a mapping that follows a sequence dash is indented from
+    the mapping key, while a scalar used directly as a sequence item is
+    indented from the dash. The distinction matters for headers such as
+    ``- key: |2`` and ``- |2``.
+
+    Args:
+        header: Match from ``_BLOCK_SCALAR_HEADER_RE``.
+
+    Returns:
+        A pair of (parent indentation, explicit content indentation).
+    """
+    leading_indent = len(header.group("indent"))
+    header_prefix = header.group(0)[leading_indent : header.start("style") - header.start()]
+    parent_indent = (
+        leading_indent + 2 if _SEQUENCE_MAPPING_HEADER_RE.match(header_prefix) is not None else leading_indent
+    )
+    indent_indicator = re.search(r"\d", header.group("modifiers"))
+    explicit_indent = parent_indent + int(indent_indicator.group()) if indent_indicator is not None else None
+    return parent_indent, explicit_indent
+
+
 def _block_scalar_content_lines(lines: list[str]) -> list[bool]:
     """Mark block scalar content so later line passes do not parse it as YAML.
 
@@ -383,9 +404,7 @@ def _block_scalar_content_lines(lines: list[str]) -> list[bool]:
         header_text = _without_yaml_comment(line).rstrip()
         header = _BLOCK_SCALAR_HEADER_RE.match(header_text) if header_text else None
         if header is not None:
-            parent_indent = len(header.group("indent"))
-            indent_indicator = re.search(r"\d", header.group("modifiers"))
-            explicit_indent = parent_indent + int(indent_indicator.group()) if indent_indicator is not None else None
+            parent_indent, explicit_indent = _block_scalar_indentation(header)
 
     return content
 
@@ -550,10 +569,14 @@ def _add_task_spacing(text: str) -> str:
     """
     lines = text.split("\n")
     result: list[str] = [lines[0]] if lines else []
-    in_task_list = _is_bare_task_list(lines)
+    scalar_content = _block_scalar_content_lines(lines)
+    in_task_list = _is_bare_task_list(lines, scalar_content)
     task_list_indent = -1 if not in_task_list else 0
     for i in range(1, len(lines)):
         line = lines[i]
+        if scalar_content[i]:
+            result.append(line)
+            continue
         stripped = line.rstrip()
 
         if stripped.endswith(":") and stripped.lstrip("- ").rstrip(":").strip() in _TASK_LIST_KEYS:

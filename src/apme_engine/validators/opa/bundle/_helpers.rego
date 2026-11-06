@@ -41,6 +41,8 @@ set_fact_modules[m] if {
 # Use trim_space so tabs/CR match Python str.strip(), not a space-only cutset.
 # [ and ] are glob character classes (cat /tmp/[ab].txt).
 shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?", "&", "!", "(", ")", "[", "]", "$", "\n"]
+jinja_env_assignment_pattern := `^\s*[^=\s]*\{\{.*?\}\}[^=\s]*\+?=`
+shell_comment_pattern := `(^|[\s;|&])#`
 shell_builtin_commands := {
 	".",
 	":",
@@ -92,6 +94,16 @@ shell_builtin_commands := {
 # Non-greedy {{ ... }} so dict literals like {{ {'k': 'v'} }} are stripped.
 jinja_stripped(cmd) := regex.replace(cmd, `\{\{.*?\}\}`, " ") if {
 	is_string(cmd)
+}
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	regex.match(jinja_env_assignment_pattern, cmd)
+}
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	regex.match(shell_comment_pattern, cmd)
 }
 
 uses_shell_features(cmd) if {

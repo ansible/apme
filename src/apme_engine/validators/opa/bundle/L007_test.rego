@@ -29,6 +29,18 @@ test_L007_does_not_fire_for_bash_append_assignment if {
 	not rules.command_instead_of_shell(tree, node)
 }
 
+test_L007_does_not_fire_for_jinja_environment_assignment if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "{{ var_name }}=bar printenv FOO"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_for_shell_comment_in_raw_params if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"_raw_params": "ls --color=auto # explanation"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
 test_L007_does_not_fire_when_module_sets_executable if {
 	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "whoami", "executable": "/bin/bash"}, "line": [1], "key": "k", "file": "f.yml"}]}
 	node := tree.nodes[0]
