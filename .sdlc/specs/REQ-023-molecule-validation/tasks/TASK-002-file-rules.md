@@ -2,7 +2,7 @@
 
 ## Parent Requirement
 
-[REQ-022: Static Molecule Validation](../requirement.md)
+[REQ-023: Static Molecule Validation](../requirement.md)
 
 ## Status
 
@@ -10,7 +10,7 @@ Complete
 
 ## Description
 
-Implement L112-L116 against the pinned ADT configuration profile, including source locations, references, lifecycle actions, and Ansible playbook structure.
+Implement L115-L119 against the pinned ADT configuration profile, including source locations, references, lifecycle actions, and Ansible playbook structure.
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ Implement L112-L116 against the pinned ADT configuration profile, including sour
 |------|--------|---------|
 | `src/apme_engine/validators/native/molecule.py` | Create | Built-in file assessment |
 | `src/apme_engine/validators/native/molecule_data/` | Create | Offline schema/defaults and provenance |
-| `src/apme_engine/validators/native/rules/L112.md through L116.md` | Create | Rule documentation |
+| `src/apme_engine/validators/native/rules/L115.md through L119.md` | Create | Rule documentation |
 | `tests/test_molecule_validation.py` | Create | Behavioral coverage |
 | `VENDORED.md` | Modify | Attribution and dependency review |
 
@@ -42,7 +42,7 @@ Implement L112-L116 against the pinned ADT configuration profile, including sour
 
 ## Acceptance Criteria Reference
 
-REQ-022: automatic assessment, inherited configuration, missing context, independent configuration validation, scenario playbooks, and deterministic static behavior.
+REQ-023: automatic assessment, inherited configuration, missing context, independent configuration validation, scenario playbooks, and deterministic static behavior.
 
 ## Completion Checklist
 

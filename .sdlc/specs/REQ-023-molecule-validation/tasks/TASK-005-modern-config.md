@@ -2,7 +2,7 @@
 
 ## Parent Requirement
 
-[REQ-022](../requirement.md)
+[REQ-023](../requirement.md)
 
 ## Status
 
@@ -10,7 +10,7 @@ Complete
 
 ## Description
 
-Extend automatic L112-L116 checks to legacy and modern native configuration,
+Extend automatic L115-L119 checks to legacy and modern native configuration,
 using pinned offline profiles and preserving source attribution after migration.
 
 ## Prerequisites
@@ -46,7 +46,7 @@ using pinned offline profiles and preserving source attribution after migration.
 
 ## Acceptance Criteria Reference
 
-REQ-022: Modern native configuration, automatic assessment, inheritance,
+REQ-023: Modern native configuration, automatic assessment, inheritance,
 references, sequences, and static playbook checks.
 
 ## Completion Checklist

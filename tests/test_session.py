@@ -791,7 +791,7 @@ class TestSessionApprovalGates:
         session.temp_dir = tmp_path
 
         file_finding: ViolationDict = {
-            "rule_id": "L112",
+            "rule_id": "L115",
             "file": "molecule/default/molecule.yml",
             "line": 1,
             "path": "$.provisioner",

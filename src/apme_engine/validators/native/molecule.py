@@ -46,11 +46,11 @@ _ACTIONS = frozenset(
 )
 _STAGES = frozenset({"cleanup", "create", "converge", "destroy", "prepare", "side_effect", "verify"})
 _NAMES = {
-    "L112": "Molecule configuration does not match the supported profile",
-    "L113": "Molecule file reference is unavailable in the scan",
-    "L114": "Molecule scenario sequence contains an invalid action",
-    "L115": "Molecule validation needs additional context",
-    "L116": "Molecule scenario playbook has invalid YAML or play structure",
+    "L115": "Molecule configuration does not match the supported profile",
+    "L116": "Molecule file reference is unavailable in the scan",
+    "L117": "Molecule scenario sequence contains an invalid action",
+    "L118": "Molecule validation needs additional context",
+    "L119": "Molecule scenario playbook has invalid YAML or play structure",
 }
 MOLECULE_RULES = tuple(
     RuleMetadata(
@@ -479,7 +479,7 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
         if node is not None:
             _locations(node, file)
         if not isinstance(node, yaml.SequenceNode):
-            return _PlaybookAssessment([_finding("L116", _Location(file), "Scenario playbook must be a list of plays")])
+            return _PlaybookAssessment([_finding("L119", _Location(file), "Scenario playbook must be a list of plays")])
         findings: list[ViolationDict] = []
         imports: list[tuple[_Location, str]] = []
         for index, play in enumerate(node.value):
@@ -487,7 +487,7 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
             if not entries.keys() & {"hosts", "import_playbook", "ansible.builtin.import_playbook"}:
                 findings.append(
                     _finding(
-                        "L116",
+                        "L119",
                         _Location(file, play.start_mark.line + 1, (index,)),
                         "Scenario play must define hosts or import_playbook",
                     )
@@ -505,7 +505,7 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
         return _PlaybookAssessment(
             [
                 _finding(
-                    "L116",
+                    "L119",
                     _Location(file, mark.line + 1 if mark is not None else 1),
                     "Scenario playbook contains invalid YAML",
                 )
@@ -577,9 +577,9 @@ def _assess_playbook(
         Cached structural findings, treated as immutable by callers.
     """
     if file in active:
-        return [_finding("L116", _Location(file), "Scenario playbook imports form a cycle")]
+        return [_finding("L119", _Location(file), "Scenario playbook imports form a cycle")]
     if len(active) > 64:
-        return [_finding("L115", _Location(file), "Playbook import depth exceeds the static assessment limit")]
+        return [_finding("L118", _Location(file), "Playbook import depth exceeds the static assessment limit")]
     key = (file, scenario)
     if key not in cache:
         assessment = _playbook(file, files[file])
@@ -598,19 +598,19 @@ def _assess_playbook(
             if reference is None:
                 cache[key].append(
                     _finding(
-                        "L115", origin, "Playbook import needs unavailable context; expressions were not evaluated"
+                        "L118", origin, "Playbook import needs unavailable context; expressions were not evaluated"
                     )
                 )
             elif reference not in files:
-                cache[key].append(_finding("L113", origin, "Imported playbook is absent from the supplied scan"))
+                cache[key].append(_finding("L116", origin, "Imported playbook is absent from the supplied scan"))
             else:
                 # Keep each file's findings once in the request cache. Copying
                 # transitive findings into each parent expands import DAGs.
                 if reference in active | {file}:
-                    cache[key].append(_finding("L116", origin, "Scenario playbook imports form a cycle"))
+                    cache[key].append(_finding("L119", origin, "Scenario playbook imports form a cycle"))
                 elif len(active) >= 64:
                     cache[(reference, scenario)] = [
-                        _finding("L115", origin, "Playbook import depth exceeds the static assessment limit")
+                        _finding("L118", origin, "Playbook import depth exceeds the static assessment limit")
                     ]
                 else:
                     _assess_playbook(reference, files, cache, scenario, active | {file})
@@ -664,7 +664,7 @@ def _references(
                 if not isinstance(selected, dict) or stage not in selected:
                     paths.append((path, value, True))
             elif path in document.origins and not _unknowns(str(stage)):
-                findings.append(_finding("L112", _origin(document, path, scenario), "Unknown Molecule playbook stage"))
+                findings.append(_finding("L115", _origin(document, path, scenario), "Unknown Molecule playbook stage"))
     inventory = provisioner.get("inventory") if isinstance(provisioner, dict) else None
     if isinstance(inventory, dict) and isinstance(inventory.get("links"), dict):
         links = cast(YAMLDict, inventory["links"])
@@ -685,7 +685,7 @@ def _references(
         if not isinstance(value, str) or not value.strip():
             if explicit:
                 findings.append(
-                    _finding("L113", origin, "Configured file reference must be a non-empty string or null")
+                    _finding("L116", origin, "Configured file reference must be a non-empty string or null")
                 )
             continue
         base = _project_root(scenario) if path[0] == "dependency" else str(PurePosixPath(scenario).parent)
@@ -693,7 +693,7 @@ def _references(
         if reference is None:
             if explicit and not _unknowns(value):
                 findings.append(
-                    _finding("L115", origin, "Configured reference cannot be resolved within the supplied snapshot")
+                    _finding("L118", origin, "Configured reference cannot be resolved within the supplied snapshot")
                 )
             continue
         if reference not in files and reference.endswith("/converge.yml"):
@@ -707,7 +707,7 @@ def _references(
             if explicit:
                 findings.append(
                     _finding(
-                        "L113",
+                        "L116",
                         origin,
                         "Configured reference is absent from the supplied scan; it may be missing or excluded",
                     )
@@ -749,7 +749,7 @@ def _sequences(
             if action not in _ACTIONS:
                 findings.append(
                     _finding(
-                        "L114",
+                        "L117",
                         origin,
                         "Unknown Molecule action; use a supported lifecycle action",
                     )
@@ -757,7 +757,7 @@ def _sequences(
                 continue
             if action not in {"side_effect", "verify"}:
                 if any(arguments):
-                    findings.append(_finding("L114", origin, "Playbook arguments are ignored by this lifecycle action"))
+                    findings.append(_finding("L117", origin, "Playbook arguments are ignored by this lifecycle action"))
                 continue
             verifier = document.data.get("verifier")
             if (
@@ -767,7 +767,7 @@ def _sequences(
             ):
                 if verifier.get("enabled") is not False:
                     findings.append(
-                        _finding("L115", origin, "Non-Ansible verifier code was not assessed as Ansible playbooks")
+                        _finding("L118", origin, "Non-Ansible verifier code was not assessed as Ansible playbooks")
                     )
                 continue
             for argument in arguments:
@@ -775,10 +775,10 @@ def _sequences(
                     continue
                 reference = _reference(str(PurePosixPath(scenario).parent), argument)
                 if reference is None:
-                    findings.append(_finding("L115", origin, "Action argument requires unavailable path context"))
+                    findings.append(_finding("L118", origin, "Action argument requires unavailable path context"))
                 elif reference not in files:
                     findings.append(
-                        _finding("L113", origin, "Action playbook reference is absent from the supplied scan")
+                        _finding("L116", origin, "Action playbook reference is absent from the supplied scan")
                     )
                 else:
                     findings.extend(_assess_playbook(reference, files, cache, scenario))
@@ -821,7 +821,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
             except (YAMLError, yaml.YAMLError, UnicodeError, ValueError, RecursionError):
                 findings.append(
                     _finding(
-                        "L115",
+                        "L118",
                         _Location(environment_file),
                         "Environment file could not be assessed; substitutions remain unknown",
                     )
@@ -835,14 +835,14 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
                 _merge(supplied, _load(file, files[file], variables))
             except _NeedsContext:
                 findings.append(
-                    _finding("L115", _Location(file), "Configuration root requires unavailable environment context")
+                    _finding("L118", _Location(file), "Configuration root requires unavailable environment context")
                 )
                 valid = False
             except (YAMLError, yaml.YAMLError, UnicodeError, ValueError, RecursionError) as error:
                 mark = getattr(error, "problem_mark", None)
                 findings.append(
                     _finding(
-                        "L112",
+                        "L115",
                         _Location(file, mark.line + 1 if mark is not None else 1),
                         "Molecule config must contain valid YAML with unique keys and mapping structure",
                     )
@@ -868,13 +868,13 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
                     _merge(supplied, _load(file, files[file], variables))
             except _NeedsContext:
                 findings.append(
-                    _finding("L115", _Location(file), "Configuration root requires unavailable environment context")
+                    _finding("L118", _Location(file), "Configuration root requires unavailable environment context")
                 )
                 continue
             except (YAMLError, yaml.YAMLError, UnicodeError, ValueError, RecursionError):
                 findings.append(
                     _finding(
-                        "L112",
+                        "L115",
                         _Location(file),
                         "Molecule config must contain valid YAML with unique keys and mapping structure",
                     )
@@ -889,7 +889,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         for path in unknown:
             findings.append(
                 _finding(
-                    "L115",
+                    "L118",
                     _origin(effective, path, scenario),
                     "Value needs environment or template context; dependent checks are incomplete",
                 )
@@ -921,7 +921,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
                             continue
                         findings.append(
                             _finding(
-                                "L112",
+                                "L115",
                                 _origin(effective, key_path, scenario),
                                 f"Configuration key is not supported by the Molecule {version} profile",
                             )
@@ -929,7 +929,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
             else:
                 findings.append(
                     _finding(
-                        "L112",
+                        "L115",
                         _origin(effective, path, scenario),
                         f"Configuration violates Molecule {version} schema ({schema_error.validator})",
                     )
@@ -941,7 +941,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         ):
             findings.append(
                 _finding(
-                    "L115",
+                    "L118",
                     _origin(effective, ("driver", "name"), scenario),
                     "Core schema checked; external driver installation and driver-specific schema were not assessed",
                 )

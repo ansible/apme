@@ -102,7 +102,7 @@ evaluation via `graph_scanner.scan()`. Both run in the Native executor.
 Graph rules live under `src/apme_engine/graph/rules/`; Molecule file rules live
 in `src/apme_engine/validators/native/molecule.py` with bundled schemas/defaults.
 
-L112–L116 assess effective configuration, local references, lifecycle actions,
+L115–L119 assess effective configuration, local references, lifecycle actions,
 unavailable context, and playbook structure. Findings retain original file/line
 and YAML paths, use manual review, and remain visible during graph-only
 remediation rescans. See [static Molecule validation](../guides/MOLECULE.md).

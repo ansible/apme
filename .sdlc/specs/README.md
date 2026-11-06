@@ -32,7 +32,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-020 | Unified Supply Chain Security (SBOM, CVE, CWE) | PHASE-003 | Draft |
 | REQ-021 | APME UI Host Consolidation | PHASE-003 | In Progress |
 | REQ-022 | Rule Parity and Risk Assessment Follow-ups | PHASE-001 | Implemented |
-| REQ-022 | Static Molecule Validation | PHASE-001 | Implemented |
+| REQ-023 | Static Molecule Validation | PHASE-001 | Implemented |
 
 ## Directory Structure
 
@@ -62,8 +62,8 @@ specs/
 ├── REQ-019-scan-attestation/
 ├── REQ-020-unified-supply-chain-security/
 ├── REQ-021-ui-host-consolidation/
-└── REQ-022-rule-parity-followups/
-└── REQ-022-molecule-validation/
+├── REQ-022-rule-parity-followups/
+└── REQ-023-molecule-validation/
 ```
 
 ## Phase Relationship
@@ -75,8 +75,8 @@ PHASE-001: CLI Scanner (In Progress)
 ├── REQ-001: Core Scanning Engine (In Progress)
 ├── REQ-015: Detect Debug Sensitive Variables (Implemented)
 ├── REQ-017: Python Import Deprecations (Draft)
-└── REQ-022: Rule Parity and Risk Assessment Follow-ups (Implemented)
-└── REQ-022: Static Molecule Validation (Implemented)
+├── REQ-022: Rule Parity and Risk Assessment Follow-ups (Implemented)
+└── REQ-023: Static Molecule Validation (Implemented)
 
 PHASE-002: Rewrite Engine (Implemented)
 ├── REQ-002: Automated Remediation (Implemented)

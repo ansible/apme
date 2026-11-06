@@ -1,4 +1,4 @@
-# REQ-022: Contract
+# REQ-023: Contract
 
 ## Transport
 
@@ -12,11 +12,11 @@ inputs. All blocking YAML/schema evaluation runs in the executor.
 
 | ID | Name | Responsibility |
 |----|------|----------------|
-| L112 | molecule-config | YAML and effective configuration schema |
-| L113 | molecule-reference | Configured local file references |
-| L114 | molecule-sequence | Action names and action argument structure |
-| L115 | molecule-context | Explain validation limited by unavailable context |
-| L116 | molecule-playbook | YAML/structural errors in referenced Ansible playbooks |
+| L115 | molecule-config | YAML and effective configuration schema |
+| L116 | molecule-reference | Configured local file references |
+| L117 | molecule-sequence | Action names and action argument structure |
+| L118 | molecule-context | Explain validation limited by unavailable context |
+| L119 | molecule-playbook | YAML/structural errors in referenced Ansible playbooks |
 
 All rules are enabled by default and tagged `molecule`. Initial findings use
 warning-level severity with ordinary APME overrides and suppression. File-based

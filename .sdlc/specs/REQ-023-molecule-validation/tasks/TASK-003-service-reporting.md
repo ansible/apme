@@ -2,7 +2,7 @@
 
 ## Parent Requirement
 
-[REQ-022: Static Molecule Validation](../requirement.md)
+[REQ-023: Static Molecule Validation](../requirement.md)
 
 ## Status
 
@@ -41,7 +41,7 @@ Run file checks through Native Validate independently of graph data and retain f
 
 ## Acceptance Criteria Reference
 
-REQ-022: automatic assessment, inherited configuration, missing context, independent configuration validation, scenario playbooks, and deterministic static behavior.
+REQ-023: automatic assessment, inherited configuration, missing context, independent configuration validation, scenario playbooks, and deterministic static behavior.
 
 ## Completion Checklist
 

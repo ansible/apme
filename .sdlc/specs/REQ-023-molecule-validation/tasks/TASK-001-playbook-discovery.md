@@ -2,7 +2,7 @@
 
 ## Parent Requirement
 
-[REQ-022: Static Molecule Validation](../requirement.md)
+[REQ-023: Static Molecule Validation](../requirement.md)
 
 ## Status
 
@@ -56,7 +56,7 @@ loading when test content is enabled.
 
 ## Acceptance Criteria Reference
 
-- REQ-022: Scenario playbooks, including import-only playbooks.
+- REQ-023: Scenario playbooks, including import-only playbooks.
 
 ## Completion Checklist
 

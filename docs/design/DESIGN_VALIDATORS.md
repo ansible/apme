@@ -88,7 +88,7 @@ Every validator returns the same violation shape:
 
 - **Input**: `ContentGraph` (deserialized from `content_graph_data`) and uploaded `request.files`
 - **Execution**: `GraphRule` subclasses evaluated by `graph_scanner.scan()`, plus independent static file checks in the Native executor
-- **Rules**: Graph lint, modernization, and risk rules; L112–L116 check Molecule configuration and referenced scenario playbooks
+- **Rules**: Graph lint, modernization, and risk rules; L115–L119 check Molecule configuration and referenced scenario playbooks
 - **Container**: `apme-native`
 - **Why Python**: Access to the ContentGraph DAG for structural queries, and safe YAML/schema processing of uploaded configuration. Molecule checks use bundled schemas and snapshot bytes without running Molecule. See [Molecule validation](../guides/MOLECULE.md).
 
