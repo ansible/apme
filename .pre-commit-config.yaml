@@ -15,6 +15,7 @@ repos:
           - packaging>=26.3
           - types-protobuf
           - types-PyYAML
+          - types-jsonschema
           - grpc-stubs
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.12.23

@@ -1,0 +1,26 @@
+{
+  "minimum_version": "24.9.0",
+  "profiles": [
+    {
+      "version": "24.9.0",
+      "commit": "4e2592e5d77b181133243b8b685933f6daff3897",
+      "schema_url": "https://raw.githubusercontent.com/ansible/molecule/4e2592e5d77b181133243b8b685933f6daff3897/src/molecule/data/molecule.json",
+      "schema_sha256": "92d172797f32b839518bb8901f090f0f54966451863ed1627567a9887654ba20",
+      "red_hat_reference": "https://access.redhat.com/solutions/7101613",
+      "defaults_source": "src/molecule/config.py::Config._get_defaults",
+      "defaults_sha256": "0913f483f7c5ef58e6aa1bd18112f315cf00f6822f37fbf9a6f73ff51fe1c6ea",
+      "driver_schema_url": "https://raw.githubusercontent.com/ansible/molecule/4e2592e5d77b181133243b8b685933f6daff3897/src/molecule/data/driver.json",
+      "driver_schema_sha256": "eee6a1b9207e56f749f5cdbbac35c0d6b193a3d717150ca8868391d426cd21f4"
+    },
+    {
+      "version": "26.11.0",
+      "commit": "ada645a132b9332c291696f553d93cce788b5410",
+      "schema_url": "https://raw.githubusercontent.com/ansible/molecule/ada645a132b9332c291696f553d93cce788b5410/src/molecule/data/molecule.json",
+      "schema_sha256": "a7b896990b3f2abcb91cc9c4680f0f026198e598f7bb2b647f032599673abf6b",
+      "defaults_source": "src/molecule/constants.py::DEFAULT_CONFIG",
+      "defaults_sha256": "d6d2077bf184675001b166edb9c37a6179ba7531508f13cb6c91a2abbf78eb77",
+      "driver_schema_url": "https://raw.githubusercontent.com/ansible/molecule/ada645a132b9332c291696f553d93cce788b5410/src/molecule/data/driver.json",
+      "driver_schema_sha256": "b9600b85dfbdd238a05b656dcea11be06116010aec3a6ee87ec6588040ced3bf"
+    }
+  ]
+}

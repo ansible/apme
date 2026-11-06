@@ -94,7 +94,7 @@ from apme_engine.daemon.session import (
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
-from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
+from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs, parse_noqa
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.rule_ids import normalize_rule_id
@@ -382,6 +382,24 @@ def _enrich_violations_from_graph(
         )
         if co_fixes:
             v["co_fixes"] = co_fixes  # type: ignore[assignment]
+
+
+def _filter_file_noqa(violations: list[ViolationDict]) -> list[ViolationDict]:
+    """Apply source-local noqa to file findings after rule enforcement.
+
+    Args:
+        violations: Findings with original source excerpts and override metadata.
+
+    Returns:
+        Findings excluding unenforced, explicitly suppressed file diagnostics.
+    """
+    return [
+        violation
+        for violation in violations
+        if not str(violation.get("path", "")).startswith("$")
+        or violation.get("_enforced")
+        or str(violation.get("rule_id", "")).upper() not in parse_noqa(str(violation.get("original_yaml", "")))
+    ]
 
 
 def _collect_ai_triage_candidates(session: SessionState) -> list[ViolationDict]:
@@ -1182,7 +1200,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         if not context_obj.hierarchy_payload:
             logger.warning("Scan: no hierarchy payload produced (req=%s)", scan_id)
-            return [], ScanDiagnostics(), sid, [], None, None, [], set(), set(), None
+            # File validators still assess configuration-only snapshots.
+            context_obj.hierarchy_payload = {"hierarchy": []}
 
         # 2. Collection discovery
         discovered, requirements_found = _discover_collection_specs(files)
@@ -1454,6 +1473,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     divergent,
                 )
             violations = _apply_rule_configs(violations, configs)
+        violations = _filter_file_noqa(violations)
         _attach_snippets(violations, files)
 
         total_ms = (time.monotonic() - scan_t0) * 1000
@@ -2188,6 +2208,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     *[loop.run_in_executor(None, _file_proto_from_path, fp, temp_dir) for fp in file_paths]
                 )
             )
+            supplied_paths = {file.path for file in rel_files}
+            rel_files.extend(file for file in formatted_files if file.path not in supplied_paths)
             (
                 violations,
                 _,
@@ -2563,6 +2585,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             )
             graph = ContentGraph()
 
+        # File findings have source/YAML paths rather than graph node IDs.
+        # A graph-only rescan cannot establish that they have been fixed.
+        session.file_violations = [dict(v) for v in initial_violations if str(v.get("path", "")).startswith("$")]
+        initial_violations = [v for v in initial_violations if not str(v.get("path", "")).startswith("$")]
+
         loop = asyncio.get_running_loop()
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
 
@@ -2874,6 +2901,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # the graph-owned NodeState snapshot objects.
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(dep_health_violations)
+        remaining.extend(dict(v) for v in session.file_violations)
         add_classification_to_violations(remaining)
         session.dep_health_violations = [dict(v) for v in remaining if str(v.get("source", "")) in dep_health_sources]
 
@@ -2897,8 +2925,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             session.working_files[rel_path] = patch.patched.encode("utf-8")
 
         session.tier1_patches = tier1_patches
-        session.remaining_ai = list(remaining)
-        session.remaining_manual = []
+        session.remaining_ai = [v for v in remaining if not str(v.get("path", "")).startswith("$")]
+        session.remaining_manual = [v for v in remaining if str(v.get("path", "")).startswith("$")]
 
         # 6. Enrich violations with node YAML from the graph progression.
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -3580,6 +3608,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(session.dep_health_violations)
+        remaining.extend(dict(v) for v in session.file_violations)
         add_classification_to_violations(remaining)
         rem_counts = count_by_remediation_class(remaining)
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -3599,7 +3628,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             remaining_violations=remaining_protos,
             fixed_violations=fixed_protos,
         )
-        session.remaining_ai = list(remaining)
+        session.remaining_ai = [v for v in remaining if not str(v.get("path", "")).startswith("$")]
+        session.remaining_manual = [v for v in remaining if str(v.get("path", "")).startswith("$")]
 
         proposed_proposals: list[Proposal] = []
         ai_built: list[Proposal] = []
@@ -4478,6 +4508,7 @@ def _reconcile_after_approval(
         v["remediation_class"] = RemediationClass.MANUAL_REVIEW
     _enrich_violations_from_graph(remaining, graph, fixed=False)
     remaining.extend(dict(v) for v in session.dep_health_violations)
+    remaining.extend(dict(v) for v in session.file_violations)
 
     fixed = [dict(v) for v in graph.query_violations(status="fixed")]
     for v in fixed:

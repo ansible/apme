@@ -790,8 +790,20 @@ class TestSessionApprovalGates:
         session.graph_originals = {"play.yml": "- name: test\n  debug:\n    msg: hi\n"}
         session.temp_dir = tmp_path
 
+        file_finding: ViolationDict = {
+            "rule_id": "L115",
+            "file": "molecule/default/molecule.yml",
+            "line": 1,
+            "path": "$.provisioner",
+            "scope": "collection",
+            "remediation_class": "manual-review",
+        }
+        session.file_violations = [file_finding]
+        session.remaining_manual = [dict(file_finding)]
+
         async def _fake_build_result(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
-            yield SessionEvent(result=SessionResult())
+            async for event in _self._session_serialize_result(_session):
+                yield event
 
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
@@ -809,6 +821,12 @@ class TestSessionApprovalGates:
 
         event_types = [e.WhichOneof("event") for e in events]
         assert event_types == ["progress", "result"]
+        assert session.remaining_ai == []
+        assert session.remaining_manual == [file_finding]
+        assert session.report is not None
+        assert session.report.remaining_manual == 1
+        assert len(session.report.remaining_violations) == 1
+        assert len(events[-1].result.remaining_violations) == 1
         assert session.proposals == {}
         assert "t1-0000" in session.rejected_proposals
         assert session.pre_gate2_files["play.yml"] == b"- name: test\n  debug:\n    msg: hi\n"

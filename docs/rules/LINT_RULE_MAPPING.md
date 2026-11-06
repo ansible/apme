@@ -148,6 +148,20 @@ These rules operate on the content graph via native Python `GraphRule` implement
 | L113 | L113_role_name_graph.py | Role names should match the lowercase identifier convention |
 | L114 | L114_collection_version_graph.py | Collection versions must be valid and at least 1.0.0 |
 
+## Molecule file rules (Native)
+
+These rules assess uploaded files independently of ContentGraph and carry the
+`molecule` tag. See [Molecule validation](../guides/MOLECULE.md) for the pinned
+Red Hat ADT compatibility profile and coverage limits.
+
+| Rule | Implementation | Check |
+|------|----------------|-------|
+| L115 | native/molecule.py | Configuration YAML, duplicate keys, effective schema |
+| L116 | native/molecule.py | Supplied file references and inventory links |
+| L117 | native/molecule.py | Scenario action names and action arguments |
+| L118 | native/molecule.py | Assessment limited by unavailable context |
+| L119 | native/molecule.py | Referenced Ansible YAML/playbook structure |
+
 ## Modernize rules — M001-M004 / M048 (ansible validator)
 
 These rules use ansible-core's plugin loader (`find_plugin_with_context()`) to resolve modules against the actual runtime metadata (`ansible_builtin_runtime.yml` and collection `meta/runtime.yml`). They stay current with whichever ansible-core version is in the venv.

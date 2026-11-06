@@ -8,6 +8,8 @@ After the engine produces a `ContentGraph` and hierarchy payload, the Engine
 fans out validation requests to all configured validators in parallel. Each
 validator applies its rules and returns violations. Results are merged,
 deduplicated, and optionally filtered by rule configs.
+Configuration-only uploads also reach fan-out with an empty hierarchy so
+Native file checks can assess Molecule content without an Ansible graph.
 
 ## Sequence
 
@@ -63,7 +65,7 @@ service Validator {
 |-------|---------|
 | `hierarchy_payload` (JSON bytes) | OPA, Ansible |
 | `content_graph_data` (slim JSON bytes) | Native, Gitleaks |
-| `files` (File protos) | All (for path reference) |
+| `files` (File protos) | Native static file checks, Ansible project files, other validator source context |
 | `venv_path` | Ansible (read-only) |
 | `session_id` | Ansible (session context) |
 | `ansible_core_version` | Ansible |
@@ -80,7 +82,7 @@ Validators are discovered via environment variables:
 
 | Env Var | Validator |
 |---------|-----------|
-| `NATIVE_GRPC_ADDRESS` | Native (graph rules) |
+| `NATIVE_GRPC_ADDRESS` | Native (graph and static file rules) |
 | `OPA_GRPC_ADDRESS` | OPA (Rego policy rules) |
 | `ANSIBLE_GRPC_ADDRESS` | Ansible (runtime checks) |
 | `GITLEAKS_GRPC_ADDRESS` | Gitleaks (secrets detection) |
@@ -94,9 +96,19 @@ are silently skipped — the fan-out adapts to the available services.
 
 ### Native Validator (:50055)
 
-Deserializes `content_graph_data` into a `ContentGraph`, then runs
-`GraphRule` subclasses via `graph_scanner.scan()`. Rules live under
-`src/apme_engine/validators/native/rules/`.
+Runs independent static Molecule checks over uploaded `files`, and deserializes
+`content_graph_data`, when present, into a `ContentGraph` for `GraphRule`
+evaluation via `graph_scanner.scan()`. Both run in the Native executor.
+Graph rules live under `src/apme_engine/graph/rules/`; Molecule file rules live
+in `src/apme_engine/validators/native/molecule.py` with bundled schemas/defaults.
+
+L115–L119 assess effective configuration, local references, lifecycle actions,
+unavailable context, and playbook structure. Findings retain original file/line
+and YAML paths, use manual review, and remain visible during graph-only
+remediation rescans. See [static Molecule validation](../guides/MOLECULE.md).
+Local playbook imports are followed statically with cycle/depth guards. L057
+reuses the snapshot assessment helper for its runtime exclusion set, including
+resolved shared and imported playbooks outside scenario directories.
 
 Rule ID prefixes: **L** (lint), **M** (modernize), **R** (risk).
 
@@ -187,7 +199,8 @@ Displayed with `apme check -v` (summary) or `-vv` (per-rule breakdown).
 | `src/apme_engine/daemon/engine_server.py` | `_scan_pipeline()` step 4, `_call_validator()`, `VALIDATOR_ENV_VARS` |
 | `src/apme_engine/validators/base.py` | `Validator` protocol, `ScanContext` |
 | `proto/apme/v1/validate.proto` | `Validator` service, `ValidateRequest`, `ValidateResponse` |
-| `src/apme_engine/validators/native/` | Native graph rule implementations |
+| `src/apme_engine/graph/rules/` | Native graph rule implementations |
+| `src/apme_engine/validators/native/` | Native static file rules and bundled Molecule profiles |
 | `src/apme_engine/validators/opa/` | OPA subprocess integration |
 | `src/apme_engine/validators/ansible/` | Ansible runtime validator |
 | `src/apme_engine/validators/gitleaks/` | Gitleaks binary integration |
@@ -202,6 +215,7 @@ Displayed with `apme check -v` (summary) or `-vv` (per-rule breakdown).
 - **ADR-008** — Rule ID conventions (L/M/R/P/SEC)
 - **ADR-010** — Unified validator contract
 - **ADR-041** — Rule catalog and overrides
+- **ADR-076** — Native static file validation alongside graph rules
 
 ---
 

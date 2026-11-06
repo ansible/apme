@@ -1,5 +1,39 @@
 # Vendored Dependencies
 
+## Molecule configuration schema and defaults
+
+**Location:** `src/apme_engine/validators/native/molecule_data/`
+
+**Source:** `ansible/molecule` released snapshots:
+
+- v24.9.0, commit `4e2592e5d77b181133243b8b685933f6daff3897` (legacy).
+- v26.11.0, commit `ada645a132b9332c291696f553d93cce788b5410` (native/shared state).
+
+Core and default/delegated driver schemas are copied unchanged. Defaults JSON comes from the literal mapping in
+24.9.0 `Config._get_defaults` and 26.11.0 `constants.DEFAULT_CONFIG`, extracted
+without importing or executing Molecule code.
+
+**License:** MIT, with Cisco Systems and Red Hat copyright notices retained in
+the adjacent `LICENSE`. `provenance.json` records the source commits and hashes.
+
+**Why vendored:** Reproducible offline validation for Molecule 24.9.0+ covering
+legacy and native syntax. The minimum baseline is documented with AAP 2.5;
+newer upstream compatibility does not establish Red Hat support for every
+release or driver. See `docs/guides/MOLECULE.md` for updates.
+
+**Validation dependency review (ADR-019):** `jsonschema` implements JSON Schema
+references, conditionals, and type validation, which are unsuitable for a small
+in-house replacement. It is an actively maintained MIT-licensed Python package
+with a small dependency set (attrs, referencing, specifications, rpds). No
+existing APME dependency provides equivalent general schema validation. Type
+coverage is supplied by `types-jsonschema` in development and mypy hooks. The
+stdlib has no JSON Schema implementation.
+
+Measured installed module footprint on Linux arm64: approximately 611 KiB for
+jsonschema and 1.6 MiB for its dependency module directories (excluding package
+metadata). Upstream maintenance and licensing are tracked at
+[python-jsonschema/jsonschema](https://github.com/python-jsonschema/jsonschema).
+
 ## `@ansible/ansible-ui-framework`
 
 **Location:** `frontend/vendor/ansible-ui-framework/`
