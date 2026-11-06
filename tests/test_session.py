@@ -1786,7 +1786,11 @@ class TestSessionRescanBridge:
 
         session.venv_path = "/session/venv"
         session.working_files.update(
-            {"ansible.cfg": b"[defaults]\nlibrary = ./library\n", "library/apt.py": b"# local\n"}
+            {
+                "ansible.cfg": b"[defaults]\nlibrary = ./library\n",
+                "library/apt.py": b"# local\n",
+                "docs/large-unrelated.bin": b"x" * (50 * 1024 * 1024 + 1),
+            }
         )
         dirty_ids = frozenset({"play.yml/plays[0]/tasks[0]"})
         with (
@@ -1799,7 +1803,11 @@ class TestSessionRescanBridge:
             call_validator.return_value = _ValidatorResult()
             await captured_rescan_fn[0](graph, dirty_ids)
         request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "ansible")
-        assert {file.path: file.content for file in request.files} == session.working_files
+        assert {file.path: file.content for file in request.files} == {
+            "ansible.cfg": b"[defaults]\nlibrary = ./library\n",
+            "library/apt.py": b"# local\n",
+        }
+        assert request.ByteSize() < 50 * 1024 * 1024
         assert set(request.dirty_node_ids) == dirty_ids
 
     async def test_bridge_uses_correct_rules_dir(self, tmp_path: Path) -> None:

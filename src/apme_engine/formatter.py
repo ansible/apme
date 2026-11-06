@@ -348,53 +348,91 @@ def _without_yaml_comment(line: str) -> str:
     return line
 
 
-def _is_task_mapping_key(lines: list[str], index: int, indent: int) -> bool:
-    """Return whether a mapping key belongs to a task item at this indent.
+def _block_scalar_content_lines(lines: list[str]) -> list[bool]:
+    """Mark block scalar content so later line passes do not parse it as YAML.
 
     Args:
-        lines: Formatted YAML lines.
-        index: Index of the mapping key line.
-        indent: Indentation of the key line.
+        lines: YAML text split into lines.
 
     Returns:
-        True when the key is a direct child of a task list item.
+        A mask that is true for scalar content and its blank lines.
     """
-    for item_index in range(index - 1, -1, -1):
-        match = _TASK_ITEM_RE.match(lines[item_index])
-        if match is None:
+    content = [False] * len(lines)
+    parent_indent: int | None = None
+    content_indent: int | None = None
+    explicit_indent: int | None = None
+
+    for index, line in enumerate(lines):
+        if parent_indent is not None:
+            if line.strip() == "":
+                content[index] = True
+                continue
+            line_indent = len(line) - len(line.lstrip(" "))
+            minimum_indent = explicit_indent or content_indent
+            if line_indent > parent_indent and (minimum_indent is None or line_indent >= minimum_indent):
+                content[index] = True
+                if content_indent is None and explicit_indent is None:
+                    content_indent = line_indent
+                continue
+            parent_indent = None
+            content_indent = None
+            explicit_indent = None
+
+        if line.strip() == "":
             continue
-        item_indent = len(match.group(1))
-        if item_indent + 2 != indent:
-            if item_indent < indent - 2:
-                return False
-            continue
-        return _is_task_list_item(lines, item_index, item_indent)
-    return False
+        header_text = _without_yaml_comment(line).rstrip()
+        header = _BLOCK_SCALAR_HEADER_RE.match(header_text) if header_text else None
+        if header is not None:
+            parent_indent = len(header.group("indent"))
+            indent_indicator = re.search(r"\d", header.group("modifiers"))
+            explicit_indent = parent_indent + int(indent_indicator.group()) if indent_indicator is not None else None
+
+    return content
 
 
-def _is_task_list_item(lines: list[str], index: int, item_indent: int) -> bool:
-    """Return whether a list item is directly inside a task list.
+def _task_layout_membership(lines: list[str], scalar_content: list[bool]) -> tuple[set[int], set[int]]:
+    """Identify task list items and task keys in one forward pass.
 
     Args:
-        lines: Formatted YAML lines.
-        index: Index of the list item line.
-        item_indent: Indentation of the list dash.
+        lines: YAML text split into lines.
+        scalar_content: Mask returned by ``_block_scalar_content_lines``.
 
     Returns:
-        True when the list item belongs to a known task-list key.
+        Index sets for task-list items and mapping keys directly inside tasks.
     """
-    if item_indent == 0 and _is_bare_task_list(lines):
-        return True
-    for parent_index in range(index - 1, -1, -1):
-        parent = _YAML_COMMENT_KEY_RE.match(lines[parent_index])
-        if parent is None:
+    bare_task_list = _is_bare_task_list(lines, scalar_content)
+    last_keys: dict[int, str] = {}
+    last_items: dict[int, bool] = {}
+    task_items: set[int] = set()
+    task_keys: set[int] = set()
+
+    for index, line in enumerate(lines):
+        if scalar_content[index] or not line.strip() or line.lstrip().startswith("#"):
             continue
-        parent_indent = len(parent.group("indent"))
-        if parent_indent < item_indent - 2:
-            return False
-        if parent_indent == item_indent - 2:
-            return parent.group("key").strip("- ") in _TASK_LIST_KEYS
-    return False
+
+        indent = len(line) - len(line.lstrip(" "))
+        for saved_indent in [*last_keys, *last_items]:
+            if saved_indent >= indent:
+                last_keys.pop(saved_indent, None)
+                last_items.pop(saved_indent, None)
+
+        item = _TASK_ITEM_RE.match(line)
+        if item is not None:
+            item_indent = len(item.group(1))
+            parent_key = last_keys.get(item_indent - 2, "")
+            is_task_item = (item_indent == 0 and bare_task_list) or parent_key in _TASK_LIST_KEYS
+            last_items[item_indent] = is_task_item
+            if is_task_item:
+                task_items.add(index)
+
+        key = _YAML_COMMENT_KEY_RE.match(line)
+        if key is not None:
+            key_indent = len(key.group("indent"))
+            if last_items.get(key_indent - 2, False):
+                task_keys.add(index)
+            last_keys[key_indent] = key.group("key").strip("- ")
+
+    return task_items, task_keys
 
 
 def _strip_task_internal_blanks(text: str) -> str:
@@ -411,9 +449,14 @@ def _strip_task_internal_blanks(text: str) -> str:
         Text without blank lines between sibling task keys.
     """
     lines = text.split("\n")
+    scalar_content = _block_scalar_content_lines(lines)
+    task_items, task_keys = _task_layout_membership(lines, scalar_content)
     result: list[str] = []
     for index, line in enumerate(lines):
         if line.strip() != "":
+            result.append(line)
+            continue
+        if scalar_content[index]:
             result.append(line)
             continue
 
@@ -431,14 +474,12 @@ def _strip_task_internal_blanks(text: str) -> str:
         following_key = _YAML_COMMENT_KEY_RE.match(lines[following])
         if previous_key is not None and following_key is not None:
             indent = len(previous_key.group("indent"))
-            if indent == len(following_key.group("indent")) and _is_task_mapping_key(lines, previous, indent):
+            if indent == len(following_key.group("indent")) and indent >= 2 and previous in task_keys:
                 continue
             task_item = _TASK_ITEM_RE.match(lines[previous])
             if task_item is not None:
                 item_indent = len(task_item.group(1))
-                if len(following_key.group("indent")) == item_indent + 2 and _is_task_list_item(
-                    lines, previous, item_indent
-                ):
+                if len(following_key.group("indent")) == item_indent + 2 and previous in task_items:
                     continue
         result.append(line)
     return "\n".join(result)
@@ -451,7 +492,7 @@ _TASK_ITEM_RE = re.compile(r"^(\s*)- \S")
 _PLAY_KEYS = frozenset({"hosts", "import_playbook"})
 
 
-def _is_bare_task_list(lines: list[str]) -> bool:
+def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = None) -> bool:
     """Return True if the file is a bare task list (no ``tasks:`` parent key).
 
     Bare task lists start with ``---`` followed by ``- name:`` or ``- module:``
@@ -460,13 +501,16 @@ def _is_bare_task_list(lines: list[str]) -> bool:
 
     Args:
         lines: Split lines of the YAML file.
+        scalar_content: Optional mask for lines inside block scalars.
 
     Returns:
         True if the file is a bare task list.
     """
     first_item_lines: list[str] = []
     found_first = False
-    for line in lines:
+    for index, line in enumerate(lines):
+        if scalar_content is not None and scalar_content[index]:
+            continue
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or stripped == "---":
             continue

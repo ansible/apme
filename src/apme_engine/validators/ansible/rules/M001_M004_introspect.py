@@ -55,6 +55,7 @@ for name in module_names:
         "action_resolved": None,
         "resolution_error": False,
         "fqcn": "",
+        "module_fqcn": "",
         "resolution_reason": "",
         "deprecated": False,
         "warnings": [],
@@ -93,10 +94,14 @@ for name in module_names:
     # qualifying a builtin action must not bypass a local module override.
     if ctx is not None and action_ctx is not None and not info["resolution_error"]:
         contexts = [c for c in (action_ctx, ctx) if c.resolved]
-        candidates = [getattr(c, "resolved_fqcn", "") or "" for c in contexts]
+        candidates = [
+            (getattr(action_ctx, "resolved_fqcn", "") or "", "action"),
+            (getattr(ctx, "resolved_fqcn", "") or "", "module"),
+        ]
         if contexts and "." not in name:
-            candidates.append("ansible.legacy." + name)
-        for candidate in dict.fromkeys(candidates):
+            candidates.append(("ansible.legacy." + name, "legacy"))
+        selected = None
+        for candidate, source in dict.fromkeys(candidates):
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*){2,}", candidate):
                 continue
             try:
@@ -106,15 +111,20 @@ for name in module_names:
                     continue
             except Exception:
                 continue
-            info["fqcn"] = candidate
-            selected = contexts[0]
+            if source in {"module", "legacy"} and not info["module_fqcn"]:
+                info["module_fqcn"] = candidate
+            if not info["fqcn"]:
+                info["fqcn"] = candidate
+                selected = action_ctx if source == "action" else ctx
+        if selected is not None:
             info["plugin_path"] = getattr(selected, "plugin_resolved_path", "") or ""
             info["deprecated"] = any(bool(getattr(c, "deprecated", False)) for c in contexts)
             info["warnings"] = list(dict.fromkeys(
                 warning for c in contexts for warning in (getattr(c, "deprecation_warnings", None) or [])
             ))
-            info["redirects"] = list(getattr(selected, "redirect_list", None) or [])
-            break
+            # M003 describes module redirects. Action qualification remains
+            # available through fqcn, but must not replace the module chain.
+            info["redirects"] = list(getattr(ctx, "redirect_list", None) or [])
         if contexts and not info["fqcn"]:
             info["resolution_reason"] = "No FQCN preserves the selected module and action plugins"
 
@@ -484,21 +494,22 @@ def run(
 
         # M003: Redirects
         redirects = info.get("redirects", [])
-        if len(redirects) > 1 and fqcn and fqcn != module_name:
+        module_fqcn = str(info.get("module_fqcn", ""))
+        if len(redirects) > 1:
             chain = " -> ".join(redirects)
-            violations.append(
-                {
-                    "rule_id": "M003",
-                    "severity": "high",
-                    "message": f"Module has been redirected: {chain}",
-                    "file": file_path,
-                    "line": line_num,
-                    "path": node.get("key", ""),
-                    "scope": "task",
-                    "original_module": module_name,
-                    "resolved_fqcn": fqcn,
-                    "redirect_chain": [str(r) for r in redirects],
-                }
-            )
+            m003: dict[str, object] = {
+                "rule_id": "M003",
+                "severity": "high",
+                "message": f"Module has been redirected: {chain}",
+                "file": file_path,
+                "line": line_num,
+                "path": node.get("key", ""),
+                "scope": "task",
+                "original_module": module_name,
+                "redirect_chain": [str(r) for r in redirects],
+            }
+            if module_fqcn and module_fqcn != module_name:
+                m003["resolved_fqcn"] = module_fqcn
+            violations.append(m003)
 
     return violations

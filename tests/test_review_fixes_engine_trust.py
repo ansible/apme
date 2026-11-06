@@ -1321,10 +1321,16 @@ class TestDiagnosticsAggregation:
             patch.object(EngineServicer, "_get_venv_manager", return_value=mgr),
         ):
             outcome = await servicer._execute_scan_pipeline(
-                tmp_path, [File(path="play.yml", content=b"---\n")], "agg-real"
+                tmp_path,
+                [File(path="play.yml", content=b"---\n")],
+                "agg-real",
+                ansible_context_files=[File(path="ansible.cfg", content=b"[defaults]\n")],
             )
 
         assert mock_call.call_count == 3
+        requests_by_address = {call.args[0]: call.args[1] for call in mock_call.call_args_list}
+        assert [file.path for file in requests_by_address["stub:native"].files] == ["play.yml"]
+        assert {file.path for file in requests_by_address["stub:ansible"].files} == {"play.yml", "ansible.cfg"}
         scan_diag = outcome[1]
         assert scan_diag is not None
         assert {entry.validator_name for entry in scan_diag.validators} == {"native", "opa", "ansible"}

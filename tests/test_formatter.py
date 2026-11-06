@@ -9,6 +9,7 @@ import pytest
 from apme_engine.formatter import (
     FormatResult,
     _collapse_blank_lines,
+    _strip_task_internal_blanks,
     check_idempotent,
     format_content,
     format_directory,
@@ -57,6 +58,20 @@ class TestCollapseBlankLines:
         text = "message: |+\n  first\n\n\nnext: value"
         assert _collapse_blank_lines(text) == text
 
+    def test_task_cleanup_preserves_blank_lines_inside_block_scalar(self) -> None:
+        """Embedded YAML text in a task scalar is data, not task structure."""
+        text = textwrap.dedent("""\
+        tasks:
+          - name: Write embedded YAML
+            ansible.builtin.copy:
+              content: |
+                tasks:
+                  first: one
+
+                  second: two
+        """)
+        assert _strip_task_internal_blanks(text) == text
+
     def test_reordered_tasks_have_no_blank_lines_between_keys(self) -> None:
         """A moved name key does not carry task separation into the task body."""
         text = textwrap.dedent("""\
@@ -78,6 +93,14 @@ class TestCollapseBlankLines:
         first_task_end = result.formatted.index("name: Second")
         between_tasks = result.formatted[first_action:first_task_end]
         assert between_tasks.count("\n\n") == 1
+
+    def test_large_task_list_keeps_only_task_separators(self) -> None:
+        """Task layout classification handles many repeated siblings."""
+        tasks = [f"  - ansible.builtin.debug:\n\n    when: task_{index}" for index in range(1000)]
+        text = "tasks:\n" + "\n\n".join(tasks)
+        result = _strip_task_internal_blanks(text)
+        assert "ansible.builtin.debug:\n\n    when:" not in result
+        assert result.count("\n\n") == 999
 
 
 # ---------------------------------------------------------------------------

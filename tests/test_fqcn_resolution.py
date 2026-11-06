@@ -143,6 +143,29 @@ def test_canonical_targets_from_runtime(
     assert {v["resolved_fqcn"] for v in fixes} == {target}
 
 
+def test_module_redirect_target_is_not_replaced_by_action_fqcn(runtime_project: Path) -> None:
+    """M003 follows the module redirect while M001 keeps action qualification.
+
+    Args:
+        runtime_project: Temporary project containing redirect metadata and plugins.
+    """
+    action_dir = runtime_project / "collections" / "ansible_collections" / "demo" / "alpha" / "plugins" / "action"
+    (action_dir / "old_probe.py").write_text("raise RuntimeError('action must not execute during resolution')\n")
+
+    findings = _resolve(
+        runtime_project,
+        [_task("old_probe", ["demo.alpha"]), _task("demo.alpha.old_probe", ["demo.alpha"])],
+    )
+    m001 = next(v for v in findings if v["rule_id"] == "M001")
+    m003 = next((v for v in findings if v["rule_id"] == "M003"), None)
+    assert m003 is not None, findings
+
+    assert m001["resolved_fqcn"] == "demo.alpha.old_probe"
+    redirect_chain = cast(list[object], m003["redirect_chain"])
+    assert redirect_chain[-1] == "demo.alpha.probe"
+    assert "resolved_fqcn" not in m003
+
+
 def test_local_module_override_is_preserved(runtime_project: Path) -> None:
     """A local copy module must not become ansible.builtin.copy.
 

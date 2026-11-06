@@ -574,6 +574,15 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_for_printf_builtin(self) -> None:
+        """Keep shell for Bash printf's shell-only ``-v`` option."""
+        content = textwrap.dedent("""\
+        - name: Assign with printf
+          ansible.builtin.shell: "printf -v RESULT '%s' hello"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
     def test_no_change_when_bash_append_assignment_is_used(self) -> None:
         """Keep shell for Bash's PATH+= assignment form."""
         content = textwrap.dedent("""\

@@ -61,6 +61,7 @@ _SHELL_BUILTINS = frozenset(
         "logout",
         "mapfile",
         "popd",
+        "printf",
         "pushd",
         "read",
         "readarray",

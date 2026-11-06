@@ -91,6 +91,18 @@ formatter:
 5. **Rescan**: Verify fixes
 6. **Converge**: Repeat 4-5 until stable
 
+### Blank-Line Cleanup
+
+Line-based cleanup preserves blank lines inside literal and folded block
+scalars. Task-list membership is classified in one forward pass so formatting
+large task lists does not repeat backward searches for each blank line.
+
 ## Related Decisions
 
 - ADR-009: Remediation engine (consumes formatted YAML)
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-11-06 | AI agent | Document scalar-safe blank cleanup and linear task-list classification |

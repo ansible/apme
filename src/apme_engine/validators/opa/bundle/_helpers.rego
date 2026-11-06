@@ -67,6 +67,7 @@ shell_builtin_commands := {
 	"logout",
 	"mapfile",
 	"popd",
+	"printf",
 	"pushd",
 	"read",
 	"readarray",

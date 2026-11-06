@@ -8,18 +8,20 @@ The Engine delegates internally to validators and remediation.
 from __future__ import annotations
 
 import asyncio
+import configparser
 import contextlib
 import contextvars
 import difflib
 import json
 import logging
 import os
+import posixpath
 import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TypeVar, cast
 
 import grpc
@@ -125,6 +127,70 @@ class _FormatBatchResult:
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ENGINE_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
+
+_ANSIBLE_PLUGIN_DIR_NAMES = frozenset({"action_plugins", "library", "module_utils", "modules", "plugins"})
+_ANSIBLE_COLLECTION_PART = "ansible_collections"
+
+
+def _ansible_context_files(files: Mapping[str, bytes]) -> list[File]:
+    """Select uploaded files needed to reconstruct Ansible project context.
+
+    Task rescans carry their task payload separately, so Ansible only needs
+    project config and trusted local plugin sources. Omitting unrelated assets
+    keeps the unary validator request below its message limit for large uploads.
+
+    Args:
+        files: Current project files keyed by normalized relative path.
+
+    Returns:
+        Config and plugin files required for Ansible plugin resolution.
+    """
+    configs = [(path, content) for path, content in files.items() if PurePosixPath(path).name == "ansible.cfg"]
+    plugin_roots: set[str] = set()
+
+    def add_roots(raw_paths: str, base: str = ".") -> None:
+        for raw_path in raw_paths.split(os.pathsep):
+            value = raw_path.strip()
+            if not value or posixpath.isabs(value):
+                continue
+            normalized = posixpath.normpath(posixpath.join(base, value))
+            if normalized != ".." and not normalized.startswith("../"):
+                plugin_roots.add(normalized.rstrip("/"))
+
+    for config_path, content in configs:
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read_string(content.decode("utf-8"))
+        except (UnicodeDecodeError, configparser.Error):
+            continue
+        if parser.has_section("defaults"):
+            for option in ("library", "action_plugins", "collections_path", "collections_paths"):
+                if parser.has_option("defaults", option):
+                    add_roots(parser.get("defaults", option), posixpath.dirname(config_path) or ".")
+
+    for env_name in (
+        "ANSIBLE_LIBRARY",
+        "ANSIBLE_ACTION_PLUGINS",
+        "ANSIBLE_COLLECTIONS_PATH",
+        "ANSIBLE_COLLECTIONS_PATHS",
+    ):
+        add_roots(os.environ.get(env_name, ""))
+
+    selected: list[File] = []
+    for path, content in files.items():
+        parsed = PurePosixPath(path)
+        parts = parsed.parts
+        is_config = parsed.name == "ansible.cfg"
+        in_collection = _ANSIBLE_COLLECTION_PART in parts
+        in_plugin_dir = any(part in _ANSIBLE_PLUGIN_DIR_NAMES for part in parts)
+        in_configured_root = any(path == root or path.startswith(root.rstrip("/") + "/") for root in plugin_roots)
+        is_plugin_source = parsed.suffix == ".py" and (in_collection or in_plugin_dir or in_configured_root)
+        is_collection_metadata = in_collection and (
+            parsed.name == "MANIFEST.json" or parts[-2:] == ("meta", "runtime.yml")
+        )
+        if is_config or is_plugin_source or is_collection_metadata:
+            selected.append(File(path=path, content=content))
+    return selected
 
 
 @dataclass
@@ -869,6 +935,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         files: list[File],
         scan_id: str,
         *,
+        ansible_context_files: Sequence[File] = (),
         ansible_core_version: str = "",
         collection_specs: list[str] | None = None,
         include_scandata: bool = True,
@@ -910,6 +977,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             temp_dir: Directory containing the materialized files.
             files: Original File protos (for ValidateRequest).
             scan_id: Request ID for correlation.
+            ansible_context_files: Project config and local plugin files for Ansible.
             ansible_core_version: Ansible core version constraint.
             collection_specs: Collection specifiers (may be extended by discovery).
             include_scandata: Whether to include scandata in engine call.
@@ -949,6 +1017,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 temp_dir,
                 files,
                 scan_id,
+                ansible_context_files=ansible_context_files,
                 ansible_core_version=ansible_core_version,
                 collection_specs=collection_specs,
                 include_scandata=include_scandata,
@@ -977,6 +1046,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         files: list[File],
         scan_id: str,
         *,
+        ansible_context_files: Sequence[File] = (),
         ansible_core_version: str = "",
         collection_specs: list[str] | None = None,
         include_scandata: bool = True,
@@ -1004,6 +1074,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             temp_dir: Directory containing the materialized files.
             files: Original File protos (for ValidateRequest).
             scan_id: Request ID for correlation.
+            ansible_context_files: Project config and local plugin files for Ansible.
             ansible_core_version: Ansible core version constraint.
             collection_specs: Collection specifiers (may be extended by discovery).
             include_scandata: Whether to include scandata in engine call.
@@ -1199,9 +1270,26 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             raise RequiredValidatorDependencyError(msg)
 
         task_names = [name for name, _addr in validator_targets]
-        task_coros: list[Awaitable[_ValidatorResult]] = [
-            _call_validator(addr, validate_request) for _name, addr in validator_targets
-        ]
+        task_coros: list[Awaitable[_ValidatorResult]] = []
+        for name, addr in validator_targets:
+            request: ValidateRequest = validate_request
+            if name == "ansible" and ansible_context_files:
+                files_by_path: dict[str, File] = {file.path: file for file in files}
+                files_by_path.update({file.path: file for file in ansible_context_files})
+                request = ValidateRequest(
+                    request_id=validate_request.request_id,
+                    project_root=validate_request.project_root,
+                    files=list(files_by_path.values()),
+                    hierarchy_payload=validate_request.hierarchy_payload,
+                    scandata=validate_request.scandata,
+                    ansible_core_version=validate_request.ansible_core_version,
+                    collection_specs=validate_request.collection_specs,
+                    session_id=validate_request.session_id,
+                    venv_path=validate_request.venv_path,
+                    content_graph_data=validate_request.content_graph_data,
+                    graph_rule_opt_in=validate_request.graph_rule_opt_in,
+                )
+            task_coros.append(_call_validator(addr, request))
 
         violations: list[ViolationDict] = []
         validator_diagnostics: list[ValidatorDiagnostics] = []
@@ -2074,6 +2162,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 temp_dir,
                 rel_files,
                 scan_id,
+                ansible_context_files=_ansible_context_files(session.working_files),
                 ansible_core_version=ansible_core_version,
                 collection_specs=collection_specs,
                 session_id=fix_session_id,
@@ -2609,7 +2698,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             ValidateRequest(
                                 request_id=f"{scan_id}-rescan",
                                 hierarchy_payload=json.dumps(ans_payload, default=str).encode(),
-                                files=[File(path=p, content=c) for p, c in session.working_files.items()],
+                                files=_ansible_context_files(session.working_files),
                                 dirty_node_ids=sorted(dirty_ids),
                                 venv_path=session.venv_path,
                                 session_id=ans_opts.session_id if ans_opts else "",
