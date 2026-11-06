@@ -1,7 +1,7 @@
 # Static Molecule Validation
 
 Run `apme check .` to assess Molecule configuration and scenario playbooks
-automatically. L112-L116 are Native lint rules tagged `molecule`, enabled by
+automatically. L115-L119 are Native lint rules tagged `molecule`, enabled by
 default at medium severity. Use ordinary rule overrides to change severity or
 disable them. Validators read uploaded content; they do not run Molecule,
 provision resources, evaluate project lookups, or execute dependency commands.
@@ -12,11 +12,11 @@ use rule enablement or suppression when a warning should not gate CI.
 
 | Rule | Check |
 |------|-------|
-| L112 | Config YAML, duplicate keys, effective schema |
-| L113 | Playbooks, inventory links, explicit Galaxy requirement files, and action arguments |
-| L114 | Supported scenario lifecycle actions |
-| L115 | Coverage limited by unavailable environment, files, or driver context |
-| L116 | Referenced Ansible playbook YAML and play structure |
+| L115 | Config YAML, duplicate keys, effective schema |
+| L116 | Playbooks, inventory links, explicit Galaxy requirement files, and action arguments |
+| L117 | Supported scenario lifecycle actions |
+| L118 | Coverage limited by unavailable environment, files, or driver context |
+| L119 | Referenced Ansible playbook YAML and play structure |
 
 Ordinary Ansible/task graph findings keep their existing IDs. Native checks
 referenced scenario playbooks, including import-only playbooks, statically.
@@ -78,14 +78,14 @@ specified location when assessing those layouts.
 Known Molecule scenario/project paths, values in a supplied project `.env.yml`,
 and explicit `${VAR:-default}` / `${VAR-default}` fallbacks can resolve references.
 Without a supplied value, the explicit fallback is used. Other environment or template values produce
-an L115 coverage notice; server environment values are never substituted.
+an L118 coverage notice; server environment values are never substituted.
 Diagnostics exclude substituted secret values.
 
-Reference checks use only the uploaded snapshot. L113 means a configured target
+Reference checks use only the uploaded snapshot. L116 means a configured target
 is unavailable there, which can also result from exclusions or checking one
 file. Optional default stage files are not mandatory. The built-in default/delegated
 driver schema is checked; external driver schemas
-and runtime package availability remain unassessed and are identified by L115.
+and runtime package availability remain unassessed and are identified by L118.
 Non-Ansible verifier code is outside Ansible playbook structural validation.
 
 Configuration findings retain source file/line locations after merging and
@@ -93,7 +93,7 @@ remain manual-review findings across remediation approval gates. Graph-only
 rescans do not claim that independent file findings have been fixed. A fresh
 full assessment is required after editing configuration.
 Findings include unexpanded source excerpts for content-based suppression.
-Use `# noqa: L113` (or another rule ID) on the diagnostic's source line for
+Use `# noqa: L116` (or another rule ID) on the diagnostic's source line for
 inline suppression; enforced rules remain active.
 
 ## Updating the profile

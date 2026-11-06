@@ -1,4 +1,4 @@
-# REQ-022: Static Molecule Validation
+# REQ-023: Static Molecule Validation
 
 ## Metadata
 
@@ -148,5 +148,5 @@ bundled profile updates; scans never fetch schemas or run Molecule.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-11-05 | Codex | Captured scope and user decisions; compatibility target pending |
-| 2026-11-05 | Codex | Implemented L112-L116, graph/file integration, scenario discovery, and verified coverage |
+| 2026-11-05 | Codex | Implemented L115-L119, graph/file integration, scenario discovery, and verified coverage |
 | 2026-11-06 | Codex | Set minimum to 24.9.0+, added native profile and regression coverage |

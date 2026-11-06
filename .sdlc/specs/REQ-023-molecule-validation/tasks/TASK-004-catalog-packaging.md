@@ -2,7 +2,7 @@
 
 ## Parent Requirement
 
-[REQ-022: Static Molecule Validation](../requirement.md)
+[REQ-023: Static Molecule Validation](../requirement.md)
 
 ## Status
 
@@ -43,7 +43,7 @@ Include the automatic Molecule lint rules in runtime and generated catalogs, pac
 
 ## Acceptance Criteria Reference
 
-REQ-022: automatic assessment, inherited configuration, missing context, independent configuration validation, scenario playbooks, and deterministic static behavior.
+REQ-023: automatic assessment, inherited configuration, missing context, independent configuration validation, scenario playbooks, and deterministic static behavior.
 
 ## Completion Checklist
 

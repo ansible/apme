@@ -57,7 +57,7 @@ can perform using an existing contract.
 
 ## Implementation Notes
 
-REQ-022 defines a Molecule 24.9.0+ minimum compatibility target, with pinned
+REQ-023 defines a Molecule 24.9.0+ minimum compatibility target, with pinned
 legacy (24.9.0) and native/shared-state (26.11.0) profiles.
 The built-in driver schemas supplement the core schemas. Molecule scenario
 playbooks and their local imports receive inert structural checks rather than
@@ -79,7 +79,7 @@ Add tests for independent file validation and preserve graph rule behavior.
 
 ## References
 
-- [REQ-022](../specs/REQ-022-molecule-validation/requirement.md)
+- [REQ-023](../specs/REQ-023-molecule-validation/requirement.md)
 
 ## Revision History
 
