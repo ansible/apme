@@ -37,7 +37,7 @@ The engine is the **single source of truth** for "what's in this repo/playbook."
 Validators receive its model and uploaded snapshot. Adding or removing a
 validator does not change how Ansible content is parsed. File checks can inspect
 configuration that is outside the Ansible graph; a configuration-only upload
-still reaches validator fan-out with an empty hierarchy (ADR-075).
+still reaches validator fan-out with an empty hierarchy (ADR-076).
 
 ---
 
@@ -137,7 +137,7 @@ Rationale:
 - Full control over the hierarchy payload shape, ContentGraph structure, and parser logic
 - Single Ansible parse and model — graph validators reuse the same `ContentGraph` and `hierarchy_payload`
 - No version drift between engine and validators
-- ContentGraph feeds OPA rules (via hierarchy JSON) and Native graph rules (via GraphRule evaluation); independent Native file checks consume the uploaded snapshot (ADR-075)
+- ContentGraph feeds OPA rules (via hierarchy JSON) and Native graph rules (via GraphRule evaluation); independent Native file checks consume the uploaded snapshot (ADR-076)
 
 The engine exposes one public function:
 

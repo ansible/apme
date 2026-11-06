@@ -215,7 +215,7 @@ Displayed with `apme check -v` (summary) or `-vv` (per-rule breakdown).
 - **ADR-008** — Rule ID conventions (L/M/R/P/SEC)
 - **ADR-010** — Unified validator contract
 - **ADR-041** — Rule catalog and overrides
-- **ADR-075** — Native static file validation alongside graph rules
+- **ADR-076** — Native static file validation alongside graph rules
 
 ---
 

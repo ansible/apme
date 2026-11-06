@@ -6,7 +6,7 @@ Molecule file checks live in `molecule.py`, with documentation in `rules/`.
 
 File checks run even when no Ansible graph is available. They use the existing
 Native Validate RPC and executor, and report ordinary L-series findings.
-See [Molecule validation](../../../../docs/guides/MOLECULE.md) and ADR-075.
+See [Molecule validation](../../../../docs/guides/MOLECULE.md) and ADR-076.
 
 ## Tests
 

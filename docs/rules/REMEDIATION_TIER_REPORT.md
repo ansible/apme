@@ -7,11 +7,11 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 ## Summary
 
-| Tier | Count | % of 162 |
+| Tier | Count | % of 167 |
 |------|-------|--------|
 | Tier 1 — auto (has transform) | 25 | 15% |
-| Tier 2 — AI (task/block, no fixer) | 71 | 44% |
-| Tier 3 — manual | 66 | 41% |
+| Tier 2 — AI (task/block, no fixer) | 71 | 43% |
+| Tier 3 — manual | 71 | 43% |
 
 ### Promotion potential
 
@@ -27,7 +27,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | cross-file / data-flow context | 4 |
 | FQCN target or semantic equivalence needs review | 1 |
 | playbook scope | 11 |
-| collection scope | 10 |
+| collection scope | 15 |
 | role scope | 11 |
 | play scope | 7 |
 | inventory scope | 3 |
@@ -145,7 +145,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | R115 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | SEC:* | critical | task | Task/block scope — AI can propose fix (Tier 2) |
 
-## Tier 3 — Manual (66 rules)
+## Tier 3 — Manual (71 rules)
 
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
@@ -200,6 +200,11 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L111 | Native | low | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | L113 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L114 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L115 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L116 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L117 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L118 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L119 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M010 | Native | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | M011 | OPA | high | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M025 | OPA | high | play | — | Scope 'play' — play/role/collection not AI-proposable |

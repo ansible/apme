@@ -16,7 +16,7 @@ Implement L115-L119 against the pinned ADT configuration profile, including sour
 
 - User selected automatic L rules with a molecule tag and all four assessment areas.
 - Initial compatibility profile: documented ADT/AAP 2.5 Molecule 24.9.0 contract.
-- [ADR-075](../../../adrs/ADR-075-native-file-validation.md) preserves existing invariants.
+- [ADR-076](../../../adrs/ADR-076-native-file-validation.md) preserves existing invariants.
 
 ## Implementation Notes
 
