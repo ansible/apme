@@ -912,20 +912,19 @@ class TestGraphRemediationEngine:
         ai_provider.propose_node_fix = AsyncMock(
             return_value=AINodeFix(
                 fixed_snippet=_TASK_YAML_FQCN,
-                rule_ids=["M001"],
-                explanation="Fixed FQCN via AI",
+                rule_ids=["L043"],
+                explanation="Fixed Jinja2 spacing via AI",
                 confidence=0.9,
             ),
         )
 
         violations: list[ViolationDict] = [
             {
-                "rule_id": "M001",
+                "rule_id": "L043",
                 "path": node.node_id,
                 "file": node.file_path,
                 "line": 3,
-                "message": "Use FQCN for apt",
-                "resolved_fqcn": "ansible.builtin.apt",
+                "message": "Fix Jinja2 spacing",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
