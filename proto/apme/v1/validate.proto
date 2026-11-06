@@ -8,7 +8,14 @@ import "apme/v1/common.proto";
 // (native, OPA, Ansible). Every validator container implements this service.
 service Validator {
   rpc Validate(ValidateRequest) returns (ValidateResponse);
+  // Stream a serialized ValidateRequest in bounded messages when its complete
+  // payload is larger than gRPC's unary message limit.
+  rpc ValidateStream(stream ValidateRequestChunk) returns (ValidateResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message ValidateRequestChunk {
+  bytes serialized_request_chunk = 1;
 }
 
 message ValidateRequest {

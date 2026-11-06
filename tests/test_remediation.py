@@ -9,6 +9,7 @@ from ruamel.yaml.comments import CommentedMap
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 from apme_engine.engine.yaml_utils import FormattedYAML
 from apme_engine.remediation.partition import (
+    FQCN_RULES,
     add_classification_to_violations,
     classify_violation,
     count_by_remediation_class,
@@ -290,16 +291,28 @@ class TestPartition:
         assert len(list(RemediationResolution)) == 11
 
     def test_all_registered_rules_classify_as_remaining(self) -> None:
-        """Remaining violations for registered rules classify as AI_CANDIDATE, not AUTO_FIXABLE.
+        """Remaining violations classify as AI_CANDIDATE unless they are FQCN rules.
 
         AUTO_FIXABLE is only for violations proven fixed during convergence.
+        FQCN rules without a canonical target are manual-review items: neither a
+        deterministic rewrite nor an AI guess may invent a module name.
         """
         reg = build_default_registry()
         for rule_id in reg:
             v: ViolationDict = {"rule_id": rule_id}
+            if rule_id in FQCN_RULES:
+                assert classify_violation(v) == RemediationClass.MANUAL_REVIEW, (
+                    f"Remaining targetless {rule_id} should require manual review"
+                )
+                continue
             assert classify_violation(v) == RemediationClass.AI_CANDIDATE, (
                 f"Remaining {rule_id} should classify as AI_CANDIDATE"
             )
+
+    def test_fqcn_rule_with_target_classifies_as_manual_review(self) -> None:
+        """A remaining FQCN finding stays manual because the AI gate rejects it."""
+        v: ViolationDict = {"rule_id": "M001", "resolved_fqcn": "ansible.builtin.apt"}
+        assert classify_violation(v) == RemediationClass.MANUAL_REVIEW
 
     def test_partition_play_scope_to_tier3(self) -> None:
         """Verifies play-scoped violations route to tier3 via scope metadata."""
@@ -326,15 +339,31 @@ class TestPartition:
         t1, t2, t3 = partition_violations(violations, reg)
         assert len(t3) == 2
 
-    def test_partition_task_scope_to_tier2(self) -> None:
-        """Verifies task-scoped violations route to tier2 (AI proposable)."""
+    def test_unresolved_fqcn_findings_route_to_tier3(self) -> None:
+        """Verifies unresolved FQCN findings stay manual instead of going to AI."""
         reg = TransformRegistry()
         violations: list[ViolationDict] = [
             {"rule_id": "L026", "scope": RuleScope.TASK},
             {"rule_id": "L026", "scope": "task"},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
-        assert len(t2) == 2
+        assert t1 == []
+        assert t2 == []
+        assert len(t3) == 2
+        for v in t3:
+            assert v["remediation_resolution"] == RemediationResolution.MANUAL
+
+    def test_targeted_fqcn_without_registered_transform_routes_to_tier3(self) -> None:
+        """A canonical target alone must not send an unregistered rule to AI."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "M048", "scope": RuleScope.TASK, "resolved_fqcn": "ansible.builtin.copy"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert t1 == []
+        assert t2 == []
+        assert t3 == violations
+        assert t3[0]["remediation_resolution"] == RemediationResolution.MANUAL
 
     def test_partition_block_scope_to_tier2(self) -> None:
         """Verifies block-scoped violations are AI-proposable."""
@@ -401,9 +430,9 @@ class TestPartition:
         """Verifies collection-scoped violations classify as manual-review."""
         assert classify_violation({"rule_id": "L037", "scope": RuleScope.COLLECTION}) == RemediationClass.MANUAL_REVIEW
 
-    def test_classify_task_scope_ai_candidate(self) -> None:
-        """Verifies task-scoped violations classify as AI candidate."""
-        assert classify_violation({"rule_id": "L026", "scope": RuleScope.TASK}) == RemediationClass.AI_CANDIDATE
+    def test_classify_unresolved_fqcn_manual_review(self) -> None:
+        """Verifies unresolved FQCN findings classify as manual review."""
+        assert classify_violation({"rule_id": "L026", "scope": RuleScope.TASK}) == RemediationClass.MANUAL_REVIEW
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +449,7 @@ class TestDefaultRegistry:
         for rule_id in (
             "L002",
             "L005",
+            "L026",
             "L007",
             "L008",
             "L009",
@@ -433,7 +463,6 @@ class TestDefaultRegistry:
             "L021",
             "L022",
             "L025",
-            "L026",
             "L043",
             "L046",
             "L084",
@@ -536,6 +565,72 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_for_echo_builtin(self) -> None:
+        """Keep shell for echo, whose behavior can differ from command's echo."""
+        content = textwrap.dedent("""\
+        - name: Print with shell echo
+          ansible.builtin.shell: echo -e hello
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_for_printf_builtin(self) -> None:
+        """Keep shell for Bash printf's shell-only ``-v`` option."""
+        content = textwrap.dedent("""\
+        - name: Assign with printf
+          ansible.builtin.shell: "printf -v RESULT '%s' hello"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_for_true_builtin(self) -> None:
+        """Keep shell for true, which needs no external binary."""
+        content = textwrap.dedent("""\
+        - name: Run true
+          ansible.builtin.shell: true
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+        assert "ansible.builtin.shell" in result.content
+
+    def test_no_change_for_false_builtin(self) -> None:
+        """Keep shell for false, which needs no external binary."""
+        content = textwrap.dedent("""\
+        - name: Run false
+          ansible.builtin.shell: false
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+        assert "ansible.builtin.shell" in result.content
+
+    def test_no_change_when_bash_append_assignment_is_used(self) -> None:
+        """Keep shell for Bash's PATH+= assignment form."""
+        content = textwrap.dedent("""\
+        - name: Extend PATH for command
+          ansible.builtin.shell: "PATH+=:/opt/bin printenv PATH"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_jinja_is_used_in_environment_assignment_name(self) -> None:
+        """Retain shell when Jinja renders the name on an environment assignment."""
+        content = textwrap.dedent("""\
+        - name: Set a rendered environment variable
+          ansible.builtin.shell: "{{ var_name }}=bar printenv FOO"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_for_shell_comment_in_raw_params(self) -> None:
+        """Retain shell when raw parameters contain a shell comment."""
+        content = textwrap.dedent("""\
+        - name: Keep explanatory shell comment
+          ansible.builtin.shell:
+            _raw_params: "ls --color=auto # explanation"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
     def test_no_change_when_and_present(self) -> None:
         """Verifies no change when && in command."""
         content = textwrap.dedent("""\
@@ -619,6 +714,28 @@ class TestL007ShellToCommand:
         - name: Only chdir
           ansible.builtin.shell:
             chdir: /tmp
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_module_sets_executable(self) -> None:
+        """Keep shell when its module mapping selects an interpreter."""
+        content = textwrap.dedent("""\
+        - name: Run with bash
+          ansible.builtin.shell:
+            cmd: whoami
+            executable: /bin/bash
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_task_args_set_executable(self) -> None:
+        """Keep shell when task-level args selects an interpreter."""
+        content = textwrap.dedent("""\
+        - name: Run with bash
+          ansible.builtin.shell: whoami
+          args:
+            executable: /bin/bash
         """)
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
@@ -715,7 +832,7 @@ class TestL007ShellToCommand:
 
 
 class TestFQCNTransform:
-    """Tests for fix_fqcn M001/M003 transforms."""
+    """Tests for the shared fix_fqcn transform."""
 
     def test_rewrites_short_name_with_resolved_fqcn(self) -> None:
         """Verifies short module name replaced with resolved_fqcn from violation."""
@@ -738,8 +855,8 @@ class TestFQCNTransform:
         assert "ansible.builtin.debug" in result.content
         assert "\n  debug:" not in result.content
 
-    def test_escalates_without_resolved_fqcn(self) -> None:
-        """Verifies no fix when violation lacks resolved_fqcn (escalates to AI)."""
+    def test_no_fix_without_resolved_fqcn(self) -> None:
+        """Findings without a resolver target remain for manual review."""
         content = textwrap.dedent("""\
         - name: Copy file
           copy:

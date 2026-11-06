@@ -12,6 +12,9 @@ from apme_engine.remediation.transforms._helpers import get_module_key, rename_k
 # Inspected after Jinja ``{{ }}`` is stripped so ``|quote`` is not a pipe.
 # Non-greedy so dict literals like ``{{ {'k': 'v'} }}`` are stripped too.
 _JINJA_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+_JINJA_ENV_ASSIGNMENT_RE = re.compile(r"^\s*[^=\s]*\{\{.*?\}\}[^=\s]*\+?=", re.DOTALL)
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
+_SHELL_COMMENT_RE = re.compile(r"(^|[\s;|&])#")
 _SHELL_CHARS = (
     "|",
     "&&",
@@ -25,12 +28,64 @@ _SHELL_CHARS = (
     "*",
     "?",
     "&",
+    "!",
     "(",
     ")",
     "[",
     "]",
     "$",
     "\n",
+)
+_SHELL_BUILTINS = frozenset(
+    {
+        ".",
+        ":",
+        "alias",
+        "bg",
+        "builtin",
+        "break",
+        "cd",
+        "command",
+        "continue",
+        "declare",
+        "echo",
+        "eval",
+        "exit",
+        "exec",
+        "export",
+        "false",
+        "fg",
+        "getopts",
+        "hash",
+        "help",
+        "jobs",
+        "let",
+        "local",
+        "logout",
+        "mapfile",
+        "popd",
+        "printf",
+        "pushd",
+        "read",
+        "readarray",
+        "readonly",
+        "return",
+        "set",
+        "shopt",
+        "source",
+        "suspend",
+        "time",
+        "trap",
+        "true",
+        "times",
+        "type",
+        "typeset",
+        "ulimit",
+        "umask",
+        "unalias",
+        "unset",
+        "wait",
+    }
 )
 
 _SHELL_TO_COMMAND = {
@@ -57,10 +112,23 @@ def _uses_shell_features(cmd: str) -> bool:
         True if the non-Jinja remainder is empty, still contains Jinja
         delimiters, or contains shell-specific characters.
     """
+    if _JINJA_ENV_ASSIGNMENT_RE.match(cmd) or _SHELL_COMMENT_RE.search(cmd):
+        return True
+
     stripped = _JINJA_RE.sub(" ", cmd)
     if "{{" in stripped or "}}" in stripped:
         return True
-    if not stripped.strip():
+    normalized = " ".join(stripped.split())
+    if not normalized:
+        return True
+    if _ENV_ASSIGNMENT_RE.match(normalized):
+        return True
+    first_token = normalized.split(" ", 1)[0]
+    # Quoted or escaped command names are interpreted by the shell. Decline
+    # conversion instead of trying to approximate shell tokenization.
+    if any(char in first_token for char in ("'", '"', "\\")):
+        return True
+    if first_token in _SHELL_BUILTINS:
         return True
     return any(ch in stripped for ch in _SHELL_CHARS)
 
@@ -68,9 +136,9 @@ def _uses_shell_features(cmd: str) -> bool:
 def _extract_command_string(module_args: object) -> str:
     """Return the inspectable command string from shell module arguments.
 
-    Prefers free-form / ``cmd`` over ``argv``.  Returns empty when the
-    command cannot be inspected, in which case the transform must not
-    convert shell to command.
+    Prefers ``cmd``, then free-form ``_raw_params``, then ``argv``. Returns
+    empty when the command cannot be inspected, in which case the transform
+    must not convert shell to command.
 
     Args:
         module_args: Scalar command string or argument mapping.
@@ -83,19 +151,39 @@ def _extract_command_string(module_args: object) -> str:
     if not isinstance(module_args, dict):
         return ""
     cmd = module_args.get("cmd", "")
-    if isinstance(cmd, str) and cmd:
+    if isinstance(cmd, str) and cmd.strip():
         return cmd
+    raw_params = module_args.get("_raw_params", "")
+    if isinstance(raw_params, str) and raw_params.strip():
+        return raw_params
     argv = module_args.get("argv")
     if isinstance(argv, list) and argv:
         return " ".join(str(part) for part in argv)
     return ""
 
 
+def _has_shell_executable(task: CommentedMap, module_args: object) -> bool:
+    """Return whether the shell task selects a specific interpreter.
+
+    Args:
+        task: Task mapping, which may contain task-level ``args``.
+        module_args: Arguments under the shell module key.
+
+    Returns:
+        True when ``executable`` is set on the module or task arguments.
+    """
+    if isinstance(module_args, dict) and "executable" in module_args:
+        return True
+    task_args = task.get("args")
+    return isinstance(task_args, dict) and "executable" in task_args
+
+
 def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
     """Replace shell with command when the command string uses no shell features.
 
-    Inspects free-form, ``cmd``, and ``argv``.  Refuses to convert when the
-    command cannot be inspected or contains shell metacharacters.
+    Inspects free-form, ``cmd``, ``_raw_params``, and ``argv``. Refuses to
+    convert when the command cannot be inspected, uses shell features, or
+    selects a custom executable that the command module does not support.
 
     Args:
         task: Task CommentedMap to modify in-place.
@@ -109,6 +197,8 @@ def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
         return False
 
     module_args = task.get(module_key)
+    if _has_shell_executable(task, module_args):
+        return False
     cmd = _extract_command_string(module_args)
     if not cmd or _uses_shell_features(cmd):
         return False

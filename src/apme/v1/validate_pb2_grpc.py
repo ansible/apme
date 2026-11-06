@@ -42,6 +42,11 @@ class ValidatorStub:
                 request_serializer=apme_dot_v1_dot_validate__pb2.ValidateRequest.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_validate__pb2.ValidateResponse.FromString,
                 _registered_method=True)
+        self.ValidateStream = channel.stream_unary(
+                '/apme.v1.Validator/ValidateStream',
+                request_serializer=apme_dot_v1_dot_validate__pb2.ValidateRequestChunk.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_validate__pb2.ValidateResponse.FromString,
+                _registered_method=True)
         self.Health = channel.unary_unary(
                 '/apme.v1.Validator/Health',
                 request_serializer=apme_dot_v1_dot_common__pb2.HealthRequest.SerializeToString,
@@ -60,6 +65,14 @@ class ValidatorServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ValidateStream(self, request_iterator, context):
+        """Stream a serialized ValidateRequest in bounded messages when its complete
+        payload is larger than gRPC's unary message limit.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Health(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -72,6 +85,11 @@ def add_ValidatorServicer_to_server(servicer, server):
             'Validate': grpc.unary_unary_rpc_method_handler(
                     servicer.Validate,
                     request_deserializer=apme_dot_v1_dot_validate__pb2.ValidateRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_validate__pb2.ValidateResponse.SerializeToString,
+            ),
+            'ValidateStream': grpc.stream_unary_rpc_method_handler(
+                    servicer.ValidateStream,
+                    request_deserializer=apme_dot_v1_dot_validate__pb2.ValidateRequestChunk.FromString,
                     response_serializer=apme_dot_v1_dot_validate__pb2.ValidateResponse.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
@@ -108,6 +126,33 @@ class Validator:
             target,
             '/apme.v1.Validator/Validate',
             apme_dot_v1_dot_validate__pb2.ValidateRequest.SerializeToString,
+            apme_dot_v1_dot_validate__pb2.ValidateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ValidateStream(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/apme.v1.Validator/ValidateStream',
+            apme_dot_v1_dot_validate__pb2.ValidateRequestChunk.SerializeToString,
             apme_dot_v1_dot_validate__pb2.ValidateResponse.FromString,
             options,
             channel_credentials,

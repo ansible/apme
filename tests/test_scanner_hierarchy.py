@@ -52,6 +52,17 @@ class TestExtractCollections:
         )
         assert _extract_collections(trees) == []
 
+    def test_legacy_fqcn_fixes_do_not_add_galaxy_dependencies(self) -> None:
+        """Rescanning qualified local/builtin actions must not install ansible.legacy."""
+        trees = self._make_tree(
+            [
+                ("ansible.legacy.copy", "copy"),
+                ("ansible.builtin.command", "ansible.legacy.command"),
+                ("ansible.posix.mount", "ansible.posix.mount"),
+            ]
+        )
+        assert _extract_collections(trees) == ["ansible.posix"]
+
     def test_deduplicates(self) -> None:
         """Multiple modules from the same collection produce one entry."""
         trees = self._make_tree(

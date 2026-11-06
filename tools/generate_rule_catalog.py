@@ -40,6 +40,7 @@ REMEDIATION_OUTPUT = REPO_ROOT / "docs" / "rules" / "REMEDIATION_TIER_REPORT.md"
 
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 from rule_analysis import (  # noqa: E402
+    FQCN_MANUAL_REVIEW_RULES,
     RuleMetadata,
     enrich_rule,
     tier3_breakdown_reason,
@@ -599,7 +600,7 @@ def _collect_all_rules() -> list[Rule]:
     all_rules.sort(key=_sort_key)
     fixable = _get_fixable_ids()
     for r in all_rules:
-        r.has_fixer = r.rule_id in fixable
+        r.has_fixer = r.rule_id in fixable and r.rule_id not in FQCN_MANUAL_REVIEW_RULES
         r.severity = _get_severity(r.rule_id)
     return all_rules
 
@@ -898,6 +899,7 @@ def generate_remediation_report() -> str:
     tier3_reasons = (
         "info severity",
         "cross-file / data-flow context",
+        "FQCN target or semantic equivalence needs review",
         "playbook scope",
         "collection scope",
         "role scope",

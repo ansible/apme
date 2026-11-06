@@ -33,8 +33,9 @@ from apme_engine.graph.scanner import (
     scan,
 )
 from apme_engine.remediation.ai_provider import AIProviderError
-from apme_engine.remediation.partition import partition_violations
+from apme_engine.remediation.partition import is_ai_escalatable, partition_violations
 from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.remediation.transforms.M001_fqcn import enrich_fqcn_targets
 from apme_engine.rule_ids import normalize_rule_id
 
 if TYPE_CHECKING:
@@ -376,13 +377,16 @@ class GraphRemediationEngine:
 
                 if applied_this_pass == 0:
                     tier1_stalled = True
-                    tier2.extend(tier1)
+                    ai_escalatable = [violation for violation in tier1 if is_ai_escalatable(violation)]
+                    tier2.extend(ai_escalatable)
                     logger.debug(
                         "Graph remediation pass %d: tier1 stalled (0 applied); promoted %d to tier2 (total tier2=%d)",
                         pass_num,
-                        len(tier1),
+                        len(ai_escalatable),
                         len(tier2),
                     )
+                    if not ai_escalatable and not tier2:
+                        break
                 else:
                     # Interactive Gate 1: pending_review until ApprovalRequest.
                     resolve_status = "pending_review" if interactive else "fixed"
@@ -988,6 +992,7 @@ def _record_violations(
         dirty_node_ids: When set, dirty nodes absent from violations
             get a snapshot entry recorded.
     """
+    enrich_fqcn_targets(violations)
     by_node: dict[str, list[ViolationDict]] = defaultdict(list)
     for v in violations:
         node_id = str(v.get("path", ""))

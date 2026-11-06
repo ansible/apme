@@ -59,9 +59,19 @@ server on :8181 is unused by application code.
 - Proto files live in `proto/` directory
 - Generate stubs via `scripts/gen_grpc.sh`
 - All validators implement the same `Validate()` and `Health()` RPC interface
+- Ansible uses the optional client-streaming `ValidateStream()` RPC when a
+  serialized validation request exceeds the unary message limit; the streamed
+  bytes reassemble to the same `ValidateRequest` handled by `Validate()`.
 
 ## Related Decisions
 
 - ADR-004: Podman pod deployment
 - ADR-005: Fixed ports vs service discovery
 - ADR-007: Async gRPC servers
+- ADR-075: Bounded streaming for oversized validator requests
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-11-06 | AI agent | Document bounded streaming for oversized Ansible validator requests |

@@ -903,10 +903,10 @@ class TestSessionApprovalGates:
         from apme_engine.graph.content_graph import ContentGraph
 
         remaining = {
-            "rule_id": "L005",
+            "rule_id": "L043",
             "file": "play.yml",
             "path": "play.yml/plays[0]/tasks[0]",
-            "message": "Use a module instead of command.",
+            "message": "Fix Jinja2 spacing.",
             "severity": "medium",
             "line": 1,
             "scope": "task",
@@ -1780,6 +1780,35 @@ class TestSessionRescanBridge:
 
         assert captured_rescan_fn[0] is not None, "rescan_fn must be passed to engine"
         assert callable(captured_rescan_fn[0])
+
+        # Rescans retain configuration and local plugins from the same upload.
+        from apme_engine.daemon.engine_server import _ValidatorResult
+
+        session.venv_path = "/session/venv"
+        session.working_files.update(
+            {
+                "ansible.cfg": b"[defaults]\nlibrary = ./library\n",
+                "library/apt.py": b"# local\n",
+                "docs/large-unrelated.bin": b"x" * (50 * 1024 * 1024 + 1),
+            }
+        )
+        dirty_ids = frozenset({"play.yml/plays[0]/tasks[0]"})
+        with (
+            patch.dict(
+                os.environ,
+                {"NATIVE_GRPC_ADDRESS": "native", "OPA_GRPC_ADDRESS": "opa", "ANSIBLE_GRPC_ADDRESS": "ansible"},
+            ),
+            patch("apme_engine.daemon.engine_server._call_validator", new_callable=AsyncMock) as call_validator,
+        ):
+            call_validator.return_value = _ValidatorResult()
+            await captured_rescan_fn[0](graph, dirty_ids)
+        request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "ansible")
+        assert {file.path: file.content for file in request.files} == {
+            "ansible.cfg": b"[defaults]\nlibrary = ./library\n",
+            "library/apt.py": b"# local\n",
+        }
+        assert request.ByteSize() < 50 * 1024 * 1024
+        assert set(request.dirty_node_ids) == dirty_ids
 
     async def test_bridge_uses_correct_rules_dir(self, tmp_path: Path) -> None:
         """load_graph_rules is called with the native rules directory.

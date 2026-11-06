@@ -6,8 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
+from apme_engine.engine.yaml_utils import FormattedYAML
 from apme_engine.formatter import (
     FormatResult,
+    _block_scalar_content_lines,
+    _collapse_blank_lines,
+    _strip_task_internal_blanks,
     check_idempotent,
     format_content,
     format_directory,
@@ -30,6 +34,128 @@ def _fmt(text: str, filename: str = "test.yml") -> FormatResult:
         FormatResult from format_content.
     """
     return format_content(textwrap.dedent(text), filename=filename)
+
+
+class TestCollapseBlankLines:
+    """Verify blank-line cleanup distinguishes layout from YAML scalar data."""
+
+    def test_comment_text_does_not_start_block_scalar(self) -> None:
+        """Colons and block markers in comments do not protect blank runs."""
+        text = "# example: |\n\n\nkey: value\nvalue: text # example: >\n\n\nnext: value"
+        expected = "# example: |\n\nkey: value\nvalue: text # example: >\n\nnext: value"
+        assert _collapse_blank_lines(text) == expected
+
+    def test_preserves_blank_runs_inside_block_scalar(self) -> None:
+        """Blank lines between scalar content lines remain data."""
+        text = "message: |-\n  first\n\n\n  second\nnext: value"
+        assert _collapse_blank_lines(text) == text
+
+    def test_collapses_trailing_scalar_blanks_for_clip_chomping(self) -> None:
+        """Trailing blanks in default-chomp scalars collapse with layout blanks."""
+        text = "message: |\n  first\n\n\nnext: value"
+        assert _collapse_blank_lines(text) == "message: |\n  first\n\nnext: value"
+
+    def test_preserves_trailing_scalar_blanks_for_keep_chomping(self) -> None:
+        """Keep-chomp scalars retain trailing blank lines as scalar data."""
+        text = "message: |+\n  first\n\n\nnext: value"
+        assert _collapse_blank_lines(text) == text
+
+    def test_sequence_mapping_scalar_stops_before_sibling_key(self) -> None:
+        """An empty dash-first mapping scalar does not absorb its next key."""
+        text = "- key: |2\n\n\n  sibling: value"
+        assert _collapse_blank_lines(text) == "- key: |2\n\n  sibling: value"
+        scalar_content = _block_scalar_content_lines(text.splitlines())
+        assert scalar_content == [False, True, True, False]
+
+    def test_direct_sequence_scalar_keeps_its_explicit_indent(self) -> None:
+        """Direct sequence scalars still use the dash indentation level."""
+        text = "- |2\n  first\n\n\n- second"
+        assert _collapse_blank_lines(text) == "- |2\n  first\n\n- second"
+
+    def test_full_formatter_preserves_task_like_scalar_content(self) -> None:
+        """Task spacing leaves embedded task YAML inside a scalar unchanged."""
+        text = textwrap.dedent("""\
+        tasks:
+          - name: Write embedded task list
+            ansible.builtin.copy:
+              content: |
+                tasks:
+                  - name: Embedded first
+                    ansible.builtin.debug:
+                      msg: first
+                  - name: Embedded second
+                    ansible.builtin.debug:
+                      msg: second
+          - name: Outer second
+            ansible.builtin.debug:
+              msg: done
+        """)
+        expected_content = (
+            "tasks:\n"
+            "  - name: Embedded first\n"
+            "    ansible.builtin.debug:\n"
+            "      msg: first\n"
+            "  - name: Embedded second\n"
+            "    ansible.builtin.debug:\n"
+            "      msg: second\n"
+        )
+
+        result = format_content(text)
+        formatted_data = FormattedYAML(typ="rt", pure=True, version=(1, 1)).load(result.formatted)
+
+        assert result.error is None
+        assert isinstance(formatted_data, dict)
+        formatted_tasks = formatted_data.get("tasks")
+        assert isinstance(formatted_tasks, list)
+        first_task = formatted_tasks[0]
+        assert isinstance(first_task, dict)
+        copy_task = first_task.get("ansible.builtin.copy")
+        assert isinstance(copy_task, dict)
+        assert copy_task.get("content") == expected_content
+
+    def test_task_cleanup_preserves_blank_lines_inside_block_scalar(self) -> None:
+        """Embedded YAML text in a task scalar is data, not task structure."""
+        text = textwrap.dedent("""\
+        tasks:
+          - name: Write embedded YAML
+            ansible.builtin.copy:
+              content: |
+                tasks:
+                  first: one
+
+                  second: two
+        """)
+        assert _strip_task_internal_blanks(text) == text
+
+    def test_reordered_tasks_have_no_blank_lines_between_keys(self) -> None:
+        """A moved name key does not carry task separation into the task body."""
+        text = textwrap.dedent("""\
+        tasks:
+          - ansible.builtin.debug:
+              msg: first
+
+            name: First
+
+          - ansible.builtin.debug:
+              msg: second
+
+            name: Second
+        """)
+        result = format_content(text)
+        first_name = result.formatted.index("name: First")
+        first_action = result.formatted.index("ansible.builtin.debug", first_name)
+        assert "\n\n" not in result.formatted[first_name:first_action]
+        first_task_end = result.formatted.index("name: Second")
+        between_tasks = result.formatted[first_action:first_task_end]
+        assert between_tasks.count("\n\n") == 1
+
+    def test_large_task_list_keeps_only_task_separators(self) -> None:
+        """Task layout classification handles many repeated siblings."""
+        tasks = [f"  - ansible.builtin.debug:\n\n    when: task_{index}" for index in range(1000)]
+        text = "tasks:\n" + "\n\n".join(tasks)
+        result = _strip_task_internal_blanks(text)
+        assert "ansible.builtin.debug:\n\n    when:" not in result
+        assert result.count("\n\n") == 999
 
 
 # ---------------------------------------------------------------------------

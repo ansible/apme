@@ -144,7 +144,13 @@ class _FQCNRule(GraphRule):
             verdict=True,
             node_id=node_id,
             file=(node.file_path, node.line_start or 0),
-            detail={"message": f"Use FQCN for {node.module}"},
+            detail={
+                "message": f"Use FQCN for {node.module}",
+                # Real M001 findings come from the Ansible validator with the
+                # canonical target attached; FQCN remediation now refuses to
+                # guess one, so the fixture has to carry it like production.
+                "fqcn": f"ansible.builtin.{node.module}",
+            },
         )
 
 
@@ -356,6 +362,7 @@ class TestGraphRemediationEngine:
                 "file": node.file_path,
                 "line": 3,
                 "message": "Use FQCN for apt",
+                "resolved_fqcn": "ansible.builtin.apt",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
@@ -574,6 +581,7 @@ class TestGraphRemediationEngine:
                 "file": node.file_path,
                 "line": 3,
                 "message": "Use FQCN for apt",
+                "resolved_fqcn": "ansible.builtin.apt",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
@@ -610,6 +618,10 @@ class TestGraphRemediationEngine:
                         "file": "/workspace/site.yml",
                         "line": 3,
                         "message": "Still non-FQCN",
+                        # A real remaining M001 carries the resolver target;
+                        # without one the new policy (correctly) parks it for
+                        # manual review and the loop stops converging.
+                        "resolved_fqcn": "ansible.builtin.apt",
                         "severity": "medium",
                         "source": "native",
                         "scope": "task",
@@ -630,6 +642,7 @@ class TestGraphRemediationEngine:
                 "file": node.file_path,
                 "line": 3,
                 "message": "Use FQCN for apt",
+                "resolved_fqcn": "ansible.builtin.apt",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
@@ -705,6 +718,7 @@ class TestGraphRemediationEngine:
                 "file": "/workspace/site.yml",
                 "line": 3,
                 "message": "Use FQCN for apt",
+                "resolved_fqcn": "ansible.builtin.apt",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
@@ -792,6 +806,7 @@ class TestGraphRemediationEngine:
                 "file": node.file_path,
                 "line": 3,
                 "message": "Use FQCN for apt",
+                "resolved_fqcn": "ansible.builtin.apt",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
@@ -821,8 +836,14 @@ class TestGraphRemediationEngine:
         assert len(report.ai_proposals) >= 1
         assert not report.oscillation_detected
 
-    async def test_tier1_stall_promotes_to_ai(self) -> None:
-        """When ALL violations are Tier 1 but transforms fail, they are promoted to Tier 2 for AI."""
+    async def test_tier1_stall_on_fqcn_stays_manual(self) -> None:
+        """A stalled FQCN rewrite is never handed to the AI provider.
+
+        FQCN rules are excluded from AI escalation deliberately: the model must
+        not invent a module name. Even with a resolvable target and a
+        registered transform that keeps failing, the finding stays for manual
+        review instead of being proposed by AI.
+        """
         from unittest.mock import AsyncMock
 
         from apme_engine.remediation.ai_provider import AINodeFix
@@ -855,6 +876,7 @@ class TestGraphRemediationEngine:
                 "file": node.file_path,
                 "line": 3,
                 "message": "Use FQCN for apt",
+                "resolved_fqcn": "ansible.builtin.apt",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
@@ -869,9 +891,9 @@ class TestGraphRemediationEngine:
         )
         report = await engine.remediate(initial_violations=violations)
 
-        ai_provider.propose_node_fix.assert_called()
-        assert len(report.ai_proposals) >= 1
-        assert report.ai_proposals[0].rule_ids == ["M001"]
+        ai_provider.propose_node_fix.assert_not_called()
+        assert report.ai_proposals == []
+        assert any(v["rule_id"] == "M001" for v in report.remaining_violations)
 
     async def test_ai_resolved_violations_pending_until_approved(self) -> None:
         """AI-resolved violations are 'proposed', not 'fixed', until approved."""
@@ -890,19 +912,19 @@ class TestGraphRemediationEngine:
         ai_provider.propose_node_fix = AsyncMock(
             return_value=AINodeFix(
                 fixed_snippet=_TASK_YAML_FQCN,
-                rule_ids=["M001"],
-                explanation="Fixed FQCN via AI",
+                rule_ids=["L043"],
+                explanation="Fixed Jinja2 spacing via AI",
                 confidence=0.9,
             ),
         )
 
         violations: list[ViolationDict] = [
             {
-                "rule_id": "M001",
+                "rule_id": "L043",
                 "path": node.node_id,
                 "file": node.file_path,
                 "line": 3,
-                "message": "Use FQCN for apt",
+                "message": "Fix Jinja2 spacing",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",
@@ -946,6 +968,7 @@ class TestGraphRemediationEngine:
                 "file": node.file_path,
                 "line": 3,
                 "message": "Use FQCN for apt",
+                "resolved_fqcn": "ansible.builtin.apt",
                 "severity": "medium",
                 "source": "native",
                 "scope": "task",

@@ -15,15 +15,17 @@ import logging
 import os
 import shutil
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import grpc.aio
+from google.protobuf.message import DecodeError
 
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagnostics
-from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
+from apme.v1.validate_pb2 import ValidateRequest, ValidateRequestChunk, ValidateResponse
 from apme_engine.daemon.fs_utils import write_chunked_fs
 from apme_engine.daemon.validator_errors import (
     PUBLIC_VALIDATOR_ERROR,
@@ -41,6 +43,7 @@ from apme_engine.validators.base import ScanContext
 logger = logging.getLogger("apme.ansible")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ANSIBLE_MAX_RPCS", "8"))
+_MAX_STREAMED_VALIDATE_REQUEST_BYTES = 512 * 1024 * 1024
 
 
 @dataclass
@@ -63,6 +66,7 @@ def _run_ansible_validate(
     req_id: str,
     venv_path: str,
     content_graph_data: bytes = b"",
+    check_syntax: bool = True,
 ) -> _AnsibleResult:
     """Run Ansible validation against a session-scoped venv provided by Engine.
 
@@ -73,6 +77,7 @@ def _run_ansible_validate(
         req_id: Request ID for logging.
         venv_path: Session venv path from Engine (read-only).
         content_graph_data: Serialized ContentGraph for L057 node resolution.
+        check_syntax: Run syntax checks as well as node-level plugin checks.
 
     Returns:
         _AnsibleResult with violations and version.
@@ -101,7 +106,9 @@ def _run_ansible_validate(
             root_dir=str(temp_dir),
         )
         validator = AnsibleValidator(venv_root=venv_root)
-        run_result = validator.run_with_timing(scan_context, content_graph_data=content_graph_data)
+        run_result = validator.run_with_timing(
+            scan_context, content_graph_data=content_graph_data, check_syntax=check_syntax
+        )
         return _AnsibleResult(
             run_result=run_result,
             ansible_core_version=raw_version,
@@ -167,6 +174,7 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     req_id,
                     request.venv_path or "",
                     bytes(request.content_graph_data),
+                    not bool(request.dirty_node_ids),
                 )
 
                 total_ms = (time.monotonic() - t0) * 1000
@@ -212,6 +220,42 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
             except Exception as e:
                 logger.exception("Ansible: unhandled error (req=%s): %s", req_id, e)
                 return infra_error_response(req_id, sink.entries)
+
+    async def ValidateStream(
+        self,
+        request_iterator: AsyncIterator[ValidateRequestChunk],
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> ValidateResponse:
+        """Receive an oversized serialized request through bounded gRPC chunks.
+
+        Args:
+            request_iterator: Chunks of a serialized ``ValidateRequest``.
+            context: gRPC servicer context.
+
+        Returns:
+            The same validation response as the unary ``Validate`` method.
+        """
+        serialized = bytearray()
+        try:
+            async for chunk in request_iterator:
+                if len(serialized) + len(chunk.serialized_request_chunk) > _MAX_STREAMED_VALIDATE_REQUEST_BYTES:
+                    logger.warning("Ansible: streamed validation request exceeded size limit")
+                    return infra_error_response("", [])
+                serialized.extend(chunk.serialized_request_chunk)
+        except Exception as exc:
+            logger.warning("Ansible: failed while receiving streamed request: %s", exc)
+            return infra_error_response("", [])
+
+        if not serialized:
+            return infra_error_response("", [])
+
+        request = ValidateRequest()
+        try:
+            request.ParseFromString(bytes(serialized))
+        except DecodeError:
+            logger.warning("Ansible: received malformed streamed validation request")
+            return infra_error_response("", [])
+        return await self.Validate(request, context)
 
     async def Health(
         self,

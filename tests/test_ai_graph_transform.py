@@ -138,7 +138,12 @@ class _FQCNRule(GraphRule):
             verdict=True,
             node_id=node_id,
             file=(node.file_path, node.line_start or 0),
-            detail={"message": f"Use FQCN for {node.module}"},
+            detail={
+                "message": f"Use FQCN for {node.module}",
+                # Production M001 findings carry the resolver target; FQCN
+                # remediation no longer guesses one, so the fixture must too.
+                "fqcn": f"ansible.builtin.{node.module}",
+            },
         )
 
 

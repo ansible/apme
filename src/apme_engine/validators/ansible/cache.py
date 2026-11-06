@@ -12,6 +12,7 @@ process and dies with it.
 from __future__ import annotations
 
 import glob as _glob
+import hashlib
 import json
 import logging
 import os
@@ -204,10 +205,22 @@ class PluginCache:
         """
         with self._lock:
             core_version = self._resolve_version(venv_root, "ansible", "builtin")
+        # A redirect can point into another collection. Its installed version
+        # matters even when the source collection's version has not changed.
+        manifests = sorted(_glob.glob(f"{venv_root}/lib/python*/site-packages/ansible_collections/*/*/MANIFEST.json"))
+        inventory = hashlib.sha256()
+        for manifest_path in manifests:
+            inventory.update(manifest_path.split("/site-packages/", 1)[-1].encode())
+            try:
+                with open(manifest_path, "rb") as manifest:
+                    inventory.update(manifest.read())
+            except OSError:
+                inventory.update(b"unreadable")
+        inventory_suffix = f"|collections:{inventory.hexdigest()}" if manifests else ""
         env_fp = _collection_search_fingerprint(env_extra)
         if env_fp:
-            return f"core:{core_version}|{env_fp}"
-        return f"core:{core_version}"
+            return f"core:{core_version}{inventory_suffix}|{env_fp}"
+        return f"core:{core_version}{inventory_suffix}"
 
     def _make_key(
         self,

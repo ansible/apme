@@ -72,7 +72,7 @@ class NonFQCNUseGraphRule(GraphRule):
             return None
         mod = node.module or ""
         verdict = bool(mod and "." not in mod)
-        detail: YAMLDict = {"module": mod}
+        detail: YAMLDict = {"module": mod, "original_module": mod}
         return GraphRuleResult(
             verdict=verdict,
             detail=detail if verdict else None,

@@ -440,6 +440,33 @@ class TestNativeDocRuleTestStatus:
         assert rules[0].test_files == []
 
 
+class TestFQCNRemediationTier:
+    """FQCN suggestions without safe automatic equivalence stay manual."""
+
+    def test_l026_is_automatic_and_m048_stays_manual(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Distinguish runtime qualification from a builtin replacement suggestion.
+
+        Args:
+            monkeypatch: Pytest fixture for replacing catalog discovery inputs.
+        """
+        assert _mod.enrich_rule("L026", "Native", "", has_fixer=True).remediation_tier == "auto"
+        assert _mod.enrich_rule("M048", "Ansible", "", has_fixer=True).remediation_tier == "manual"
+
+        rows = [
+            _mod.Rule(rule_id="L026", validator="Native", description="L026"),
+            _mod.Rule(rule_id="M048", validator="Ansible", description="M048"),
+        ]
+        monkeypatch.setattr(_mod, "_collect_opa_rules", lambda: [])
+        monkeypatch.setattr(_mod, "_collect_native_rules", lambda: [rows[0]])
+        monkeypatch.setattr(_mod, "_collect_ansible_rules", lambda: [rows[1]])
+        monkeypatch.setattr(_mod, "_collect_gitleaks_rules", lambda: [])
+        monkeypatch.setattr(_mod, "_get_fixable_ids", lambda: {"L026", "M048"})
+        monkeypatch.setattr(_mod, "_get_severity", lambda _rule_id: "low")
+
+        collected = _mod._collect_all_rules()
+        assert {rule.rule_id for rule in collected if rule.has_fixer} == {"L026"}
+
+
 class TestParseFrontmatterYamlFallback:
     """Tests for YAML-error fallback in frontmatter parsing."""
 

@@ -51,8 +51,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
 | 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 72 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
-| 3 | manual | 65 | Play/role/collection scope, cross-file, or info severity |
+| 2 | ai | 71 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 3 | manual | 66 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
 
@@ -197,7 +197,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M030 | M | Native | medium | task | ai | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | Yes | Yes | — |
 | M031 | M | Native | medium | task | ai | Register sensitive-looking string values with register_secret for output masking (ansible-core 2.22+). | Yes | Yes | Yes | — |
 | M047 | M | Native | medium | inventory | manual | Inventory plugin disable_lookups argument has no effect (removed in 2.23) | Yes | Yes | Yes | — |
-| M048 | M | Ansible | low | task | ai | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
+| M048 | M | Ansible | low | task | manual | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
 | P001 | P | Ansible | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | P | Ansible | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | P | Ansible | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -395,7 +395,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M002 | high | task | auto | Deprecated module — module has deprecation metadata. | Yes | Yes | Yes | Yes |
 | M003 | high | task | auto | Module redirect — module name was redirected to a new FQCN. | Yes | Yes | Yes | Yes |
 | M004 | error | task | auto | Removed module — tombstoned module that raises AnsiblePluginRemovedError. | Yes | Yes | Yes | Yes |
-| M048 | low | task | ai | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
+| M048 | low | task | manual | Prefer ansible.builtin when a non-builtin FQCN has a builtin equivalent. | Yes | Yes | Yes | — |
 | P001 | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |

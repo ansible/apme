@@ -176,6 +176,15 @@ Classification happens server-side in `engine_server.py` before proto serializat
 
 ## Implementation Notes
 
+- FQCN qualification is deterministic when ansible-core provides a target whose
+  qualified spelling preserves the selected module and action plugin files.
+  Runtime M001/M003 targets enrich L026 findings for the same file, node, and
+  original module before ledger registration. Missing targets and stalled
+  FQCN rewrites remain manual rather than being sent to AI; M048 builtin-twin
+  suggestions do not establish equivalence and cannot supply these targets.
+  M003 diagnostics use the module loader's redirect chain; a rewrite target is
+  attached only when the same spelling preserves both module and action plugin
+  selections.
 - `RemediationClass` and `RemediationResolution` are `str, Enum` (not `StrEnum`) for Python 3.10 compatibility
 - `add_classification_to_violations()` mutates the violation list in place and returns `None` — callers should not capture the return value
 - The `_to_str_value()` helper in `partition.py` handles both enum members and plain strings when extracting values for dict lookups (necessary because `str(enum_member)` returns `"ClassName.MEMBER"` with `str, Enum`)
@@ -197,3 +206,5 @@ Classification happens server-side in `engine_server.py` before proto serializat
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-18 | AI agent | Initial proposal and acceptance |
+| 2026-11-06 | AI agent | Document verified runtime FQCN targets and per-finding manual fallback |
+| 2026-11-06 | AI agent | Keep module redirect diagnostics separate from action qualification; omit incompatible rewrite targets |

@@ -26,6 +26,13 @@ YAML_EXTENSIONS = {".yml", ".yaml"}
 JINJA_NORMALIZE_RE = re.compile(r"\{\{(\s*)(.*?)(\s*)\}\}")
 
 _JINJA_PIPE_RE = re.compile(r"(?<!\|)\|(?!\|)")
+_YAML_COMMENT_KEY_RE = re.compile(r"^(?P<indent> *)(?P<key>[^#\s][^:]*):(?:\s|$)")
+_BLOCK_SCALAR_HEADER_RE = re.compile(
+    r"^(?P<indent> *)(?:.*?:\s*|-\s+)"
+    r"(?:(?:&[^\s]+|![^\s]+)\s+)*"
+    r"(?P<style>[>|])(?P<modifiers>(?:[+-]?\d?|\d?[+-]?))(?:\s+#.*)?$",
+)
+_SEQUENCE_MAPPING_HEADER_RE = re.compile(r"^-\s+.+?:")
 
 TASK_KEY_ORDER = [
     "name",
@@ -229,27 +236,270 @@ def _quote_free_form_args(text: str) -> str:
     return "\n".join(lines)
 
 
-def _strip_stray_blanks(text: str) -> str:
-    """Remove interior blank lines inserted by ruamel round-trip dumping.
+def _collapse_blank_lines(text: str) -> str:
+    """Collapse consecutive formatting blank lines to one.
 
-    Keeps blank lines before document markers (``---``) and at EOF.
-    Intentional task-level spacing is re-inserted by ``_add_task_spacing``.
+    Existing single blank lines are kept. Runs of multiple blank lines are
+    reduced to one outside YAML block scalars. Literal and folded scalar
+    contents are preserved because their blank lines are data.
 
     Args:
         text: YAML text possibly containing stray blank lines.
 
     Returns:
-        Cleaned text with interior blank lines removed.
+        Text with layout blank lines reduced to at most one.
     """
-    lines = text.split("\n")
     result: list[str] = []
-    for i, line in enumerate(lines):
-        if line.strip() == "" and i > 0 and i < len(lines) - 1:
-            next_line = lines[i + 1] if i + 1 < len(lines) else ""
-            if next_line.startswith("---") or next_line.strip() == "":
+    block_parent_indent: int | None = None
+    block_content_indent: int | None = None
+    block_explicit_indent: int | None = None
+    block_keep_trailing_blanks = False
+    pending_scalar_blanks: list[str] = []
+
+    for line in text.split("\n"):
+        if block_parent_indent is not None:
+            if line.strip() == "":
+                pending_scalar_blanks.append(line)
+                continue
+
+            line_indent = len(line) - len(line.lstrip(" "))
+            min_content_indent = block_explicit_indent or block_content_indent
+            if line_indent <= block_parent_indent or (
+                min_content_indent is not None and line_indent < min_content_indent
+            ):
+                if block_keep_trailing_blanks:
+                    result.extend(pending_scalar_blanks)
+                elif pending_scalar_blanks and (not result or result[-1].strip() != ""):
+                    result.append("")
+                pending_scalar_blanks.clear()
+                block_parent_indent = None
+                block_content_indent = None
+                block_explicit_indent = None
+                block_keep_trailing_blanks = False
+            else:
+                result.extend(pending_scalar_blanks)
+                pending_scalar_blanks.clear()
+                if block_content_indent is None and block_explicit_indent is None:
+                    block_content_indent = line_indent
                 result.append(line)
                 continue
+
+        if line.strip() == "":
+            if result and result[-1].strip() == "":
+                continue
+            result.append("")
+        else:
+            result.append(line)
+            # Strip YAML comments before checking the header. Otherwise a
+            # colon and ``|`` or ``>`` in comment text can look like a scalar.
+            header_text = _without_yaml_comment(line).rstrip()
+            header = _BLOCK_SCALAR_HEADER_RE.match(header_text) if header_text else None
+            if header is not None:
+                block_parent_indent, block_explicit_indent = _block_scalar_indentation(header)
+                modifiers = header.group("modifiers")
+                block_keep_trailing_blanks = "+" in modifiers
+    if pending_scalar_blanks:
+        if block_keep_trailing_blanks:
+            result.extend(pending_scalar_blanks)
+        elif not result or result[-1].strip() != "":
+            result.append("")
+    return "\n".join(result)
+
+
+def _without_yaml_comment(line: str) -> str:
+    """Return a YAML line without its unquoted trailing comment.
+
+    A hash starts a YAML comment only outside quotes and when preceded by
+    whitespace (or at the beginning of the line). This keeps ``: |`` text in
+    comments and quoted scalars from being mistaken for block headers.
+
+    Args:
+        line: YAML line to inspect.
+
+    Returns:
+        The part of the line before a YAML comment, if present.
+    """
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quote = None
+        elif quote == "'":
+            if char == "'":
+                if index + 1 < len(line) and line[index + 1] == "'":
+                    index += 1
+                else:
+                    quote = None
+        elif char in {'"', "'"}:
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+        index += 1
+    return line
+
+
+def _block_scalar_indentation(header: re.Match[str]) -> tuple[int, int | None]:
+    """Return the parent and explicit content indentation for a scalar header.
+
+    A block scalar in a mapping that follows a sequence dash is indented from
+    the mapping key, while a scalar used directly as a sequence item is
+    indented from the dash. The distinction matters for headers such as
+    ``- key: |2`` and ``- |2``.
+
+    Args:
+        header: Match from ``_BLOCK_SCALAR_HEADER_RE``.
+
+    Returns:
+        A pair of (parent indentation, explicit content indentation).
+    """
+    leading_indent = len(header.group("indent"))
+    header_prefix = header.group(0)[leading_indent : header.start("style") - header.start()]
+    parent_indent = (
+        leading_indent + 2 if _SEQUENCE_MAPPING_HEADER_RE.match(header_prefix) is not None else leading_indent
+    )
+    indent_indicator = re.search(r"\d", header.group("modifiers"))
+    explicit_indent = parent_indent + int(indent_indicator.group()) if indent_indicator is not None else None
+    return parent_indent, explicit_indent
+
+
+def _block_scalar_content_lines(lines: list[str]) -> list[bool]:
+    """Mark block scalar content so later line passes do not parse it as YAML.
+
+    Args:
+        lines: YAML text split into lines.
+
+    Returns:
+        A mask that is true for scalar content and its blank lines.
+    """
+    content = [False] * len(lines)
+    parent_indent: int | None = None
+    content_indent: int | None = None
+    explicit_indent: int | None = None
+
+    for index, line in enumerate(lines):
+        if parent_indent is not None:
+            if line.strip() == "":
+                content[index] = True
+                continue
+            line_indent = len(line) - len(line.lstrip(" "))
+            minimum_indent = explicit_indent or content_indent
+            if line_indent > parent_indent and (minimum_indent is None or line_indent >= minimum_indent):
+                content[index] = True
+                if content_indent is None and explicit_indent is None:
+                    content_indent = line_indent
+                continue
+            parent_indent = None
+            content_indent = None
+            explicit_indent = None
+
+        if line.strip() == "":
             continue
+        header_text = _without_yaml_comment(line).rstrip()
+        header = _BLOCK_SCALAR_HEADER_RE.match(header_text) if header_text else None
+        if header is not None:
+            parent_indent, explicit_indent = _block_scalar_indentation(header)
+
+    return content
+
+
+def _task_layout_membership(lines: list[str], scalar_content: list[bool]) -> tuple[set[int], set[int]]:
+    """Identify task list items and task keys in one forward pass.
+
+    Args:
+        lines: YAML text split into lines.
+        scalar_content: Mask returned by ``_block_scalar_content_lines``.
+
+    Returns:
+        Index sets for task-list items and mapping keys directly inside tasks.
+    """
+    bare_task_list = _is_bare_task_list(lines, scalar_content)
+    last_keys: dict[int, str] = {}
+    last_items: dict[int, bool] = {}
+    task_items: set[int] = set()
+    task_keys: set[int] = set()
+
+    for index, line in enumerate(lines):
+        if scalar_content[index] or not line.strip() or line.lstrip().startswith("#"):
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        for saved_indent in [*last_keys, *last_items]:
+            if saved_indent >= indent:
+                last_keys.pop(saved_indent, None)
+                last_items.pop(saved_indent, None)
+
+        item = _TASK_ITEM_RE.match(line)
+        if item is not None:
+            item_indent = len(item.group(1))
+            parent_key = last_keys.get(item_indent - 2, "")
+            is_task_item = (item_indent == 0 and bare_task_list) or parent_key in _TASK_LIST_KEYS
+            last_items[item_indent] = is_task_item
+            if is_task_item:
+                task_items.add(index)
+
+        key = _YAML_COMMENT_KEY_RE.match(line)
+        if key is not None:
+            key_indent = len(key.group("indent"))
+            if last_items.get(key_indent - 2, False):
+                task_keys.add(index)
+            last_keys[key_indent] = key.group("key").strip("- ")
+
+    return task_items, task_keys
+
+
+def _strip_task_internal_blanks(text: str) -> str:
+    """Remove blank lines between sibling keys inside a reordered task.
+
+    Key reordering can move a blank-line comment token with its key and leave
+    a formatting gap inside the task. Task spacing is added separately after
+    this pass, so blank lines between task items remain intact.
+
+    Args:
+        text: YAML text after scalar-aware blank-line collapsing.
+
+    Returns:
+        Text without blank lines between sibling task keys.
+    """
+    lines = text.split("\n")
+    scalar_content = _block_scalar_content_lines(lines)
+    task_items, task_keys = _task_layout_membership(lines, scalar_content)
+    result: list[str] = []
+    for index, line in enumerate(lines):
+        if line.strip() != "":
+            result.append(line)
+            continue
+        if scalar_content[index]:
+            result.append(line)
+            continue
+
+        previous = index - 1
+        while previous >= 0 and lines[previous].strip() == "":
+            previous -= 1
+        following = index + 1
+        while following < len(lines) and lines[following].strip() == "":
+            following += 1
+        if previous < 0 or following >= len(lines):
+            result.append(line)
+            continue
+
+        previous_key = _YAML_COMMENT_KEY_RE.match(lines[previous])
+        following_key = _YAML_COMMENT_KEY_RE.match(lines[following])
+        if previous_key is not None and following_key is not None:
+            indent = len(previous_key.group("indent"))
+            if indent == len(following_key.group("indent")) and indent >= 2 and previous in task_keys:
+                continue
+            task_item = _TASK_ITEM_RE.match(lines[previous])
+            if task_item is not None:
+                item_indent = len(task_item.group(1))
+                if len(following_key.group("indent")) == item_indent + 2 and previous in task_items:
+                    continue
         result.append(line)
     return "\n".join(result)
 
@@ -261,7 +511,7 @@ _TASK_ITEM_RE = re.compile(r"^(\s*)- \S")
 _PLAY_KEYS = frozenset({"hosts", "import_playbook"})
 
 
-def _is_bare_task_list(lines: list[str]) -> bool:
+def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = None) -> bool:
     """Return True if the file is a bare task list (no ``tasks:`` parent key).
 
     Bare task lists start with ``---`` followed by ``- name:`` or ``- module:``
@@ -270,13 +520,16 @@ def _is_bare_task_list(lines: list[str]) -> bool:
 
     Args:
         lines: Split lines of the YAML file.
+        scalar_content: Optional mask for lines inside block scalars.
 
     Returns:
         True if the file is a bare task list.
     """
     first_item_lines: list[str] = []
     found_first = False
-    for line in lines:
+    for index, line in enumerate(lines):
+        if scalar_content is not None and scalar_content[index]:
+            continue
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or stripped == "---":
             continue
@@ -316,10 +569,14 @@ def _add_task_spacing(text: str) -> str:
     """
     lines = text.split("\n")
     result: list[str] = [lines[0]] if lines else []
-    in_task_list = _is_bare_task_list(lines)
+    scalar_content = _block_scalar_content_lines(lines)
+    in_task_list = _is_bare_task_list(lines, scalar_content)
     task_list_indent = -1 if not in_task_list else 0
     for i in range(1, len(lines)):
         line = lines[i]
+        if scalar_content[i]:
+            result.append(line)
+            continue
         stripped = line.rstrip()
 
         if stripped.endswith(":") and stripped.lstrip("- ").rstrip(":").strip() in _TASK_LIST_KEYS:
@@ -798,7 +1055,8 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     try:
         formatted = yaml.dumps(data)
         formatted = _fix_jinja_spacing(formatted)
-        formatted = _strip_stray_blanks(formatted)
+        formatted = _collapse_blank_lines(formatted)
+        formatted = _strip_task_internal_blanks(formatted)
         formatted = _add_task_spacing(formatted)
     except Exception as exc:
         return FormatResult(
