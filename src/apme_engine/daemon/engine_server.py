@@ -215,6 +215,7 @@ def _ansible_context_files(files: Mapping[str, bytes]) -> list[File]:
             selected.append(File(path=path, content=content))
     return selected
 
+
 # Venv guard contention: when another session's install holds the
 # generation write guard, re-queue with backoff instead of aborting the
 # scan on first contention. Only guard-acquisition timeouts retry —
