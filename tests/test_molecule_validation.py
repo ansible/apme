@@ -236,6 +236,34 @@ def test_l115_honors_default_for_known_empty_environment_value() -> None:
     )
 
 
+@pytest.mark.parametrize("operator", [":-", "-"])  # type: ignore[untyped-decorator]
+def test_environment_default_without_supplied_value(operator: str) -> None:
+    """Static defaults resolve when the snapshot supplies no variable value.
+
+    Args:
+        operator: Molecule's supported default substitution operator.
+    """
+    assert (
+        _scan(
+            f"provisioner:\n  playbooks:\n    converge: ${{PLAYBOOK{operator}converge.yml}}\n",
+            {"molecule/default/converge.yml": PLAYBOOK},
+        )
+        == []
+    )
+
+
+def test_expanded_recursive_yaml_does_not_abort_independent_scenarios() -> None:
+    """Environment substitution cannot bypass the YAML alias guard."""
+    findings = _scan(
+        "x: ${INJECT}\n",
+        {
+            ".env.yml": b"INJECT: '&loop [*loop]'\n",
+            "molecule/good/molecule.yml": b"scenario:\n  test_sequence: [invalid]\n",
+        },
+    )
+    assert {item["rule_id"] for item in findings} == {"L112", "L114"}
+
+
 def test_l115_preserves_escaped_dollar_in_literal_filename() -> None:
     """Escaped dollars remain literal rather than becoming environment inputs."""
     assert (
@@ -306,7 +334,8 @@ def test_l116_accepts_import_only_playbooks_without_evaluating_jinja() -> None:
             {
                 "molecule/default/converge.yml": (
                     b'- ansible.builtin.import_playbook: "{{ molecule_project_directory }}/site.yml"\n'
-                )
+                ),
+                "site.yml": PLAYBOOK,
             },
         )
         == []
@@ -651,3 +680,292 @@ def test_bundled_molecule_profiles_have_verified_provenance() -> None:
         blob = (assets / f"molecule-{profile['version']}.json").read_bytes()
         assert hashlib.sha256(blob).hexdigest() == profile["schema_sha256"]
         assert profile["commit"] in profile["schema_url"]
+        driver_blob = (assets / f"driver-{profile['version']}.json").read_bytes()
+        assert hashlib.sha256(driver_blob).hexdigest() == profile["driver_schema_sha256"]
+        assert profile["commit"] in profile["driver_schema_url"]
+
+
+def test_source_identity_and_inline_suppression_remain_local() -> None:
+    """Independent missing references retain distinct full-mode suppressions."""
+    from apme.v1.engine_pb2 import RuleConfig
+    from apme_engine.daemon.engine_server import _apply_rule_configs, _filter_file_noqa
+    from apme_engine.fingerprint import compute_fingerprint
+
+    findings = _scan("provisioner:\n  playbooks:\n    converge: missing.yml  # noqa: L113\n    prepare: other.yml\n")
+    assert len(findings) == 2
+    fingerprints = {compute_fingerprint(str(item["rule_id"]), str(item["original_yaml"])) for item in findings}
+    assert len(fingerprints) == 2
+    kept = _filter_file_noqa(findings)
+    assert len(kept) == 1
+    assert kept[0]["line"] == 4
+    assert (
+        len(_filter_file_noqa(_apply_rule_configs(findings, [RuleConfig(rule_id="L113", enabled=True, enforced=True)])))
+        == 2
+    )
+
+
+def test_yaml_merge_preserves_explicit_reference_origins() -> None:
+    """An anchored missing reference retains its original source and line."""
+    findings = _scan("provisioner:\n  env: &playbooks\n    converge: missing.yml\n  playbooks:\n    <<: *playbooks\n")
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L113"
+    assert findings[0]["line"] == 3
+
+
+def test_l116_accepts_yaml_merged_play_keys() -> None:
+    """A hosts key provided through a safe YAML merge is a valid play."""
+    assert not _scan(
+        "provisioner:\n  playbooks:\n    converge: converge.yml\n",
+        {
+            "molecule/default/converge.yml": b"- <<: {hosts: all}\n  tasks: []\n",
+        },
+    )
+
+
+def test_interpolation_precedes_flow_sequence_parsing() -> None:
+    """Molecule placeholders can become valid YAML only after substitution."""
+    assert not _scan("provisioner:\n  ansible_args: [${ARG}]\n", {".env.yml": b"ARG: --check\n"})
+
+
+def test_unresolved_flow_sequence_needs_context() -> None:
+    """Unexpanded flow placeholders cannot prove that config YAML is invalid."""
+    findings = _scan("provisioner:\n  ansible_args: [${ARG}]\n")
+    assert {item["rule_id"] for item in findings} == {"L115"}
+
+
+def test_legacy_stage_mapping_is_not_a_path() -> None:
+    """Only driver override sections may map stage names to references."""
+    findings = _scan("provisioner:\n  playbooks:\n    converge: {}\n")
+    assert any(item["rule_id"] == "L113" for item in findings)
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "source",
+    [
+        "driver:\n  options:\n    managed: wrong\n",
+        "platforms:\n  - groups: [test]\n",
+    ],
+)
+def test_default_driver_schema_is_assessed(source: str) -> None:
+    """The built-in driver contract supplements the permissive core schema.
+
+    Args:
+        source: Invalid default-driver fragment.
+    """
+    assert any(item["rule_id"] == "L112" for item in _scan(source))
+
+
+def test_unknown_conditional_selector_does_not_prove_branch_invalid() -> None:
+    """An unresolved dependency type cannot select a definitive schema branch."""
+    findings = _scan("dependency:\n  name: ${DEPENDENCY}\n")
+    assert {item["rule_id"] for item in findings} == {"L115"}
+
+
+@pytest.mark.parametrize("section", ["provisioner", "ansible"])  # type: ignore[untyped-decorator]
+def test_misspelled_playbook_stage_is_not_silently_accepted(section: str) -> None:
+    """A present file does not make an unused stage name valid.
+
+    Args:
+        section: Legacy or native configuration family.
+    """
+    findings = _scan(
+        f"{section}:\n  playbooks:\n    convergge: converge.yml\n", {"molecule/default/converge.yml": PLAYBOOK}
+    )
+    assert any(item["rule_id"] == "L112" for item in findings)
+
+
+@pytest.mark.parametrize("section", ["provisioner", "ansible"])  # type: ignore[untyped-decorator]
+def test_unknown_playbook_stage_needs_context(section: str) -> None:
+    """An unresolved key cannot prove a playbook stage is invalid.
+
+    Args:
+        section: Legacy or native configuration family.
+    """
+    findings = _scan(f'{section}:\n  playbooks:\n    "${{STAGE}}": converge.yml\n')
+    assert {item["rule_id"] for item in findings} == {"L115"}
+
+
+def test_ignored_lifecycle_arguments_have_a_semantic_warning() -> None:
+    """Unused converge arguments are diagnosed without treating them as files."""
+    findings = _scan('scenario:\n  test_sequence: ["converge ignored.yml"]\n')
+    assert {item["rule_id"] for item in findings} == {"L114"}
+    assert "ignored" in str(findings[0]["message"])
+
+
+def test_scenario_name_uses_merged_override() -> None:
+    """Explicit and inherited scenario names resolve before the second load."""
+    for shared in (False, True):
+        name = "scenario:\n  name: renamed\n"
+        source = "provisioner:\n  playbooks:\n    converge: ${MOLECULE_SCENARIO_NAME}.yml\n"
+        extra = {"molecule/default/renamed.yml": PLAYBOOK}
+        if shared:
+            extra[".config/molecule/config.yml"] = name.encode()
+        else:
+            source += name
+        assert not _scan(source, extra)
+
+
+def test_native_collection_scenario_name_includes_nested_path() -> None:
+    """Native collection names are relative to extensions/molecule."""
+    root = "extensions/molecule/group/default/"
+    assert not validate_molecule(
+        {
+            root + "molecule.yml": b"ansible:\n  playbooks:\n    converge: ${MOLECULE_SCENARIO_NAME}.yml\n",
+            root + "group/default.yml": PLAYBOOK,
+        }
+    )
+
+
+def test_repeated_action_playbooks_are_parsed_once() -> None:
+    """Repeated valid verification steps do not repeat structural parsing."""
+    from apme_engine.validators.native import molecule
+
+    with patch.object(molecule, "_playbook", wraps=molecule._playbook) as assess:
+        assert not _scan(
+            'scenario:\n  test_sequence: ["verify check.yml", "verify check.yml"]\n',
+            {
+                "molecule/default/check.yml": PLAYBOOK,
+            },
+        )
+    assert assess.call_count == 1
+
+
+def test_dynamic_import_context_is_never_evaluated() -> None:
+    """Unknown import expressions produce a coverage notice without execution."""
+    with patch("subprocess.run", side_effect=AssertionError("No expressions may execute")):
+        findings = _scan(
+            "",
+            {"molecule/default/converge.yml": b"- import_playbook: \"{{ lookup('pipe', 'unexpected-command') }}\"\n"},
+        )
+    assert {item["rule_id"] for item in findings} == {"L115"}
+
+
+async def test_fix_session_passes_non_yaml_reference_targets() -> None:
+    """The real session scan closure retains uploaded INI inventory content."""
+    from collections.abc import AsyncIterator, Awaitable, Callable
+    from types import SimpleNamespace
+    from typing import cast
+
+    from apme.v1.engine_pb2 import SessionEvent
+    from apme_engine.daemon.engine_server import EngineServicer
+    from apme_engine.daemon.session import SessionState
+
+    session = SessionState(session_id="molecule-full-snapshot")
+    session.working_files = {
+        CONFIG: b"provisioner:\n  inventory:\n    links:\n      hosts: inventory.ini\n",
+        "molecule/default/inventory.ini": b"[all]\ninstance\n",
+    }
+    session.original_files = dict(session.working_files)
+    seen: list[str] = []
+
+    async def pipeline(
+        _self: EngineServicer, root: Path, files: list[common_pb2.File], scan_id: str, **options: object
+    ) -> tuple[object, ...]:
+        """Exercise Native against precisely the files dispatched by the session.
+
+        Args:
+            _self: Patched servicer instance.
+            root: Materialized project root.
+            files: Actual dispatched snapshot.
+            scan_id: Scan correlation ID.
+            **options: Scan options passed by the session.
+
+        Returns:
+            Empty pipeline metadata with real Native file findings.
+        """
+        seen.extend(file.path for file in files)
+        findings = _run_native(validate_pb2.ValidateRequest(files=files)).violations
+        return findings, None, None, [], {}, None, [], set(), set(), None
+
+    async def assess(_self: EngineServicer, **options: object) -> AsyncIterator[SessionEvent]:
+        """Invoke the real scan closure without graph remediation machinery.
+
+        Args:
+            _self: Patched servicer instance.
+            **options: Session assessment inputs, including the scan callback.
+
+        Yields:
+            SessionEvent: Marker after successful snapshot assessment.
+        """
+        scan = cast(Callable[[list[str]], Awaitable[list[ViolationDict]]], options["scan_fn"])
+        assert await scan(cast(list[str], options["yaml_paths"])) == []
+        yield SessionEvent()
+
+    servicer = EngineServicer()
+    try:
+        with (
+            patch.object(EngineServicer, "_format_files", return_value=SimpleNamespace(diffs=[], skipped=[])),
+            patch.object(EngineServicer, "_scan_pipeline", pipeline),
+            patch.object(EngineServicer, "_session_graph_remediate", assess),
+        ):
+            _ = [event async for event in servicer._session_process(session, "molecule-full-snapshot")]
+    finally:
+        session.cleanup()
+    assert set(seen) == set(session.working_files)
+
+
+def test_complex_yaml_keys_cannot_hide_alias_cycles() -> None:
+    """Complex-key values cannot bypass structural limits or lose other findings."""
+    findings = _scan(
+        "provisioner:\n  env:\n    ? [a, b]\n    : &cycle [*cycle]\n",
+        {
+            "molecule/other/molecule.yml": b"scenario:\n  test_sequence: [invalid]\n",
+        },
+    )
+    assert {item["rule_id"] for item in findings} == {"L112", "L114"}
+
+
+def test_literal_playbook_imports_are_checked_recursively() -> None:
+    """Local import targets receive static structure and missing-file checks."""
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": b"- import_playbook: ../shared/site.yml\n",
+            "molecule/shared/site.yml": b"- import_playbook: missing.yml\n",
+        },
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L113"
+    assert findings[0]["file"] == "molecule/shared/site.yml"
+
+
+def test_playbook_import_cycles_terminate_statically() -> None:
+    """Recursive imports produce a diagnostic without execution or recursion failure."""
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": b"- import_playbook: ../shared/site.yml\n",
+            "molecule/shared/site.yml": b"- import_playbook: ../default/converge.yml\n",
+        },
+    )
+    assert any(item["rule_id"] == "L116" for item in findings)
+
+
+def test_yaml_merged_imports_are_checked_statically() -> None:
+    """Imports inherited through YAML merge keys cannot bypass traversal."""
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": b"- <<: {import_playbook: ../../site.yml}\n",
+            "site.yml": b"- import_playbook: missing.yml\n",
+        },
+    )
+    assert any(item["rule_id"] == "L113" and item["file"] == "site.yml" for item in findings)
+
+
+def test_projects_without_molecule_are_unchanged() -> None:
+    """Both public helpers accept ordinary projects without scenario files."""
+    from apme_engine.validators.native.molecule import molecule_playbook_paths
+
+    files = {"site.yml": PLAYBOOK}
+    assert validate_molecule(files) == []
+    assert molecule_playbook_paths(files) == frozenset()
+
+
+def test_recursive_yaml_findings_support_full_fingerprints() -> None:
+    """Rejected alias cycles cannot crash downstream content suppression."""
+    from apme_engine.fingerprint import compute_fingerprint
+
+    findings = _scan("x: &cycle [*cycle]\n")
+    assert findings[0]["rule_id"] == "L112"
+    assert compute_fingerprint("L112", str(findings[0]["original_yaml"]))

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from apme_engine.validators.native.molecule import molecule_playbook_paths
+
 RULE_ID = "L057"
 
 _TASK_DIRS = {"tasks", "handlers"}
@@ -18,12 +20,10 @@ _PLAY_KEYS = frozenset(
         "post_tasks",
         "handlers",
         "roles",
-        "import_playbook",
-        "ansible.builtin.import_playbook",
     }
 )
 _PLAY_MARKER = re.compile(
-    r"^(?:-\s+| {0,2})(?:hosts|tasks|pre_tasks|post_tasks|handlers|roles|(?:ansible\.builtin\.)?import_playbook)\s*:",
+    r"^(?:-\s+| {0,2})(?:hosts|tasks|pre_tasks|post_tasks|handlers|roles)\s*:",
     re.MULTILINE,
 )
 
@@ -84,10 +84,11 @@ def _find_playbooks(root: Path) -> list[Path]:
 
 
 def _looks_like_playbook(text: str) -> bool:
-    """Recognize play lists without confusing config or inventory with plays.
+    """Recognize runtime syntax candidates without confusing config with plays.
 
     BaseLoader treats Ansible YAML tags as inert data. Malformed candidates
     with play markers are retained so the syntax checker can diagnose them.
+    Import-only scenario playbooks receive static Native checks instead.
 
     Args:
         text: YAML document source.
@@ -97,11 +98,31 @@ def _looks_like_playbook(text: str) -> bool:
     """
     try:
         document: object = yaml.load(text, Loader=yaml.BaseLoader)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError):
         return bool(_PLAY_MARKER.search(text))
+    if isinstance(document, dict) and "hosts" in document:
+        return True
     return isinstance(document, list) and any(
         isinstance(play, dict) and _PLAY_KEYS.intersection(play) for play in document
     )
+
+
+def _is_molecule_content(path: Path, root: Path) -> bool:
+    """Identify scenario content that must receive only static file checks.
+
+    Args:
+        path: Candidate playbook.
+        root: Uploaded project root.
+
+    Returns:
+        Whether an ancestor within the project contains Molecule config.
+    """
+    for directory in path.parents:
+        if not directory.is_relative_to(root):
+            break
+        if any((directory / name).is_file() for name in ("molecule.yml", "molecule.yaml")):
+            return True
+    return False
 
 
 def run(
@@ -110,7 +131,10 @@ def run(
     env_extra: dict[str, str] | None = None,
     **_kwargs: object,
 ) -> list[dict[str, object]]:
-    """Run ansible-playbook --syntax-check on all playbooks under root_dir.
+    """Run runtime syntax checks on ordinary playbooks under root_dir.
+
+    Molecule scenario content is assessed statically by Native: syntax-check
+    can evaluate project lookups and requires Molecule execution context.
 
     Args:
         venv_root: Path to ansible venv root.
@@ -142,8 +166,16 @@ def run(
     if env_extra:
         env.update(env_extra)
 
+    static_paths: frozenset[str] = frozenset()
+    yaml_files = [path for extension in ("*.yml", "*.yaml") for path in root_dir.rglob(extension)]
+    if any(path.name in {"molecule.yml", "molecule.yaml"} for path in yaml_files):
+        snapshot = {str(path.relative_to(root_dir)): path.read_bytes() for path in yaml_files if path.is_file()}
+        static_paths = molecule_playbook_paths(snapshot)
+
     for playbook_path in _find_playbooks(root_dir):
         rel_path = str(playbook_path.relative_to(root_dir)) if root_dir in playbook_path.parents else str(playbook_path)
+        if rel_path in static_paths or _is_molecule_content(playbook_path, root_dir):
+            continue
         try:
             result = subprocess.run(
                 [str(ansible_playbook), "--syntax-check", str(playbook_path)],

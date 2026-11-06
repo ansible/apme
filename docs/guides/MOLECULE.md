@@ -18,9 +18,12 @@ use rule enablement or suppression when a warning should not gate CI.
 | L115 | Coverage limited by unavailable environment, files, or driver context |
 | L116 | Referenced Ansible playbook YAML and play structure |
 
-Ordinary Ansible/task findings keep their existing IDs. L057 discovery includes
-import-only playbooks and does not classify config mappings as plays merely
-because they contain `hosts` or `tasks` keys.
+Ordinary Ansible/task graph findings keep their existing IDs. Native checks
+referenced scenario playbooks, including import-only playbooks, statically.
+L057 leaves Molecule scenario content and resolved shared/imported references to those checks because runtime syntax
+checking can evaluate project lookups and requires Molecule context. Ordinary
+runtime discovery does not classify config mappings as plays merely because
+they contain `hosts` or `tasks` keys.
 Test-content graph discovery covers both `molecule/` and collection
 `extensions/molecule/` layouts, including nested scenario directories.
 
@@ -33,7 +36,7 @@ configuration, including shared-state scenarios. The baseline originates from
 Syntax compatibility with later upstream releases is separate from Red Hat's
 support policy for a particular distribution or driver.
 
-Two immutable schema/default snapshots ship locally:
+Two immutable core schema/default snapshots and their built-in driver schemas ship locally:
 
 | Configuration family | Bundled profile | Selection |
 |----------------------|-----------------|-----------|
@@ -62,19 +65,26 @@ checks as legacy references. Paths are relative to the scenario directory, as
 specified in the [native configuration reference](https://docs.ansible.com/projects/molecule/ansible-native/).
 Executor backends and argument shapes are checked by the bundled native schema.
 Optional stages and repeated verification steps remain valid.
+Unknown playbook stages and ignored lifecycle arguments receive lint findings.
+Scenario names honor merged overrides and native nested collection names.
+Literal `import_playbook` targets and imports using known Molecule project/scenario
+paths are followed within the uploaded snapshot. Missing imports and cycles are
+diagnosed. Unknown import expressions remain coverage notices; no Jinja is evaluated.
 
 Custom Molecule `--base-config` arguments and home-directory configuration are
 not implicit scan inputs. Supply effective project configuration in the
 specified location when assessing those layouts.
 
-Known Molecule scenario/project paths and values in a supplied project
-`.env.yml` can resolve references. Other environment or template values produce
+Known Molecule scenario/project paths, values in a supplied project `.env.yml`,
+and explicit `${VAR:-default}` / `${VAR-default}` fallbacks can resolve references.
+Without a supplied value, the explicit fallback is used. Other environment or template values produce
 an L115 coverage notice; server environment values are never substituted.
 Diagnostics exclude substituted secret values.
 
 Reference checks use only the uploaded snapshot. L113 means a configured target
 is unavailable there, which can also result from exclusions or checking one
-file. Optional default stage files are not mandatory. Driver-specific schemas
+file. Optional default stage files are not mandatory. The built-in default/delegated
+driver schema is checked; external driver schemas
 and runtime package availability remain unassessed and are identified by L115.
 Non-Ansible verifier code is outside Ansible playbook structural validation.
 
@@ -82,6 +92,9 @@ Configuration findings retain source file/line locations after merging and
 remain manual-review findings across remediation approval gates. Graph-only
 rescans do not claim that independent file findings have been fixed. A fresh
 full assessment is required after editing configuration.
+Findings include unexpanded source excerpts for content-based suppression.
+Use `# noqa: L113` (or another rule ID) on the diagnostic's source line for
+inline suppression; enforced rules remain active.
 
 ## Updating the profile
 

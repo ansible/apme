@@ -10,9 +10,11 @@ Complete
 
 ## Description
 
-Close the existing L057 discovery gap for scenario playbooks consisting solely
-of import_playbook, and avoid sending configuration or inventory mappings to
-ansible-playbook because they contain a nested hosts/tasks key. Include
+Close the static assessment gap for scenario playbooks consisting solely
+of import_playbook. Keep Molecule scenario content out of runtime syntax checks,
+which may evaluate lookups and require execution context. Avoid sending
+configuration or inventory mappings to ansible-playbook merely because they
+contain a nested hosts/tasks key. Include
 collection scenario playbooks under extensions/molecule in ordinary graph
 loading when test content is enabled.
 
@@ -24,9 +26,10 @@ loading when test content is enabled.
 ## Implementation Notes
 
 1. Inspect YAML document structure using a parser that does not execute tags.
-2. Recognize bare and FQCN import_playbook alongside ordinary plays.
-3. Retain malformed playbook candidates so L057 can report their syntax errors.
-4. Cover classification and subprocess dispatch with regression fixtures.
+2. Recognize bare and FQCN import_playbook in Native's static playbook checks.
+3. Retain ordinary malformed playbook candidates for L057 and keep scenario
+   content in Native's inert structural checks.
+4. Cover classification, ordinary subprocess dispatch, and scenario non-execution.
 
 ## Files to Create/Modify
 
@@ -40,7 +43,7 @@ loading when test content is enabled.
 
 | Input | Expected Output |
 |-------|-----------------|
-| Bare or FQCN import-only playbook | Included in syntax assessment |
+| Bare or FQCN import-only scenario playbook | Static Native assessment without execution |
 | Molecule config with nested hosts/tasks | Excluded as config |
 | Inventory or vars mapping | Excluded as data |
 | Malformed playbook with play markers | Retained for syntax diagnostics |
@@ -63,5 +66,5 @@ loading when test content is enabled.
 
 ## Notes
 
-This task improves static syntax-check discovery. It does not invoke Molecule
+This task improves static scenario assessment and runtime discovery. It does not invoke Molecule
 or establish that any upstream release is Red Hat supported.

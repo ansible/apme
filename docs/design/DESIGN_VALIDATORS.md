@@ -8,7 +8,8 @@ This document captures the design rationale for the validator abstraction. All s
 
 ## Pipeline
 
-The engine ingests Ansible content and produces a structured model. Validators consume that model independently.
+The engine ingests Ansible content and produces a structured model. Validators
+consume that model and the uploaded file snapshot independently.
 
 ```
 Ansible content (files)
@@ -21,7 +22,7 @@ ScanContext { hierarchy_payload (JSON), scandata (SingleScan) }
 │              Parallel fan-out                    │
 │                                                  │
 │  ┌─► OPA              (hierarchy_payload → Rego)       │
-│  ├─► Native           (scandata → Python rules)        │
+│  ├─► Native           (graph + files → Python rules)   │
 │  ├─► Ansible          (files + hierarchy → runtime)    │
 │  ├─► Gitleaks         (files → secrets detection)      │
 │  ├─► Collection Health (venv → collection lint)        │
@@ -32,7 +33,11 @@ ScanContext { hierarchy_payload (JSON), scandata (SingleScan) }
 Merged violations (deduplicated, sorted)
 ```
 
-The engine is the **single source of truth** for "what's in this repo/playbook." Validators only see what the engine produces. Adding or removing a validator does not change how content is parsed.
+The engine is the **single source of truth** for "what's in this repo/playbook."
+Validators receive its model and uploaded snapshot. Adding or removing a
+validator does not change how Ansible content is parsed. File checks can inspect
+configuration that is outside the Ansible graph; a configuration-only upload
+still reaches validator fan-out with an empty hierarchy (ADR-075).
 
 ---
 
@@ -81,11 +86,11 @@ Every validator returns the same violation shape:
 
 ### Native (Python)
 
-- **Input**: `ContentGraph` (deserialized from `scandata`)
-- **Execution**: `GraphRule` subclasses with `match()` / `process()` methods, evaluated by `graph_scanner.scan()`
-- **Rules**: L026–L105 (lint), M005–M047 (modernize), R101–R501 (risk)
+- **Input**: `ContentGraph` (deserialized from `content_graph_data`) and uploaded `request.files`
+- **Execution**: `GraphRule` subclasses evaluated by `graph_scanner.scan()`, plus independent static file checks in the Native executor
+- **Rules**: Graph lint, modernization, and risk rules; L112–L116 check Molecule configuration and referenced scenario playbooks
 - **Container**: `apme-native`
-- **Why Python**: Full access to the ContentGraph DAG — node attributes, edges, and structural queries. Rules that need to walk the hierarchy, inspect module options, or apply complex heuristics that would be awkward in Rego.
+- **Why Python**: Access to the ContentGraph DAG for structural queries, and safe YAML/schema processing of uploaded configuration. Molecule checks use bundled schemas and snapshot bytes without running Molecule. See [Molecule validation](../guides/MOLECULE.md).
 
 ### Ansible (runtime)
 
@@ -130,9 +135,9 @@ The engine was originally derived from ARI (Ansible Risk Insights). It is now fu
 Rationale:
 
 - Full control over the hierarchy payload shape, ContentGraph structure, and parser logic
-- Single parse, single model — validators reuse the same `ContentGraph` and `hierarchy_payload`
+- Single Ansible parse and model — graph validators reuse the same `ContentGraph` and `hierarchy_payload`
 - No version drift between engine and validators
-- ContentGraph is the sole data model feeding both OPA rules (via hierarchy JSON) and native rules (via GraphRule evaluation)
+- ContentGraph feeds OPA rules (via hierarchy JSON) and Native graph rules (via GraphRule evaluation); independent Native file checks consume the uploaded snapshot (ADR-075)
 
 The engine exposes one public function:
 

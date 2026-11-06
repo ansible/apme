@@ -36,11 +36,12 @@ Respect optional stages, action arguments, repeated actions, and shared state.
 
 ## Playbooks and rescans
 
-Inspect explicitly referenced YAML as Ansible content and reuse existing task
-checks for parsed playbooks. Audit L057's text-based discovery for import-only
-playbooks and accidental matches in config/inventory. Supply scenario context
-only where statically known. Report unknown execution-time variables as coverage
-limits instead of treating them as definitive syntax failures.
+Inspect explicitly referenced YAML as Ansible content and reuse existing graph
+task checks for parsed playbooks. Native assesses import-only playbooks inertly;
+L057 excludes Molecule scenario content because runtime syntax checking may
+evaluate lookups. Avoid accidental runtime matches in config/inventory. Resolve
+only statically known context. Report unknown execution-time variables as
+coverage limits instead of treating them as definitive syntax failures.
 
 Preserve config findings through convergence. Graph-only incremental requests
 must not imply that config files were revalidated. Shared config changes require
