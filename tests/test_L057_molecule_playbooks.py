@@ -16,6 +16,9 @@ from apme_engine.validators.ansible.rules.L057_syntax import _find_playbooks, _l
         "- hosts: all\n  vars:\n    secret: !vault |\n      encrypted-placeholder\n",
         "- hosts: all\n  tasks: [\n",
         "- hosts: all\n  vars:\n    nested: " + "[" * 1500 + "]" * 1500,
+        "- import_playbook: ../../playbooks/site.yml\n",
+        '- name: Converge\n  ansible.builtin.import_playbook: "{{ molecule_project_directory }}/site.yml"\n',
+        "- import_playbook: [\n",
     ],
 )
 def test_L057_recognizes_scenario_playbooks(source: str) -> None:
@@ -37,8 +40,6 @@ def test_L057_recognizes_scenario_playbooks(source: str) -> None:
         "- name: Include tasks\n  ansible.builtin.include_tasks: tasks.yml\n",
         "",
         "---\n",
-        "- import_playbook: ../../playbooks/site.yml\n",
-        '- name: Converge\n  ansible.builtin.import_playbook: "{{ molecule_project_directory }}/site.yml"\n',
     ],
 )
 def test_L057_excludes_configuration_and_task_data(source: str) -> None:
@@ -50,8 +51,8 @@ def test_L057_excludes_configuration_and_task_data(source: str) -> None:
     assert not _looks_like_playbook(source)
 
 
-def test_L057_leaves_imports_and_configuration_to_static_checks(tmp_path: Path) -> None:
-    """Runtime discovery excludes imports and nested configuration hosts.
+def test_L057_discovers_imports_without_misclassifying_configuration(tmp_path: Path) -> None:
+    """Discovery recognizes import candidates independently of dispatch policy.
 
     Args:
         tmp_path: Temporary project root.
@@ -62,7 +63,32 @@ def test_L057_leaves_imports_and_configuration_to_static_checks(tmp_path: Path) 
     converge.write_text("- import_playbook: ../../../site.yml\n")
     (scenario / "molecule.yml").write_text("provisioner:\n  inventory:\n    hosts: {}\n")
     (scenario / "inventory.yml").write_text("all:\n  hosts: {}\n")
-    assert _find_playbooks(tmp_path) == []
+    assert _find_playbooks(tmp_path) == [converge]
+
+
+@pytest.mark.parametrize("action", ["import_playbook", "ansible.builtin.import_playbook"])  # type: ignore[untyped-decorator]
+def test_L057_ordinary_import_only_playbook_reaches_syntax_check(tmp_path: Path, action: str) -> None:
+    """A missing ordinary import cannot disappear from runtime syntax coverage.
+
+    Args:
+        tmp_path: Temporary project and executable.
+        action: Supported import-playbook spelling.
+    """
+    executable = tmp_path / "venv/bin/ansible-playbook"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    project = tmp_path / "project"
+    project.mkdir()
+    entrypoint = project / "site.yml"
+    entrypoint.write_text(f"- name: Deploy\n  {action}: missing.yml\n")
+    with patch("apme_engine.validators.ansible.rules.L057_syntax.subprocess.run") as invoke:
+        invoke.return_value.returncode = 1
+        invoke.return_value.stderr = "Unable to retrieve file missing.yml"
+        findings = run(tmp_path / "venv", project)
+    assert invoke.call_args.args[0] == [str(executable), "--syntax-check", str(entrypoint)]
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L057"
+    assert findings[0]["file"] == "site.yml"
 
 
 def test_L057_ordinary_playbook_reaches_syntax_check(tmp_path: Path) -> None:

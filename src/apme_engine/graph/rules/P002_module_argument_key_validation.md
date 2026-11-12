@@ -6,9 +6,10 @@ scope: task
 status: delegated
 status_reason: >
   L058/L059 validate unsupported keys, required keys, and choice values when
-  module specs resolve. They skip tasks with templated arguments and short
-  names in custom collection contexts, and do not merge module_defaults or
-  action groups.
+  module specs resolve, including inherited module_defaults and action groups.
+  Unavailable defaults context produces explicit coverage notices. Templated
+  task-level argument mappings and short names without defaults in custom
+  collection contexts remain skipped.
 ---
 
 ## Module argument key (P002)
@@ -16,16 +17,17 @@ status_reason: >
 Validate module argument keys (Ansible required). This policy check is
 **delegated to the Ansible validator**. L058 uses documented module options;
 L059 captures the module argument spec. They check unsupported keys, required
-keys, and choice values when specs are available. Tasks are skipped if any
-module option contains `{{`; short names in a task's custom collection context
-are skipped because the argspec pass does not resolve that plugin. FQCNs are
-checked. `module_defaults` and action groups are not merged into the task options.
+keys, and choice values when specs are available. Arguments include inherited
+`module_defaults` and action groups. Unknown defaults context produces an explicit
+coverage notice. Dynamic values skip choice checks and cannot establish definite
+presence when they might become `omit`. Templated task-level argument mappings
+and short names without defaults in custom collection contexts remain skipped.
 
 ### Status
 
 **Delegated** — no native `_graph.py` implementation. The runtime finding is
 L058 or L059. Checks are limited to unsupported keys and required-key
-presence; the validators do not merge module defaults or action groups.
+presence, including the statically available defaults context.
 
 ### Example: pass
 

@@ -262,6 +262,11 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   Keep content recognition independent of dispatch/exclusion policy, and trace
+   every recognized construct through invalid shapes as well as valid ones;
+   a mismatched value must not disappear through a missing branch. Repeated
+   membership checks should reuse an existing request-local index rather than
+   rescan the full input for each reference.
    Include requests disconnected during async authorization, shutdown while a
    dependency lookup is pending, simultaneous large bodies across distinct
    resources, and edits that preserve versus clear an existing optional value.

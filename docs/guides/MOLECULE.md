@@ -18,6 +18,28 @@ use rule enablement or suppression when a warning should not gate CI.
 | L118 | Coverage limited by unavailable environment, files, or driver context |
 | L119 | Referenced Ansible playbook YAML and play structure |
 
+Scenario playbooks may use Ansible
+[`module_defaults`](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_module_defaults.html).
+Native L119 checks the declaration's shape at play, block, task, and include
+`apply` scopes without loading plugins. The Ansible service's L058/L059 argument
+checks include inherited defaults and action-group membership from the selected
+environment's installed metadata. Defaults follow their invocation context through
+roles and task includes/imports. A later module/group entry replaces its earlier
+mapping; an empty module entry clears that entry. Group defaults precede module
+defaults, then explicit arguments. Clearing a module entry does not clear a
+matching group's defaults.
+Role declarations retain their own defaults, and role argument checks follow
+selected task/handler entry files and their imports. Files merely inventoried
+under a role do not create additional invocations.
+
+Defaults do not use `collections` to qualify names. Fully qualified action groups,
+historical aliases, and extended groups follow Ansible's own metadata resolution.
+When a collection, group, templated mapping, or bounded invocation context cannot
+be assessed, L058 reports incomplete argument validation and excludes that context
+from both argument checks. No templates, lookups, or Molecule actions are run.
+Native-only requests provide defaults structure checks; module argument checks
+require the Ansible service and its selected environment.
+
 Ordinary Ansible/task graph findings keep their existing IDs. Native checks
 referenced scenario playbooks, including import-only playbooks, statically.
 L057 leaves Molecule scenario content and resolved shared/imported references to those checks because runtime syntax

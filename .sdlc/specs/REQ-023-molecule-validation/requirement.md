@@ -60,6 +60,14 @@ with newer upstream syntax does not itself establish Red Hat support.
 - **THEN**: YAML and Ansible structure are validated and ordinary applicable
   playbook/task rules are retained; config files are not classified as plays.
 
+### Scenario: Module-default argument validation
+
+- **GIVEN**: Scenario playbooks with inherited module defaults, role declarations,
+  include/import contexts, empty-entry resets, or action groups
+- **WHEN**: APME checks their module arguments
+- **THEN**: Available defaults follow Ansible precedence without mixing distinct
+  invocations; unresolved template/metadata context is explicit and never executed.
+
 ### Scenario: No execution and deterministic results
 
 - **GIVEN**: Molecule configuration containing dependency commands or plugins

@@ -426,8 +426,8 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 ### Resolved without implementation — 4
 
 - **P001** (Ansible): [Delegated] Validate module name (Ansible required). — Module resolution is emitted by L037 when Ansible's plugin loader cannot resolve a module, while M001 reports non-canonical short-name resolution. Argspec rules L058/L059 validate arguments only after resolution.
-- **P002** (Ansible): [Delegated] Validate module argument keys (Ansible required). — L058/L059 validate unsupported keys, required keys, and choice values when module specs resolve. They skip tasks with templated arguments and short names in custom collection contexts, and do not merge module_defaults or action groups.
-- **P003** (Ansible): [Delegated] Validate module argument values (Ansible required). — L058/L059 check choice membership and selected argument-group constraints. They do not validate argument types, required_if, or required_one_of, and skip tasks containing templated argument values and short names in custom collection contexts.
+- **P002** (Ansible): [Delegated] Validate module argument keys (Ansible required). — L058/L059 validate unsupported keys, required keys, and choice values when module specs resolve, including inherited module_defaults and action groups. Unavailable defaults context produces explicit coverage notices. Templated task-level argument mappings and short names without defaults in custom collection contexts remain skipped.
+- **P003** (Ansible): [Delegated] Validate module argument values (Ansible required). — L058/L059 check choice membership and selected argument-group constraints. They do not validate argument types, required_if, or required_one_of. Dynamic values skip choice checks; templated argument mappings and short names without defaults in custom collection contexts remain skipped.
 - **P004** (Ansible): [Delegated] Validate variables (Ansible required). — L039 performs APME's approximate static undefined-variable analysis. It is not equivalent to ARI's argument-context variable validation.
 
 ### Implemented but undocumented — 1

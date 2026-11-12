@@ -16,6 +16,7 @@ from apme_engine.engine.models import YAMLDict
 from apme_engine.validators.base import ScanContext
 
 from .cache import CacheSnapshot, plugin_cache
+from .module_defaults import resolve_module_defaults
 from .rules import L057_syntax, L058_argspec_doc, L059_argspec_mock, M001_M004_introspect
 
 NodeLookup = dict[str, list[tuple[int, int, str]]]
@@ -318,11 +319,14 @@ class AnsibleValidator:
         sys.stderr.write(f"  M001-M004/M048 (introspection): {len(m_violations)} issue(s) in {elapsed:.1f}ms\n")
 
         t0 = time.monotonic()
+        defaults = resolve_module_defaults(task_nodes, self._venv_root, self._env_extra)
         l058 = L058_argspec_doc.run(
-            task_nodes=task_nodes,
+            task_nodes=defaults.tasks,
             venv_root=self._venv_root,
             env_extra=self._env_extra,
+            defaults_resolved=True,
         )
+        l058 = defaults.violations + l058
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(l058)
         rule_timings.append(AnsibleRuleTiming(rule_id="L058", elapsed_ms=elapsed, violations=len(l058)))
@@ -330,9 +334,10 @@ class AnsibleValidator:
 
         t0 = time.monotonic()
         l059 = L059_argspec_mock.run(
-            task_nodes=task_nodes,
+            task_nodes=defaults.tasks,
             venv_root=self._venv_root,
             env_extra=self._env_extra,
+            defaults_resolved=True,
         )
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(l059)

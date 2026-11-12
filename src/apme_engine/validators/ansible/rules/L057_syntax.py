@@ -21,10 +21,12 @@ _PLAY_KEYS = frozenset(
         "post_tasks",
         "handlers",
         "roles",
+        "import_playbook",
+        "ansible.builtin.import_playbook",
     }
 )
 _PLAY_MARKER = re.compile(
-    r"^(?:-\s+| {0,2})(?:hosts|tasks|pre_tasks|post_tasks|handlers|roles)\s*:",
+    r"^(?:-\s+| {0,2})(?:hosts|tasks|pre_tasks|post_tasks|handlers|roles|(?:ansible\.builtin\.)?import_playbook)\s*:",
     re.MULTILINE,
 )
 
@@ -89,7 +91,8 @@ def _looks_like_playbook(text: str) -> bool:
 
     BaseLoader treats Ansible YAML tags as inert data. Malformed candidates
     with play markers are retained so the syntax checker can diagnose them.
-    Import-only scenario playbooks receive static Native checks instead.
+    Import-only playbooks are candidates too; dispatch separately excludes
+    Molecule content so those files receive static Native checks instead.
 
     Args:
         text: YAML document source.

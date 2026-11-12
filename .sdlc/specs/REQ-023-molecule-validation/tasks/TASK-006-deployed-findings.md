@@ -32,6 +32,9 @@ be inspected and explicit warnings for absent optional stage files.
   coverage error and skip runtime syntax checks when Molecule content is detected.
 - Cache valid/invalid collection metadata, preserve collection shadowing, validate
   collection identifiers, and resolve sibling imports in enclosing collection layouts.
+- Preserve ordinary import-only runtime syntax candidates while excluding
+  Molecule content at dispatch. Report non-string/empty scenario import targets
+  as L119, and reuse the directory index for inventory-directory references.
 
 ## Verification
 

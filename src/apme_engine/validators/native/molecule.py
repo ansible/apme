@@ -570,6 +570,118 @@ class _CollectionLookup:
         return True, None
 
 
+def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict]:
+    """Check defaults shapes at play, block, task, and include-apply scopes.
+
+    Args:
+        node: Play list already checked for safe YAML traversal bounds.
+        file: Snapshot-relative source file.
+
+    Returns:
+        L119 findings for provably malformed defaults, without resolving plugins.
+    """
+    findings: list[ViolationDict] = []
+    pending: list[tuple[yaml.Node, YamlPath]] = [(play, (index,)) for index, play in enumerate(node.value)]
+    while pending:
+        scope, path = pending.pop()
+        if not isinstance(scope, yaml.MappingNode):
+            continue
+        entries = _mapping_items(scope)
+        defaults_entry = entries.get("module_defaults")
+        if defaults_entry is not None:
+            key, value = defaults_entry
+            if value.tag != "tag:yaml.org,2002:null":
+                layers = value.value if isinstance(value, yaml.SequenceNode) else [value]
+                valid = True
+                for layer in layers:
+                    if not isinstance(layer, yaml.MappingNode):
+                        valid = False
+                        break
+                    for name, parameters in _mapping_items(layer).values():
+                        if (
+                            not isinstance(name, yaml.ScalarNode)
+                            or name.tag != "tag:yaml.org,2002:str"
+                            or not name.value
+                            or any(marker in name.value for marker in ("{{", "{%", "{#"))
+                            or not (
+                                (
+                                    isinstance(parameters, yaml.MappingNode)
+                                    and all(
+                                        parameter.tag == "tag:yaml.org,2002:str"
+                                        for parameter, _ in _mapping_items(parameters).values()
+                                    )
+                                )
+                                or (
+                                    isinstance(parameters, yaml.ScalarNode)
+                                    and any(marker in parameters.value for marker in ("{{", "{%", "{#"))
+                                )
+                            )
+                        ):
+                            valid = False
+                            break
+                if not valid:
+                    findings.append(
+                        _finding(
+                            "L119",
+                            _Location(file, key.start_mark.line + 1, (*path, "module_defaults")),
+                            "Invalid module_defaults: expected static module/group names with parameter mappings",
+                        )
+                    )
+        if len(path) == 3 and path[1] == "roles":
+            # Other role-declaration keys may be role parameters, not task scopes.
+            continue
+        if len(path) == 1:
+            roles = entries.get("roles")
+            if roles is not None and isinstance(roles[1], yaml.SequenceNode):
+                pending.extend((role, (*path, "roles", index)) for index, role in enumerate(roles[1].value))
+        for section in ("pre_tasks", "tasks", "post_tasks", "handlers", "block", "rescue", "always"):
+            section_entry = entries.get(section)
+            if section_entry is not None and isinstance(section_entry[1], yaml.SequenceNode):
+                pending.extend((task, (*path, section, index)) for index, task in enumerate(section_entry[1].value))
+        include_actions = {
+            prefix + action
+            for prefix in ("", "ansible.builtin.", "ansible.legacy.")
+            for action in ("include_role", "include_tasks")
+        }
+        invocations = [(entries[action][1], (*path, action), False) for action in include_actions if action in entries]
+        for form in ("action", "local_action"):
+            if form not in entries:
+                continue
+            value = entries[form][1]
+            if isinstance(value, yaml.MappingNode):
+                module = _mapping_items(value).get("module")
+                if (
+                    module is not None
+                    and isinstance(module[1], yaml.ScalarNode)
+                    and module[1].value.split(maxsplit=1)[:1]
+                    and module[1].value.split(maxsplit=1)[0] in include_actions
+                ):
+                    invocations.append((value, (*path, form), True))
+            elif (
+                isinstance(value, yaml.ScalarNode)
+                and value.value.split(maxsplit=1)[:1]
+                and value.value.split(maxsplit=1)[0] in include_actions
+            ):
+                invocations.append((value, (*path, form), True))
+        for arguments, origin, old_style in invocations:
+            apply_entry = _mapping_items(arguments).get("apply") if isinstance(arguments, yaml.MappingNode) else None
+            if old_style and isinstance(arguments, yaml.MappingNode):
+                nested = _mapping_items(arguments).get("args")
+                if nested is not None and isinstance(nested[1], yaml.MappingNode):
+                    nested_apply = _mapping_items(nested[1]).get("apply")
+                    if nested_apply is not None:
+                        apply_entry = nested_apply
+                        origin = (*origin, "args")
+            if apply_entry is None:
+                task_args = entries.get("args")
+                if task_args is not None and isinstance(task_args[1], yaml.MappingNode):
+                    apply_entry = _mapping_items(task_args[1]).get("apply")
+                    origin = (*path, "args")
+            if apply_entry is not None:
+                pending.append((apply_entry[1], (*origin, "apply")))
+    return findings
+
+
 def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
     """Inspect scenario YAML structure without evaluating Ansible plugins.
 
@@ -581,12 +693,12 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
         Structural findings and unrendered imports for static reference checks.
     """
     try:
-        node = yaml.compose(content.decode("utf-8"), Loader=yaml.BaseLoader)
+        node = yaml.compose(content.decode("utf-8"), Loader=yaml.SafeLoader)
         if node is not None:
             _locations(node, file)
         if not isinstance(node, yaml.SequenceNode):
             return _PlaybookAssessment([_finding("L119", _Location(file), "Scenario playbook must be a list of plays")])
-        findings: list[ViolationDict] = []
+        findings = _playbook_defaults(node, file)
         imports: list[tuple[_Location, str]] = []
         for index, play in enumerate(node.value):
             entries = _mapping_items(play) if isinstance(play, yaml.MappingNode) else {}
@@ -599,12 +711,21 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
                     )
                 )
             for key, value in entries.values():
-                if (
-                    isinstance(key, yaml.ScalarNode)
-                    and key.value in {"import_playbook", "ansible.builtin.import_playbook"}
-                    and isinstance(value, yaml.ScalarNode)
-                ):
-                    imports.append((_Location(file, key.start_mark.line + 1, (index, key.value)), value.value))
+                if isinstance(key, yaml.ScalarNode) and key.value in {
+                    "import_playbook",
+                    "ansible.builtin.import_playbook",
+                }:
+                    origin = _Location(file, key.start_mark.line + 1, (index, key.value))
+                    if (
+                        isinstance(value, yaml.ScalarNode)
+                        and (value.tag == "tag:yaml.org,2002:str" or not value.tag.startswith("tag:yaml.org,2002:"))
+                        and value.value.strip()
+                    ):
+                        imports.append((origin, value.value))
+                    else:
+                        findings.append(
+                            _finding("L119", origin, "Scenario play import_playbook must be a non-empty string path")
+                        )
         return _PlaybookAssessment(findings, imports)
     except (yaml.YAMLError, UnicodeError, ValueError, RecursionError) as error:
         mark = getattr(error, "problem_mark", None)
@@ -821,9 +942,7 @@ def _references(
             fallback = reference.removesuffix("converge.yml") + "playbook.yml"
             if fallback in files:
                 reference = fallback
-        present = reference in files or (
-            not is_playbook and any(name.startswith(reference.rstrip("/") + "/") for name in files)
-        )
+        present = reference in files or (not is_playbook and reference.rstrip("/") in collections.directories)
         if not present:
             if explicit:
                 message = "Configured reference is absent from the supplied scan; it may be missing or excluded"

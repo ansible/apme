@@ -14,6 +14,188 @@ CONFIG = "molecule/default/molecule.yml"
 PLAYBOOK = b"- hosts: all\n  tasks: []\n"
 
 
+@pytest.mark.parametrize("action", ["import_playbook", "ansible.builtin.import_playbook"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("target", ["[]", "{}", "null", "true", "42", "''"])  # type: ignore[untyped-decorator]
+def test_l119_rejects_invalid_import_targets(action: str, target: str) -> None:
+    """Malformed imports cannot pass static checks by supplying only the key.
+
+    Args:
+        action: Import-playbook spelling.
+        target: Literal invalid import path.
+    """
+    source = f"- name: Import\n  {action}: {target}\n".encode()
+    findings = _scan("", {"molecule/default/converge.yml": source})
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L119"
+    assert findings[0]["line"] == 2
+    assert findings[0]["path"] == f"$[0].{action}"
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "defaults",
+    ["[]", "{}", "null", "{file: {}}", "{file: '{{ file_args }}'}", "[{file: {mode: '0644'}}]"],
+)
+def test_l119_accepts_module_defaults_shapes(defaults: str) -> None:
+    """Defaults mappings, ordered entries, empty resets, and templates are data.
+
+    Args:
+        defaults: Valid literal defaults declaration.
+    """
+    playbook = f"- hosts: all\n  module_defaults: {defaults}\n  tasks: []\n".encode()
+    assert _scan("", {"molecule/default/converge.yml": playbook}) == []
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "defaults", ["42", "'{{ defaults }}'", "[null]", "{file: []}", "{'{{ module }}': {}}", "{file: {42: value}}"]
+)
+def test_l119_rejects_malformed_module_defaults(defaults: str) -> None:
+    """Native checks provable defaults errors without loading Ansible plugins.
+
+    Args:
+        defaults: Invalid literal defaults declaration.
+    """
+    playbook = f"- hosts: all\n  module_defaults: {defaults}\n  tasks: []\n".encode()
+    findings = _scan("", {"molecule/default/converge.yml": playbook})
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L119"
+    assert findings[0]["line"] == 2
+    assert findings[0]["path"] == "$[0].module_defaults"
+
+
+def test_l119_defaults_in_block_rescue_and_include_apply() -> None:
+    """Inspect execution scopes while ignoring similarly named variable data."""
+    playbook = b"""- hosts: all
+  vars:
+    module_defaults: variable_data
+  tasks:
+    - block:
+        - ansible.builtin.debug: {}
+          module_defaults: bad_task
+      rescue:
+        - ansible.builtin.debug: {}
+          module_defaults: bad_rescue
+      always:
+        - ansible.builtin.debug: {}
+          module_defaults: bad_always
+      module_defaults: bad_block
+    - ansible.builtin.include_role:
+        name: example
+        apply:
+          module_defaults: bad_apply
+"""
+    findings = _scan("", {"molecule/default/converge.yml": playbook})
+    assert {finding["path"] for finding in findings} == {
+        "$[0].tasks[0].module_defaults",
+        "$[0].tasks[0].block[0].module_defaults",
+        "$[0].tasks[0].rescue[0].module_defaults",
+        "$[0].tasks[0].always[0].module_defaults",
+        "$[0].tasks[1].ansible.builtin.include_role.apply.module_defaults",
+    }
+    assert all(finding["rule_id"] == "L119" for finding in findings)
+
+
+def test_l119_defaults_allow_yaml_merges_and_inert_ansible_tags() -> None:
+    """Resolve structural YAML merges without evaluating encrypted values."""
+    playbook = b"""- hosts: all
+  vars:
+    defaults: &defaults
+      ansible.builtin.uri:
+        password: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          inert
+  module_defaults:
+    <<: *defaults
+  tasks: []
+"""
+    assert _scan("", {"molecule/default/converge.yml": playbook}) == []
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "action",
+    [
+        "ansible.builtin.include_tasks: inner.yml",
+        "include_role: demo",
+        "action: include_tasks inner.yml",
+        "local_action: include_role name=demo",
+    ],
+)
+def test_l119_checks_defaults_from_task_args_apply(action: str) -> None:
+    """Free-form include args retain the true source of invalid applied defaults.
+
+    Args:
+        action: Include task action syntax.
+    """
+    source = (
+        f"- hosts: all\n  tasks:\n    - {action}\n      args:\n        apply:\n"
+        "          module_defaults:\n            ansible.builtin.file: []\n"
+    ).encode()
+    findings = _scan("", {"molecule/default/converge.yml": source})
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L119"
+    assert findings[0]["path"] == "$[0].tasks[0].args.apply.module_defaults"
+    assert findings[0]["line"] == 6
+
+
+def test_l119_action_mapping_apply_overrides_task_args_apply() -> None:
+    """Task-level args cannot override a module-owned apply mapping."""
+    source = b"""- hosts: all
+  tasks:
+    - ansible.builtin.include_tasks:
+        file: inner.yml
+        apply:
+          module_defaults:
+            ansible.builtin.file: {}
+      args:
+        apply:
+          module_defaults:
+            ansible.builtin.file: []
+"""
+    assert _scan("", {"molecule/default/converge.yml": source}) == []
+
+
+def test_l119_role_declarations_check_defaults_without_parsing_role_parameters_as_tasks() -> None:
+    """Roles inherit defaults but their other parameters remain ordinary data."""
+    source = b"""- hosts: all
+  roles:
+    - role: demo
+      module_defaults:
+        file: []
+      tasks:
+        - module_defaults: role_parameter_data
+"""
+    findings = _scan("", {"molecule/default/converge.yml": source})
+    assert len(findings) == 1
+    assert findings[0]["path"] == "$[0].roles[0].module_defaults"
+    assert findings[0]["line"] == 4
+
+
+@pytest.mark.parametrize("form", ["action", "local_action"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("nested_wins", [False, True])  # type: ignore[untyped-decorator]
+def test_l119_nested_action_args_apply_has_ansible_precedence(form: str, nested_wins: bool) -> None:
+    """Old-style action.args overrides direct action fields and task-level args.
+
+    Args:
+        form: Supported old-style action keyword.
+        nested_wins: Whether the invalid declaration comes from nested action args.
+    """
+    direct = "{}" if nested_wins else "[]"
+    nested = "[]" if nested_wins else "{}"
+    source = (
+        f"- hosts: all\n  tasks:\n    - {form}:\n        module: include_tasks\n"
+        f"        apply:\n          module_defaults:\n            file: {direct}\n"
+        "        args:\n          file: inner.yml\n          apply:\n"
+        f"            module_defaults:\n              file: {nested}\n"
+        "      args:\n        apply:\n          module_defaults:\n            file: []\n"
+    ).encode()
+    findings = _scan("", {"molecule/default/converge.yml": source})
+    if nested_wins:
+        assert len(findings) == 1
+        assert findings[0]["path"] == f"$[0].tasks[0].{form}.args.apply.module_defaults"
+        assert findings[0]["line"] == 11
+    else:
+        assert findings == []
+
+
 def _scan(source: str, extra: dict[str, bytes] | None = None) -> list[ViolationDict]:
     """Assess one scenario with an optional snapshot.
 

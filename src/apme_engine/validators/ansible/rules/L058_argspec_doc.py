@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import cast
 
 from apme_engine.validators.ansible.cache import plugin_cache
+from apme_engine.validators.ansible.module_defaults import (
+    apply_parameter_aliases,
+    has_invalid_choice,
+    is_dynamic,
+    resolve_module_defaults,
+)
 
 RULE_ID = "L058"
 
@@ -109,11 +115,10 @@ def _check_tasks_against_specs(
             continue
         options = cast(dict[str, object], options_raw)
 
-        user_keys = set(module_options.keys())
         if "free_form" in options:
             continue
-        if any("{{" in str(v) for v in module_options.values()):
-            continue
+        module_options = apply_parameter_aliases(module_options, options)
+        user_keys = set(module_options.keys())
 
         valid_params: set[str] = set(options.keys())
         valid_params.update(_ANSIBLE_INTERNAL_PARAMS)
@@ -122,7 +127,8 @@ def _check_tasks_against_specs(
                 for alias in pspec_raw.get("aliases") or []:
                     valid_params.add(str(alias))
 
-        unknown = user_keys - valid_params
+        # A dynamic value may become Ansible's ``omit`` sentinel.
+        unknown = {key for key in user_keys - valid_params if not is_dynamic(module_options[key])}
         if unknown:
             violations.append(
                 {
@@ -152,12 +158,12 @@ def _check_tasks_against_specs(
             if pname in user_keys and pspec_raw.get("choices"):
                 val = module_options[pname]
                 choices = pspec_raw["choices"]
-                if val not in choices:
+                if has_invalid_choice(val, choices):
                     violations.append(
                         {
                             "module": module,
                             "message": (
-                                f"Value '{val}' for parameter '{pname}' of {module} "
+                                f"Choice for parameter '{pname}' of {module} "
                                 f"is not one of: {', '.join(str(c) for c in choices)}"
                             ),
                             "task_key": task.get("key", ""),
@@ -170,6 +176,7 @@ def run(
     task_nodes: list[dict[str, object]],
     venv_root: Path,
     env_extra: dict[str, str] | None = None,
+    defaults_resolved: bool = False,
     **_kwargs: object,
 ) -> list[dict[str, object]]:
     """Run docstring-based argspec validation in the venv's Python.
@@ -181,11 +188,16 @@ def run(
         task_nodes: List of task node dicts.
         venv_root: Path to ansible venv root.
         env_extra: Optional extra environment variables.
+        defaults_resolved: Whether the caller already prepared inherited defaults.
         **_kwargs: Ignored keyword arguments.
 
     Returns:
         List of violation dicts.
     """
+    coverage: list[dict[str, object]] = []
+    if not defaults_resolved:
+        prepared = resolve_module_defaults(task_nodes, venv_root, env_extra)
+        task_nodes, coverage = prepared.tasks, prepared.violations
     task_modules: dict[str, bool] = {}
     tasks_for_check: list[dict[str, object]] = []
     for node in task_nodes:
@@ -211,11 +223,12 @@ def run(
                 "key": node.get("key", ""),
                 "file": node.get("file", ""),
                 "line": node.get("line"),
+                "module_defaults_used": node.get("module_defaults_used", False),
             }
         )
 
     if not tasks_for_check:
-        return []
+        return coverage
 
     venv_str = str(venv_root)
     all_modules = list(task_modules.keys())
@@ -231,6 +244,7 @@ def run(
     raw_violations = _check_tasks_against_specs(all_specs, tasks_for_check)
 
     task_by_key = {t["key"]: t for t in tasks_for_check}
+    inherited_keys = {t["key"] for t in tasks_for_check if t.get("module_defaults_used")}
     violations: list[dict[str, object]] = []
     for rv in raw_violations:
         task_key = rv.get("task_key", "")
@@ -246,10 +260,11 @@ def run(
                 "line": line_num,
                 "path": str(task_key),
                 "scope": "task",
+                **({"remediation_class": "manual-review"} if task_key in inherited_keys else {}),
             }
         )
 
-    return violations
+    return coverage + violations
 
 
 def _fetch_specs(

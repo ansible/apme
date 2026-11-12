@@ -2555,7 +2555,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Yields:
             SessionEvent: Progress, Tier1Summary, and result events.
         """
-        from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+        from apme_engine.engine.graph_opa_payload import content_nodes_to_opa_dicts
         from apme_engine.graph.content_graph import ContentGraph, EdgeType, NodeType
         from apme_engine.graph.scanner import (
             graph_rule_opt_in_from_rule_configs,
@@ -2707,7 +2707,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         if parent is not None and parent.node_type == NodeType.PLAY:
                             opa_node_ids.add(src_id)
                 opa_nodes = [node for nid in sorted(opa_node_ids) if (node := g.get_node(nid)) is not None]
-                opa_dicts = [d for n in opa_nodes if (d := content_node_to_opa_dict(n, graph=g))]
+                opa_dicts = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: content_nodes_to_opa_dicts(opa_nodes, g)
+                )
                 if opa_dicts:
                     opa_payload = {
                         "scan_id": f"{scan_id}-rescan",
@@ -2741,11 +2743,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     "Required validator ansible not configured for rescan (ANSIBLE_GRPC_ADDRESS unset)"
                 )
             if ans_addr and session.venv_path:
-                task_dicts = [
-                    d
-                    for n in dirty_nodes
-                    if (d := content_node_to_opa_dict(n, graph=g)) and d.get("type") == "taskcall"
-                ]
+                task_dicts = [d for d in opa_dicts if d.get("type") == "taskcall" and d.get("key") in dirty_ids]
                 if task_dicts:
                     ans_payload = {
                         "scan_id": f"{scan_id}-rescan",

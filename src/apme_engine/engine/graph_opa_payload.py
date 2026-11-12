@@ -13,7 +13,12 @@ Public API
 from __future__ import annotations
 
 import datetime
+import json
 import logging
+import posixpath
+from collections import deque
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from typing import cast
 from urllib.parse import urlsplit
 
@@ -24,6 +29,213 @@ from apme_engine.graph.sensitivity import redact_urls_in_text
 from .models import Annotation, Location, RiskAnnotation, YAMLDict, YAMLValue
 
 logger = logging.getLogger(__name__)
+
+_MODULE_DEFAULTS_CONTEXT_LIMIT = 64
+_MODULE_DEFAULTS_LAYER_LIMIT = 256
+_DEFAULTS_SCOPE_TYPES = frozenset({NodeType.PLAY, NodeType.BLOCK, NodeType.TASK, NodeType.HANDLER})
+_APPLY_INCLUDE_MODULES = frozenset(
+    f"{prefix}{name}"
+    for prefix in ("", "ansible.builtin.", "ansible.legacy.")
+    for name in ("include_tasks", "include_role")
+)
+
+
+@dataclass(frozen=True)
+class _ModuleDefaultsPath:
+    """Defaults identity plus a role entry selection awaiting file traversal.
+
+    Attributes:
+        layers: Interned defaults layers on this invocation path.
+        role_entries: Selected task and handler file IDs, or unknown selectors.
+    """
+
+    layers: tuple[int, ...]
+    role_entries: tuple[str | None, str | None] | None = None
+
+
+@dataclass
+class _ModuleDefaultsContexts:
+    """Ordered raw defaults layers for distinct positional paths.
+
+    Attributes:
+        paths: Interned layer signatures mapped to root-to-node raw layers.
+        incomplete: Whether ancestry was truncated, cyclic, or has unknown apply data.
+    """
+
+    paths: dict[_ModuleDefaultsPath, tuple[YAMLValue, ...]] = field(default_factory=dict)
+    incomplete: bool = False
+
+
+def _include_apply_defaults(node: ContentNode) -> tuple[tuple[YAMLValue, ...], bool]:
+    """Read the synthetic block defaults applied only to an include's descendants.
+
+    Args:
+        node: Include task retaining its authored module arguments.
+
+    Returns:
+        Raw applied layer, if present, and whether apply cannot be inspected.
+    """
+    arguments = node.effective_module_options
+    apply = arguments.get("apply", {})
+    if not isinstance(apply, dict):
+        return (), True
+    if "module_defaults" in apply:
+        try:
+            return (json_safe(apply["module_defaults"]),), False
+        except RecursionError:
+            return (), True
+    if isinstance(node.options.get("args"), str):
+        return (), True
+    return (), False
+
+
+def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDefaultsContexts]:
+    """Compute bounded defaults contexts once in positional topological order.
+
+    Preserve alternatives rather than merging defaults from unrelated callers.
+    Layer identities preserve mapping order, which can affect group precedence.
+    Non-positional edges cannot contribute inheritance or introduce cycles.
+
+    Args:
+        graph: Graph supplying authored defaults and positional parent edges.
+
+    Returns:
+        Context cache for every node; cyclic ancestry is marked incomplete.
+    """
+    nodes = {node.node_id: node for node in graph.nodes()}
+    parents: dict[str, list[tuple[str, dict[str, object]]]] = {nid: [] for nid in nodes}
+    children: dict[str, set[str]] = {nid: set() for nid in nodes}
+    role_files: dict[str, dict[str, dict[str, str]]] = {}
+    for source in nodes:
+        for target, attrs in graph.edges_from(source):
+            if target in nodes and graph.is_positional_edge(source, target, attrs.get("edge_type")):
+                parents[target].append((source, attrs))
+                children[source].add(target)
+                section, file = attrs.get("role_section"), attrs.get("role_file")
+                if section in {"tasks", "handlers"} and isinstance(file, str):
+                    role_files.setdefault(source, {}).setdefault(str(section), {})[file] = target
+    remaining = {nid: len({parent for parent, _attrs in parent_ids}) for nid, parent_ids in parents.items()}
+    ready = deque(sorted(nid for nid, count in remaining.items() if count == 0))
+    cache: dict[str, _ModuleDefaultsContexts] = {}
+    layers: dict[str, int] = {}
+    applied_layers: dict[str, tuple[tuple[YAMLValue, ...], bool]] = {}
+
+    def role_entries(role_id: str, options: dict[str, object]) -> tuple[tuple[str | None, str | None] | None, bool]:
+        """Select role entry files without treating the full inventory as execution.
+
+        Args:
+            role_id: Role whose file inventory is indexed.
+            options: One invocation's literal entry-file selectors.
+
+        Returns:
+            Task/handler entry IDs and whether a selector is unavailable.
+        """
+        if role_id not in role_files:
+            return None, False
+        selected: list[str | None] = []
+        incomplete = False
+        for section in ("tasks", "handlers"):
+            key = "tasks_from" if section == "tasks" else "handlers_from"
+            entry = options.get(key, "main")
+            if not isinstance(entry, str) or any(marker in entry for marker in ("{{", "{%", "{#")):
+                selected.append(None)
+                incomplete = True
+                continue
+            files = role_files[role_id].get(section, {})
+            entry = posixpath.normpath(entry)
+            candidates = (
+                (entry, entry + ".yml", entry + ".yaml") if key in options else ("main.yml", "main.yaml", "main")
+            )
+            target = next((files[name] for name in candidates if name in files), "")
+            if not target and key in options:
+                selected.append(None)
+                incomplete = True
+            else:
+                selected.append(target)
+        return (selected[0], selected[1]), incomplete
+
+    def signature(values: tuple[YAMLValue, ...]) -> tuple[int, ...]:
+        """Intern layers without discarding authored mapping order.
+
+        Args:
+            values: Local or applied raw defaults layers.
+
+        Returns:
+            Hashable layer identities for context deduplication.
+        """
+        keys = [json.dumps(value, ensure_ascii=False, separators=(",", ":")) for value in values]
+        return tuple(layers.setdefault(key, len(layers)) for key in keys)
+
+    while ready:
+        nid = ready.popleft()
+        node = nodes[nid]
+        local: tuple[YAMLValue, ...] = ()
+        local_unknown = False
+        try:
+            if node.node_type in _DEFAULTS_SCOPE_TYPES and "module_defaults" in node.options:
+                local = (json_safe(node.options["module_defaults"]),)
+            local_signature = signature(local)
+        except RecursionError:
+            local, local_signature, local_unknown = (), (), True
+        state = _ModuleDefaultsContexts(
+            incomplete=local_unknown or any(cache[parent].incomplete for parent, _attrs in parents[nid])
+        )
+        if not parents[nid]:
+            entries, incomplete = role_entries(nid, {}) if node.node_type == NodeType.ROLE else (None, False)
+            state.paths[_ModuleDefaultsPath(local_signature, entries)] = local
+            state.incomplete |= incomplete
+        for parent, attrs in sorted(parents[nid], key=lambda item: (item[0], int(str(item[1].get("position", 0))))):
+            applied: tuple[YAMLValue, ...] = ()
+            applies = (
+                attrs.get("edge_type") == EdgeType.INCLUDE.value and nodes[parent].module in _APPLY_INCLUDE_MODULES
+            )
+            if applies:
+                if parent not in applied_layers:
+                    applied_layers[parent] = _include_apply_defaults(nodes[parent])
+                applied, unknown_apply = applied_layers[parent]
+                state.incomplete |= unknown_apply
+            invocation = attrs.get("role_invocation", {})
+            invocation_options = cast(dict[str, object], invocation) if isinstance(invocation, dict) else {}
+            try:
+                edge_defaults = (
+                    (json_safe(cast(YAMLValue, invocation_options["module_defaults"])),)
+                    if "module_defaults" in invocation_options
+                    else ()
+                )
+                edge_signature = signature(applied + edge_defaults)
+            except RecursionError:
+                applied, edge_defaults, edge_signature = (), (), ()
+                state.incomplete = True
+            entries, incomplete = (
+                role_entries(nid, invocation_options) if node.node_type == NodeType.ROLE else (None, False)
+            )
+            state.incomplete |= incomplete
+            suffix = edge_signature + local_signature
+            for path, values in cache[parent].paths.items():
+                section = attrs.get("role_section")
+                if section in {"tasks", "handlers"} and path.role_entries is not None:
+                    selected_entry = path.role_entries[0 if section == "tasks" else 1]
+                    if selected_entry is not None and selected_entry != nid:
+                        continue
+                if len(path.layers) + len(suffix) > _MODULE_DEFAULTS_LAYER_LIMIT:
+                    state.incomplete = True
+                    continue
+                current = _ModuleDefaultsPath(path.layers + suffix, entries)
+                if current in state.paths:
+                    continue
+                if len(state.paths) >= _MODULE_DEFAULTS_CONTEXT_LIMIT:
+                    state.incomplete = True
+                    break
+                state.paths[current] = values + applied + edge_defaults + local
+        cache[nid] = state
+        for child in sorted(children[nid]):
+            remaining[child] -= 1
+            if remaining[child] == 0:
+                ready.append(child)
+    for nid in nodes.keys() - cache.keys():
+        cache[nid] = _ModuleDefaultsContexts(incomplete=True)
+    return cache
+
 
 _PLAY_OPTION_KEYS: frozenset[str] = frozenset(
     {
@@ -339,15 +551,21 @@ def annotation_to_dict(an: Annotation) -> YAMLDict:
 def content_node_to_opa_dict(
     node: ContentNode,
     graph: ContentGraph | None = None,
+    *,
+    _module_defaults_contexts: dict[str, _ModuleDefaultsContexts] | None = None,
 ) -> YAMLDict:
     """Serialize a ``ContentNode`` to the OPA node dict format.
 
     The output retains ``opa_payload.node_to_dict(RunTarget)`` fields and adds
     collection search context for the Ansible validator's plugin resolution.
+    Task defaults are separate root-to-task layers for each distinct positional
+    context; explicit arguments remain unchanged. Without a graph, only the
+    node's local defaults can be serialized.
 
     Args:
         node: ContentNode to serialize.
         graph: Optional graph for structural queries (e.g. edge inspection).
+        _module_defaults_contexts: Shared context cache for full hierarchy builds.
 
     Returns:
         Dict with type, key, file, line, defined_in, and type-specific fields.
@@ -402,6 +620,25 @@ def content_node_to_opa_dict(
                 d["line"] = [max(1, play_index + 1), max(1, play_index + 1)]
 
     elif opa_type == "taskcall":
+        if graph is not None:
+            contexts = _module_defaults_contexts
+            if contexts is None:
+                contexts = _build_module_defaults_contexts(graph)
+            defaults = contexts.get(node.node_id, _ModuleDefaultsContexts(incomplete=True))
+            d["module_defaults_contexts"] = [list(values) for values in defaults.paths.values()]
+            if defaults.incomplete:
+                d["module_defaults_incomplete"] = True
+            elif not defaults.paths:
+                d["module_defaults_inactive"] = True
+        else:
+            try:
+                local_defaults = (
+                    [json_safe(node.options["module_defaults"])] if "module_defaults" in node.options else []
+                )
+                d["module_defaults_contexts"] = [local_defaults]
+            except RecursionError:
+                d["module_defaults_contexts"] = []
+                d["module_defaults_incomplete"] = True
         module_options = node.effective_module_options
         d["module"] = node.module
         d["original_module"] = node.module
@@ -509,6 +746,24 @@ def build_hierarchy_from_graph(
     )
 
 
+def content_nodes_to_opa_dicts(nodes: Iterable[ContentNode], graph: ContentGraph) -> list[YAMLDict]:
+    """Serialize a node batch with one shared defaults-context calculation.
+
+    Args:
+        nodes: Nodes selected for a full scan or incremental rescan.
+        graph: Complete graph providing inherited invocation context.
+
+    Returns:
+        OPA-compatible dictionaries for the serializable nodes.
+    """
+    contexts = _build_module_defaults_contexts(graph)
+    return [
+        payload
+        for node in nodes
+        if (payload := content_node_to_opa_dict(node, graph=graph, _module_defaults_contexts=contexts))
+    ]
+
+
 def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
     """Build one tree dict per root (playbook or role without parents).
 
@@ -519,6 +774,7 @@ def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
         List of tree dicts, each with root_key, root_type, root_path, nodes.
     """
     trees: list[YAMLDict] = []
+    module_defaults_contexts = _build_module_defaults_contexts(graph)
 
     roots: list[ContentNode] = []
     for node in graph.nodes():
@@ -535,7 +791,7 @@ def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
             content_node = sub.get_node(nid)
             if content_node is None:
                 continue
-            d = content_node_to_opa_dict(content_node, graph=graph)
+            d = content_node_to_opa_dict(content_node, graph=graph, _module_defaults_contexts=module_defaults_contexts)
             if d:
                 nodes_list.append(d)
 

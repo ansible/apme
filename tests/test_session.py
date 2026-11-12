@@ -1800,7 +1800,33 @@ class TestSessionRescanBridge:
         assert callable(captured_rescan_fn[0])
 
         # Rescans retain configuration and local plugins from the same upload.
+        import json
+        import threading
+
         from apme_engine.daemon.engine_server import _ValidatorResult
+        from apme_engine.engine import graph_opa_payload
+        from apme_engine.graph.content_graph import EdgeType
+
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            options={"module_defaults": {"ansible.builtin.file": {"mode": "0644"}}},
+        )
+        second = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[1]", node_type=NodeType.TASK),
+            module="ansible.builtin.file",
+            module_options={"path": "/tmp/second"},
+        )
+        graph.add_node(play)
+        graph.add_node(second)
+        graph.add_edge(play.node_id, "play.yml/plays[0]/tasks[0]", EdgeType.CONTAINS)
+        graph.add_edge(play.node_id, second.node_id, EdgeType.CONTAINS)
+        event_loop_thread = threading.get_ident()
+        serialization_threads: list[int] = []
+        original_context_builder = graph_opa_payload._build_module_defaults_contexts
+
+        def record_context_builder(g: ContentGraph) -> object:
+            serialization_threads.append(threading.get_ident())
+            return original_context_builder(g)
 
         session.venv_path = "/session/venv"
         session.working_files.update(
@@ -1810,17 +1836,23 @@ class TestSessionRescanBridge:
                 "docs/large-unrelated.bin": b"x" * (50 * 1024 * 1024 + 1),
             }
         )
-        dirty_ids = frozenset({"play.yml/plays[0]/tasks[0]"})
+        dirty_ids = frozenset({"play.yml/plays[0]/tasks[0]", second.node_id})
         with (
             patch.dict(
                 os.environ,
                 {"NATIVE_GRPC_ADDRESS": "native", "OPA_GRPC_ADDRESS": "opa", "ANSIBLE_GRPC_ADDRESS": "ansible"},
             ),
             patch("apme_engine.daemon.engine_server._call_validator", new_callable=AsyncMock) as call_validator,
+            patch.object(graph_opa_payload, "_build_module_defaults_contexts", side_effect=record_context_builder),
         ):
             call_validator.return_value = _ValidatorResult()
             await captured_rescan_fn[0](graph, dirty_ids)
+        assert len(serialization_threads) == 1
+        assert serialization_threads[0] != event_loop_thread
         request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "ansible")
+        task_payload = json.loads(request.hierarchy_payload)["hierarchy"][0]["nodes"]
+        assert {node["key"] for node in task_payload} == dirty_ids
+        assert all(node["module_defaults_contexts"] == [[play.options["module_defaults"]]] for node in task_payload)
         assert {file.path: file.content for file in request.files} == {
             "ansible.cfg": b"[defaults]\nlibrary = ./library\n",
             "library/apt.py": b"# local\n",

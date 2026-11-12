@@ -24,6 +24,20 @@ findings use an existing appropriate non-task scope and remain manual review;
 they must never be routed as an Ansible task for automatic remediation.
 Ordinary task rules keep their existing IDs and scope.
 
+Scenario argument validation must account for Ansible `module_defaults` at play,
+block, and task scope, including inherited role and included-task context. L058
+and L059 check the resulting arguments with task arguments taking precedence.
+An empty module mapping clears earlier defaults for that module. Action-group
+membership and module redirects come from the selected Ansible environment;
+the `collections` keyword does not qualify defaults keys. Unknown collection or
+template context must produce an explicit coverage notice rather than false
+missing-argument findings. Defaults values and lookups are never executed.
+Distinct invocation contexts must remain separate and bounded; default values
+must not be written into authored task arguments or automatic fixes.
+Native L119 also checks defaults mapping/name shapes in referenced playbooks
+without requiring Ansible metadata. It does not claim to validate module argument
+specifications or action-group membership without the Ansible service.
+
 ## Diagnostics
 
 Each finding identifies rule_id, file, one-based line, YAML path, message,

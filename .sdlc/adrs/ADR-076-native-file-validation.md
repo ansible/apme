@@ -67,6 +67,14 @@ targets outside scenario directories as well. File findings retain original sour
 suppression and survive graph-only remediation without entering its ledger.
 Add tests for independent file validation and preserve graph rule behavior.
 
+Scenario playbook structure checks include `module_defaults` shapes. Existing
+Ansible argument checks consume separate ordered defaults contexts carried in
+the hierarchy JSON, preserving authored task arguments. Installed Ansible
+metadata resolves aliases and action groups without templating or executing
+scenario content. Unknown or bounded-out contexts produce coverage notices.
+This extends ordinary argument validation as well as scenario coverage without
+changing service boundaries, transport fields, or the graph library dependency.
+
 ## Related Decisions
 
 - ADR-008: Rule IDs are independent of validator implementation.
@@ -91,3 +99,4 @@ Add tests for independent file validation and preserve graph rule behavior.
 | 2026-11-06 | Codex | Extended configuration compatibility to 24.9.0+ with native schema and source-preserving migration |
 | 2026-11-06 | Codex | Hardened static playbook dispatch, snapshot completeness, source suppression, YAML expansion/merges, and approval reporting following independent review |
 | 2026-11-12 | Codex | Distinguished collection imports and symbolic runtime paths from missing local files; clarified optional-stage scenarios, bounded source-map merging, and limited inline suppression to its diagnostic line |
+| 2026-11-12 | Codex | Added inert module-defaults structure checks and context-aware Ansible argument validation for inherited defaults, resets, and action groups |

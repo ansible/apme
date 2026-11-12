@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import pytest
+
 from apme_engine.engine.graph_opa_payload import (
     build_hierarchy_from_graph,
     content_node_to_opa_dict,
@@ -13,6 +17,7 @@ from apme_engine.graph.content_graph import (
     NodeIdentity,
     NodeType,
 )
+from apme_engine.graph.types import YAMLDict, YAMLValue
 
 
 def _make_minimal_graph() -> ContentGraph:
@@ -434,3 +439,375 @@ class TestBuildHierarchyFromGraph:
         cs = payload["collection_set"]
         assert isinstance(cs, list)
         assert "community.general" in cs
+
+
+def _defaults_node(graph: ContentGraph, name: str, node_type: NodeType, defaults: YAMLValue = None) -> ContentNode:
+    """Add a scope node for defaults transport tests.
+
+    Args:
+        graph: Graph to extend.
+        name: Stable node ID.
+        node_type: Scope or task type.
+        defaults: Raw local defaults layer, if supplied.
+
+    Returns:
+        The added node.
+    """
+    node = ContentNode(
+        identity=NodeIdentity(path=name, node_type=node_type),
+        module="ansible.builtin.file" if node_type in {NodeType.TASK, NodeType.HANDLER} else "",
+        options={"module_defaults": defaults} if defaults is not None else {},
+    )
+    graph.add_node(node)
+    return node
+
+
+def test_defaults_contexts_preserve_order_resets_and_authored_arguments() -> None:
+    """Transport raw play, nested block, and task layers without merging args."""
+    graph = ContentGraph()
+    layers: list[YAMLValue] = [
+        {"ansible.builtin.file": {"owner": "root", "mode": "0755"}},
+        [{"group/example.testing.files": {"mode": "0644"}}, {"ansible.builtin.file": {"group": "{{ group }}"}}],
+        {"ansible.builtin.file": {}},
+        {},
+    ]
+    scopes = [
+        _defaults_node(graph, "play", NodeType.PLAY, layers[0]),
+        _defaults_node(graph, "outer", NodeType.BLOCK, layers[1]),
+        _defaults_node(graph, "inner", NodeType.BLOCK, layers[2]),
+        _defaults_node(graph, "task", NodeType.TASK, layers[3]),
+    ]
+    for parent, child in zip(scopes, scopes[1:], strict=False):
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+    task = scopes[-1]
+    task.module_options = {"path": "/tmp/example"}
+    before_options = dict(task.options)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [layers]
+    assert "module_defaults_incomplete" not in payload
+    assert payload["module_options"] == {"path": "/tmp/example"}
+    assert task.module_options == {"path": "/tmp/example"}
+    assert task.options == before_options
+    restored = ContentGraph.from_dict(graph.to_dict(slim=True))
+    restored_task = restored.get_node(task.node_id)
+    assert restored_task is not None
+    assert content_node_to_opa_dict(restored_task, restored) == payload
+
+
+@pytest.mark.parametrize("edge_type", [EdgeType.INCLUDE, EdgeType.IMPORT])  # type: ignore[untyped-decorator]
+def test_defaults_contexts_keep_shared_file_invocations_separate(edge_type: EdgeType) -> None:
+    """Two calls in one play retain alternatives, including a no-defaults path.
+
+    Args:
+        edge_type: Static import or dynamic include relationship.
+    """
+    graph = ContentGraph()
+    play = _defaults_node(graph, "play", NodeType.PLAY)
+    shared = _defaults_node(graph, "shared.yml", NodeType.TASKFILE)
+    task = _defaults_node(graph, "shared.yml/task", NodeType.TASK)
+    first = _defaults_node(graph, "first", NodeType.TASK, {"ansible.builtin.file": {"owner": "first"}})
+    second = _defaults_node(graph, "second", NodeType.TASK)
+    for caller in (first, second):
+        graph.add_edge(play.node_id, caller.node_id, EdgeType.CONTAINS)
+        graph.add_edge(caller.node_id, shared.node_id, edge_type)
+    graph.add_edge(shared.node_id, task.node_id, EdgeType.CONTAINS)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_contexts"] == [
+        [{"ansible.builtin.file": {"owner": "first"}}],
+        [],
+    ]
+
+
+@pytest.mark.parametrize("module", ["include_tasks", "ansible.builtin.include_role", "ansible.legacy.include_tasks"])  # type: ignore[untyped-decorator]
+def test_include_apply_defaults_form_a_descendant_only_block_layer(module: str) -> None:
+    """Applied defaults sit after the caller and before the included local scopes.
+
+    Args:
+        module: Include module spelling whose apply mapping is serialized.
+    """
+    graph = ContentGraph()
+    play_defaults: YAMLDict = {"file": {"owner": "root"}}
+    include_defaults: YAMLDict = {"file": {"group": "caller"}}
+    applied: YAMLValue = [{"group/example.testing.files": {"mode": "0644"}}, {"file": {}}]
+    task_defaults: YAMLDict = {"file": {"owner": "local"}}
+    play = _defaults_node(graph, "play", NodeType.PLAY, play_defaults)
+    caller = _defaults_node(graph, "caller", NodeType.TASK, include_defaults)
+    caller.module = module
+    caller.options["args"] = {"apply": {"module_defaults": applied}}
+    target_type = NodeType.ROLE if module.endswith("include_role") else NodeType.TASKFILE
+    target = _defaults_node(graph, "target", target_type)
+    task = _defaults_node(graph, "task", NodeType.TASK, task_defaults)
+    graph.add_edge(play.node_id, caller.node_id, EdgeType.CONTAINS)
+    graph.add_edge(caller.node_id, target.node_id, EdgeType.INCLUDE)
+    graph.add_edge(target.node_id, task.node_id, EdgeType.CONTAINS)
+    assert content_node_to_opa_dict(caller, graph)["module_defaults_contexts"] == [[play_defaults, include_defaults]]
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [[play_defaults, include_defaults, applied, task_defaults]]
+    assert "module_defaults_incomplete" not in payload
+    assert caller.options["args"] == {"apply": {"module_defaults": applied}}
+
+
+def test_shared_include_apply_defaults_do_not_leak_between_invocations() -> None:
+    """The same task file called twice keeps distinct applied block defaults."""
+    graph = ContentGraph()
+    target = _defaults_node(graph, "target", NodeType.TASKFILE)
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    graph.add_edge(target.node_id, task.node_id, EdgeType.CONTAINS)
+    for name in ("first", "second"):
+        caller = _defaults_node(graph, name, NodeType.TASK)
+        caller.module = "ansible.builtin.include_tasks"
+        caller.module_options = {"file": "target", "apply": {"module_defaults": {"file": {"owner": name}}}}
+        graph.add_edge(caller.node_id, target.node_id, EdgeType.INCLUDE)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_contexts"] == [
+        [{"file": {"owner": "first"}}],
+        [{"file": {"owner": "second"}}],
+    ]
+
+
+@pytest.mark.parametrize("apply", ["{{ applied_attributes }}", None])  # type: ignore[untyped-decorator]
+def test_unavailable_apply_marks_descendants_incomplete(apply: YAMLValue) -> None:
+    """Unknown apply data cannot silently produce false missing-argument findings.
+
+    Args:
+        apply: Apply mapping that cannot be inspected statically.
+    """
+    graph = ContentGraph()
+    caller = _defaults_node(graph, "caller", NodeType.TASK)
+    caller.module = "ansible.builtin.include_role"
+    caller.module_options = {"apply": apply}
+    role = _defaults_node(graph, "role", NodeType.ROLE)
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    graph.add_edge(caller.node_id, role.node_id, EdgeType.INCLUDE)
+    graph.add_edge(role.node_id, task.node_id, EdgeType.CONTAINS)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_incomplete"] is True
+    assert "module_defaults_incomplete" not in content_node_to_opa_dict(caller, graph)
+
+
+def test_include_templated_args_mark_unknown_applied_defaults_incomplete() -> None:
+    """Templated include args could supply apply and require explicit coverage."""
+    graph = ContentGraph()
+    caller = _defaults_node(graph, "caller", NodeType.TASK)
+    caller.module = "include_tasks"
+    caller.options["args"] = "{{ include_arguments }}"
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    graph.add_edge(caller.node_id, task.node_id, EdgeType.INCLUDE)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_incomplete"] is True
+
+
+@pytest.mark.parametrize("edge_type", [EdgeType.DEPENDENCY, EdgeType.INCLUDE, EdgeType.IMPORT])  # type: ignore[untyped-decorator]
+def test_defaults_contexts_follow_roles_across_plays(edge_type: EdgeType) -> None:
+    """Role and dependent-role tasks keep each play's inherited defaults.
+
+    Args:
+        edge_type: Static role, included role, or imported role relationship.
+    """
+    graph = ContentGraph()
+    role = _defaults_node(graph, "role", NodeType.ROLE)
+    dependency = _defaults_node(graph, "dependency", NodeType.ROLE)
+    handler = _defaults_node(graph, "handler", NodeType.HANDLER)
+    graph.add_edge(role.node_id, dependency.node_id, EdgeType.DEPENDENCY)
+    graph.add_edge(dependency.node_id, handler.node_id, EdgeType.CONTAINS)
+    for name in ("first", "second"):
+        play = _defaults_node(graph, name, NodeType.PLAY, {"ansible.builtin.file": {"owner": name}})
+        if edge_type == EdgeType.DEPENDENCY:
+            graph.add_edge(play.node_id, role.node_id, edge_type)
+        else:
+            caller = _defaults_node(graph, name + "/caller", NodeType.TASK)
+            graph.add_edge(play.node_id, caller.node_id, EdgeType.CONTAINS)
+            graph.add_edge(caller.node_id, role.node_id, edge_type)
+    assert content_node_to_opa_dict(handler, graph)["module_defaults_contexts"] == [
+        [{"ansible.builtin.file": {"owner": "first"}}],
+        [{"ansible.builtin.file": {"owner": "second"}}],
+    ]
+
+
+def test_defaults_contexts_ignore_nonpositional_edges_and_duplicate_section_edges() -> None:
+    """Notifications and data flow cannot inject layers or create false cycles."""
+    graph = ContentGraph()
+    block = _defaults_node(graph, "block", NodeType.BLOCK, {"file": {"owner": "block"}})
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    unrelated = _defaults_node(graph, "unrelated", NodeType.TASK, {"file": {"owner": "unrelated"}})
+    graph.add_edge(block.node_id, task.node_id, EdgeType.CONTAINS)
+    graph.add_edge(block.node_id, task.node_id, EdgeType.RESCUE)
+    graph.add_edge(block.node_id, task.node_id, EdgeType.ALWAYS)
+    for edge_type in (EdgeType.NOTIFY, EdgeType.DATA_FLOW, EdgeType.INVOKES, EdgeType.DEPENDENCY):
+        graph.add_edge(unrelated.node_id, task.node_id, edge_type)
+        graph.add_edge(task.node_id, unrelated.node_id, edge_type)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [[{"file": {"owner": "block"}}]]
+    assert "module_defaults_incomplete" not in payload
+
+
+@pytest.mark.parametrize("count", [64, 65])  # type: ignore[untyped-decorator]
+def test_defaults_context_cap_propagates_incompleteness(count: int) -> None:
+    """Only distinct contexts consume the budget and truncation reaches children.
+
+    Args:
+        count: Number of distinct inherited defaults alternatives.
+    """
+    graph = ContentGraph()
+    shared = _defaults_node(graph, "shared", NodeType.TASKFILE)
+    task = _defaults_node(graph, "task", NodeType.TASK, {"file": {}})
+    graph.add_edge(shared.node_id, task.node_id, EdgeType.CONTAINS)
+    for index in range(count):
+        parent = _defaults_node(graph, f"parent-{index:02}", NodeType.PLAY, {"file": {"owner": index}})
+        graph.add_edge(parent.node_id, shared.node_id, EdgeType.INCLUDE)
+    # Duplicate positional paths do not use additional context capacity.
+    graph.add_edge("parent-00", shared.node_id, EdgeType.IMPORT)
+    payload = content_node_to_opa_dict(task, graph)
+    contexts = payload["module_defaults_contexts"]
+    assert isinstance(contexts, list) and len(contexts) == 64
+    assert payload.get("module_defaults_incomplete", False) is (count > 64)
+    assert all(isinstance(context, list) and context[-1] == {"file": {}} for context in contexts)
+
+
+def test_defaults_context_identity_retains_group_mapping_order() -> None:
+    """Equal mappings with different group order remain distinct raw contexts."""
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    groups: YAMLDict = {
+        "group/example.testing.first": {"mode": "0644"},
+        "group/example.testing.second": {"mode": "0755"},
+    }
+    for name, defaults in (("first", groups), ("second", dict(reversed(list(groups.items()))))):
+        parent = _defaults_node(graph, name, NodeType.PLAY, defaults)
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    contexts = content_node_to_opa_dict(task, graph)["module_defaults_contexts"]
+    assert isinstance(contexts, list) and len(contexts) == 2
+    for context, expected in zip(contexts, (list(groups), list(reversed(groups))), strict=True):
+        assert isinstance(context, list) and isinstance(context[0], dict)
+        assert list(context[0]) == expected
+
+
+def test_defaults_contexts_deduplicate_equivalent_invocations_before_capping() -> None:
+    """Many calls with identical raw layers stay complete and use one context."""
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    for index in range(100):
+        parent = _defaults_node(graph, f"parent-{index:03}", NodeType.PLAY, {"file": {"owner": "same"}})
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [[{"file": {"owner": "same"}}]]
+    assert "module_defaults_incomplete" not in payload
+
+
+def test_defaults_context_cycles_are_incomplete_and_standalone_keeps_local_layer() -> None:
+    """Cycles cannot fabricate complete ancestry; standalone tasks retain local data."""
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK, [{"file": {"mode": "0644"}}, {"file": {}}])
+    parent = _defaults_node(graph, "parent", NodeType.BLOCK)
+    graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    graph.add_edge(task.node_id, parent.node_id, EdgeType.INCLUDE)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == []
+    assert payload["module_defaults_incomplete"] is True
+    assert "module_defaults_inactive" not in payload
+    assert content_node_to_opa_dict(task)["module_defaults_contexts"] == [[task.options["module_defaults"]]]
+
+
+@pytest.mark.parametrize("depth", [256, 257])  # type: ignore[untyped-decorator]
+def test_defaults_layer_depth_is_bounded_before_path_copying(depth: int) -> None:
+    """Deep positional paths cannot accumulate unbounded layer tuples.
+
+    Args:
+        depth: Number of raw defaults layers along the positional path.
+    """
+    graph = ContentGraph()
+    parent = None
+    for index in range(depth):
+        block = _defaults_node(graph, f"block-{index}", NodeType.BLOCK, {"file": {"owner": "root"}})
+        if parent is not None:
+            graph.add_edge(parent.node_id, block.node_id, EdgeType.CONTAINS)
+        parent = block
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    assert parent is not None
+    graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    payload = content_node_to_opa_dict(task, graph)
+    if depth == 256:
+        contexts = payload["module_defaults_contexts"]
+        assert isinstance(contexts, list) and isinstance(contexts[0], list) and len(contexts[0]) == depth
+        assert "module_defaults_incomplete" not in payload
+    else:
+        assert payload["module_defaults_incomplete"] is True
+        assert payload["module_defaults_contexts"] == []
+        assert "module_defaults_inactive" not in payload
+
+
+@pytest.mark.parametrize("scope", ["play", "task", "apply"])  # type: ignore[untyped-decorator]
+def test_deep_raw_defaults_become_incomplete_without_crashing(scope: str) -> None:
+    """Recursive conversion failures cannot abort hierarchy argument context.
+
+    Args:
+        scope: Location containing an excessively deep raw defaults value.
+    """
+    graph = ContentGraph()
+    raw: YAMLValue = {}
+    for _index in range(2000):
+        raw = {"nested": raw}
+    task = _defaults_node(graph, "task", NodeType.TASK, raw if scope == "task" else None)
+    if scope == "play":
+        parent = _defaults_node(graph, "play", NodeType.PLAY, raw)
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    elif scope == "apply":
+        parent = _defaults_node(graph, "caller", NodeType.TASK)
+        parent.module = "include_tasks"
+        parent.module_options = {"apply": {"module_defaults": raw}}
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.INCLUDE)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_incomplete"] is True
+    if scope == "task":
+        assert content_node_to_opa_dict(task)["module_defaults_incomplete"] is True
+
+
+def test_incomplete_context_takes_precedence_over_inactive_inventory() -> None:
+    """Conflicting markers must report incomplete coverage instead of skipping it."""
+    from pathlib import Path
+
+    from apme_engine.validators.ansible.module_defaults import resolve_module_defaults
+
+    task: dict[str, object] = {
+        "module": "file",
+        "module_options": {},
+        "module_defaults_contexts": [],
+        "module_defaults_incomplete": True,
+        "module_defaults_inactive": True,
+    }
+    with patch("apme_engine.validators.ansible.module_defaults._resolve", side_effect=AssertionError):
+        result = resolve_module_defaults([task], Path("/unused-runtime"))
+    assert result.tasks == []
+    assert len(result.violations) == 1
+    assert "incomplete" in str(result.violations[0]["message"])
+
+
+def test_full_hierarchy_reuses_one_defaults_context_cache() -> None:
+    """All roots share one positional DP pass and agree with standalone graph calls."""
+    from apme_engine.engine import graph_opa_payload
+
+    graph = _make_minimal_graph()
+    second_root = _defaults_node(graph, "other.yml", NodeType.PLAYBOOK)
+    task = graph.get_node("site.yml/plays[0]/tasks[0]")
+    assert task is not None
+    graph.add_edge(second_root.node_id, task.node_id, EdgeType.IMPORT)
+    expected = content_node_to_opa_dict(task, graph)
+    with (
+        patch.object(
+            graph_opa_payload,
+            "_build_module_defaults_contexts",
+            wraps=graph_opa_payload._build_module_defaults_contexts,
+        ) as build,
+        patch.object(graph, "positional_ancestors", side_effect=AssertionError("No repeated ancestry walks")),
+    ):
+        payload = build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+    assert build.call_count == 1
+    with patch.object(
+        graph_opa_payload,
+        "_build_module_defaults_contexts",
+        wraps=graph_opa_payload._build_module_defaults_contexts,
+    ) as batch_build:
+        batch = graph_opa_payload.content_nodes_to_opa_dicts([task, second_root], graph)
+    assert batch_build.call_count == 1
+    assert batch[0] == expected
+    hierarchy = payload["hierarchy"]
+    assert isinstance(hierarchy, list) and len(hierarchy) == 2
+    for tree in hierarchy:
+        assert isinstance(tree, dict) and isinstance(tree["nodes"], list)
+        tasks = [node for node in tree["nodes"] if isinstance(node, dict) and node.get("key") == task.node_id]
+        assert tasks == [expected]
