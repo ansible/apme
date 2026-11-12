@@ -93,6 +93,23 @@ class TestViolationDictToProto:
         proto = violation_dict_to_proto(v)
         assert proto.remediation_class == common_pb2.REMEDIATION_CLASS_AI_CANDIDATE
 
+    def test_missing_and_unknown_scope_round_trip_as_unspecified(self) -> None:
+        """Absent or unknown scope stays absent instead of becoming task scope."""
+        from apme_engine.cli._convert import violation_proto_to_dict as cli_proto_to_dict
+        from apme_engine.remediation.partition import partition_violations
+        from apme_engine.remediation.registry import TransformRegistry
+
+        for violation in ({"rule_id": "L999"}, {"rule_id": "L999", "scope": "unknown"}):
+            proto = violation_dict_to_proto(violation)
+            assert proto.scope == common_pb2.RULE_SCOPE_UNSPECIFIED
+            restored = violation_proto_to_dict(proto)
+            assert "scope" not in restored
+            assert "scope" not in cli_proto_to_dict(proto)
+
+            _tier1, tier2, tier3 = partition_violations([restored], TransformRegistry())
+            assert tier2 == []
+            assert len(tier3) == 1
+
     def test_resolution_transform_failed(self) -> None:
         """TRANSFORM_FAILED resolution converts to proto enum."""
         v = {"rule_id": "L021", "remediation_resolution": RemediationResolution.TRANSFORM_FAILED}
@@ -147,11 +164,11 @@ class TestViolationDictToProto:
         proto = violation_dict_to_proto(v)
         assert proto.scope == common_pb2.RULE_SCOPE_COLLECTION
 
-    def test_missing_scope_defaults_to_task(self) -> None:
-        """Missing scope defaults to TASK."""
+    def test_missing_scope_stays_unspecified(self) -> None:
+        """Missing scope remains unspecified for downstream safety routing."""
         v = {"rule_id": "L021"}
         proto = violation_dict_to_proto(v)
-        assert proto.scope == common_pb2.RULE_SCOPE_TASK
+        assert proto.scope == common_pb2.RULE_SCOPE_UNSPECIFIED
 
     def test_original_yaml_and_fixed_yaml(self) -> None:
         """original_yaml and fixed_yaml map to proto fields."""
@@ -407,11 +424,11 @@ class TestViolationProtoToDict:
         d = violation_proto_to_dict(proto)
         assert d["scope"] == RuleScope.COLLECTION.value
 
-    def test_unspecified_scope_defaults_to_task(self) -> None:
-        """Unspecified scope defaults to task."""
+    def test_unspecified_scope_is_omitted(self) -> None:
+        """Unspecified proto scope does not acquire an explicit task scope."""
         proto = Violation(rule_id="L021", scope=common_pb2.RULE_SCOPE_UNSPECIFIED)
         d = violation_proto_to_dict(proto)
-        assert d["scope"] == RuleScope.TASK.value
+        assert "scope" not in d
 
     def test_resolution_all_ai_values(self) -> None:
         """All AI resolution proto enums convert to strings."""

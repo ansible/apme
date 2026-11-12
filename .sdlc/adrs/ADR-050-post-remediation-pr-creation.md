@@ -6,7 +6,7 @@ Partially Implemented (scm_token encryption at rest pending)
 
 ## Date
 
-2026-04-07 (revised 2026-07-06)
+2026-04-07 (revised 2026-11-05)
 
 ## Context
 
@@ -163,7 +163,12 @@ When `create_pr` is `false`, `pr_url` is `null`.
 Error responses:
 - `404` — operation/activity not found, project not found, or no patched files
 - `409` — PR already created (idempotency guard), operation not completed,
-  operation is not a remediate scan, or no patches available
+  operation is not a remediate scan, no patches available, or a previous
+  submit claim is incomplete. An incomplete claim blocks tokened and tokenless
+  retries until SCM state is verified; if nothing was published, start a new
+  operation with a new token. Reusing a token to change a branch-only result
+  into a PR request also conflicts; retry without the token to open a PR from
+  the recorded branch.
 - `422` — no SCM token configured (project or global), or SCM provider
   cannot be detected
 - `502` — SCM provider API error (upstream failure)
@@ -368,6 +373,21 @@ globally via `APME_GITHUB_API_URL`.
   `commit_sha` columns (text). `pr_url` is set when a pull request is
   created. `branch_name` and `commit_sha` are stamped after every
   successful push, including branch-only submit (`create_pr: false`).
+  Add nullable `submit_token` and `scm_provider` columns for durable
+  idempotency replay. A unique index on `(project_id, submit_token)` reserves
+  each token once per project across Gateway instances; a reservation conflict
+  returns `409` before making SCM calls. Existing duplicate non-null claims
+  must be resolved before the index migration can complete.
+  The claim is committed in its own session before SCM mutation. If a claimed
+  scan has no recorded branch, tokenless retries also return `409` to prevent
+  a second branch from being created after an uncertain SCM outcome.
+  Failures during the read-only branch lookup release the claim with a
+  compare-and-set; once branch creation or file push starts, the claim remains
+  because the remote outcome may be uncertain.
+  Tokenless follow-up submits reuse the scan's recorded branch so a branch-only
+  tokened submit can later open a PR without creating a second branch.
+  Replays also preserve the original `create_pr` intent: a token retry cannot
+  turn a stored branch-only result into a successful PR request.
   All three are returned on activity list and detail REST responses.
   Patched file content is stored in a related `patched_files` table with
   columns `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML
@@ -427,3 +447,8 @@ globally via `APME_GITHUB_API_URL`.
 | 2026-09-22 | Agent | Status clarified — `/operation/submit` with `create_pr` and GitHub/GitLab/Bitbucket providers shipped; `APME_SECRET_KEY` encryption deferred |
 | 2026-09-22 | Agent | Status → Partially Implemented — PR creation and multi-provider SCM shipped |
 | 2026-10-23 | Agent | Treat empty and whitespace-only inline, project, and global SCM tokens as unset during fallback selection |
+| 2026-11-05 | Agent | Enforce project-scoped submit-token claims in the database for cross-instance idempotency |
+| 2026-11-05 | Agent | Block tokenless retries of incomplete claims and scope the claim write to its own session |
+| 2026-11-05 | Agent | Release claims after read-only SCM failures, retaining them after mutation starts |
+| 2026-11-05 | Agent | Reuse the recorded branch for tokenless follow-up submits |
+| 2026-11-05 | Agent | Reject same-token replay that upgrades a branch-only result to PR creation |

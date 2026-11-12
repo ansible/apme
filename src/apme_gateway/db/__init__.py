@@ -50,6 +50,7 @@ async def init_db(database_url: str) -> None:
                 await conn.run_sync(_migrate_galaxy_servers_table)
                 await conn.run_sync(_migrate_notifications_table)
                 await conn.run_sync(_migrate_rules_table)
+                await conn.run_sync(_migrate_notification_outbox_table)
         except (OperationalError, OSError):
             if engine is not None:
                 await engine.dispose()
@@ -97,6 +98,7 @@ async def reset_db() -> None:
         await conn.run_sync(_migrate_galaxy_servers_table)
         await conn.run_sync(_migrate_notifications_table)
         await conn.run_sync(_migrate_rules_table)
+        await conn.run_sync(_migrate_notification_outbox_table)
 
 
 def _migrate_galaxy_servers_table(conn: Connection) -> None:
@@ -208,6 +210,7 @@ def _migrate_violations_table(conn: object) -> None:
 
     Args:
         conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+
     """
     from sqlalchemy.engine import Connection  # noqa: PLC0415
 
@@ -299,14 +302,19 @@ def _migrate_proposals_table(conn: object) -> None:
 
 
 def _migrate_scans_table(conn: object) -> None:
-    """Add SCM publish columns to ``scans`` (ADR-050).
+    """Add SCM publish columns and enforce project-scoped token uniqueness (ADR-050).
 
     ``create_all`` only creates missing *tables* — it does not add columns
-    to existing tables.  This function inspects the ``scans`` table and
-    issues ``ALTER TABLE ADD COLUMN`` for any that are missing.
+    or indexes to existing tables. This migration adds any missing columns
+    and a unique index so concurrent Gateway instances cannot claim the same
+    submit token on different scans for one project. Existing duplicate
+    claims fail startup with an actionable error instead of being discarded.
 
     Args:
         conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+
+    Raises:
+        RuntimeError: If existing project/token claims contain duplicates.
     """
     from sqlalchemy.engine import Connection  # noqa: PLC0415
 
@@ -324,9 +332,33 @@ def _migrate_scans_table(conn: object) -> None:
         migrations.append("ALTER TABLE scans ADD COLUMN branch_name TEXT DEFAULT NULL")
     if "commit_sha" not in existing:
         migrations.append("ALTER TABLE scans ADD COLUMN commit_sha TEXT DEFAULT NULL")
+    if "submit_token" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN submit_token TEXT DEFAULT NULL")
+    if "scm_provider" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN scm_provider TEXT DEFAULT NULL")
 
     for stmt in migrations:
         conn.execute(text(stmt))
+
+    index_name = "uq_scans_project_submit_token"
+    indexes = {index["name"] for index in inspect(conn).get_indexes("scans")}
+    if index_name not in indexes:
+        duplicate = conn.execute(
+            text(
+                "SELECT project_id, submit_token, COUNT(*) "
+                "FROM scans WHERE project_id IS NOT NULL AND submit_token IS NOT NULL "
+                "GROUP BY project_id, submit_token HAVING COUNT(*) > 1 LIMIT 1"
+            )
+        ).first()
+        if duplicate is not None:
+            raise RuntimeError(
+                "Cannot enforce unique (project_id, submit_token) claims: "
+                f"duplicate token exists for project {duplicate[0]!r}. "
+                "Resolve duplicate submit claims before starting the Gateway."
+            )
+        conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS uq_scans_project_submit_token ON scans (project_id, submit_token)")
+        )
 
 
 def _migrate_projects_table(conn: Connection) -> None:
@@ -383,6 +415,36 @@ def _migrate_rules_table(conn: Connection) -> None:
             )
         else:
             conn.execute(text("ALTER TABLE rules ADD COLUMN ansible_core_version TEXT NOT NULL DEFAULT ''"))
+
+
+def _migrate_notification_outbox_table(conn: Connection) -> None:
+    """Add the outbox reconciliation index and clean up orphaned rows.
+
+    ``create_all`` creates the ``sent_at`` index and the ``scans`` FK for
+    fresh databases, but does not alter existing tables.  This migration
+    adds the missing index additively and deletes orphaned outbox rows
+    whose scan no longer exists (emulating the ``ondelete=CASCADE``
+    cleanup for pre-FK rows).  SQLite cannot add a foreign key to an
+    existing table via ``ALTER TABLE`` — the FK is enforced for tables
+    created after this change; orphan cleanup keeps legacy tables
+    consistent instead.
+
+    Args:
+        conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+    """
+    if not isinstance(conn, Connection):
+        return
+    insp = inspect(conn)
+    if not insp.has_table("notification_outbox"):
+        return
+    indexes = {idx["name"] for idx in insp.get_indexes("notification_outbox")}
+    if "ix_notification_outbox_sent_at" not in indexes:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notification_outbox_sent_at ON notification_outbox (sent_at)"))
+    columns = {col["name"] for col in insp.get_columns("notification_outbox")}
+    if "content_hash" not in columns:
+        conn.execute(text("ALTER TABLE notification_outbox ADD COLUMN content_hash TEXT DEFAULT NULL"))
+    if insp.has_table("scans"):
+        conn.execute(text("DELETE FROM notification_outbox WHERE scan_id NOT IN (SELECT scan_id FROM scans)"))
 
 
 async def close_db() -> None:

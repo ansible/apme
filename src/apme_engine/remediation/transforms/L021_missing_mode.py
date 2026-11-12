@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.scalarstring import SingleQuotedScalarString
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.transforms._helpers import get_module_key
@@ -50,10 +51,10 @@ def fix_missing_mode(task: CommentedMap, violation: ViolationDict) -> bool:
     if isinstance(module_args, dict):
         if "mode" in module_args:
             return False
-        module_args["mode"] = "0644"
+        module_args["mode"] = SingleQuotedScalarString("0644")
     else:
         if "mode" not in task:
-            task["mode"] = "0644"
+            task["mode"] = SingleQuotedScalarString("0644")
         else:
             return False
 
