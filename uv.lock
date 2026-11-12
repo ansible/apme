@@ -344,7 +344,7 @@ provides-extras = ["ai", "gateway", "dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "ansible-dev-tools", specifier = ">=25.10.0" },
-    { name = "tox", specifier = "==4.64.9" },
+    { name = "tox", specifier = "==4.65.4" },
 ]
 
 [[package]]
@@ -2627,7 +2627,7 @@ wheels = [
 
 [[package]]
 name = "tox"
-version = "4.64.9"
+version = "4.65.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cachetools" },
@@ -2642,9 +2642,9 @@ dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
     { name = "virtualenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/ce/062f2b42f95cfcbb9f1d7450820d29afffd4cd1967bdaa5e70ae3ad0d7b8/tox-4.64.9.tar.gz", hash = "sha256:6e85d720e350f1fb598498f3b4e742d0afa0a1e2b2e5e8203452729a3fa1da2c", size = 331588, upload-time = "2026-10-05T13:52:29.631Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/e0/3e2a5f99e0559879cc02ca11d483ae9f48bd5d7d28a725560334f1b75452/tox-4.65.4.tar.gz", hash = "sha256:e416fcfef86874001ba90787c282f4c6ecae6e2e167dbe65e7b8b53f9d43c931", size = 343656, upload-time = "2026-10-12T08:01:09.061Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/98/0eef630912ae10dfcf78ccf424852360ab41abeb62575f794bb91af79288/tox-4.64.9-py3-none-any.whl", hash = "sha256:1281e9ada1f39ef248f7962cb20024643d2c406cd5a27aa6ef68877fd48a79b2", size = 237685, upload-time = "2026-10-05T13:52:27.985Z" },
+    { url = "https://files.pythonhosted.org/packages/46/0e/c5d5baade75057939b00589a4bb1a045b9282f84487f148398047bc2c482/tox-4.65.4-py3-none-any.whl", hash = "sha256:1c4f29c5886ad46228da8a023f8f82167db2ff3da7a6da060f9d4fc3dc2e2dd0", size = 237610, upload-time = "2026-10-12T08:01:07.37Z" },
 ]
 
 [[package]]
