@@ -7,6 +7,7 @@ Each rule module exports a run() function that returns a list of violation dicts
 import json
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -243,6 +244,7 @@ class AnsibleValidator:
         content_graph_data: bytes = b"",
         *,
         check_syntax: bool = True,
+        file_snapshot: Mapping[str, bytes] | None = None,
     ) -> AnsibleRunResult:
         """Run ansible checks and return violations + per-rule timing.
 
@@ -250,6 +252,7 @@ class AnsibleValidator:
             context: Scan context with hierarchy payload and root dir.
             content_graph_data: Serialized ContentGraph for L057 node resolution.
             check_syntax: Run project syntax checks; false for task-only rescans.
+            file_snapshot: Uploaded bytes for complete static scenario exclusions.
 
         Returns:
             AnsibleRunResult with violations and rule timings.
@@ -271,6 +274,7 @@ class AnsibleValidator:
                 venv_root=self._venv_root,
                 root_dir=root_dir,
                 env_extra=self._env_extra,
+                file_snapshot=file_snapshot,
             )
             elapsed = (time.monotonic() - t0) * 1000
             if node_lookup:

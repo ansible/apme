@@ -398,7 +398,8 @@ def _filter_file_noqa(violations: list[ViolationDict]) -> list[ViolationDict]:
         for violation in violations
         if not str(violation.get("path", "")).startswith("$")
         or violation.get("_enforced")
-        or str(violation.get("rule_id", "")).upper() not in parse_noqa(str(violation.get("original_yaml", "")))
+        or str(violation.get("rule_id", "")).upper()
+        not in parse_noqa(str(violation.get("original_yaml", "")).split("\n", 1)[0])
     ]
 
 

@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import yaml
@@ -129,6 +130,7 @@ def run(
     venv_root: Path,
     root_dir: Path,
     env_extra: dict[str, str] | None = None,
+    file_snapshot: Mapping[str, bytes] | None = None,
     **_kwargs: object,
 ) -> list[dict[str, object]]:
     """Run runtime syntax checks on ordinary playbooks under root_dir.
@@ -140,6 +142,7 @@ def run(
         venv_root: Path to ansible venv root.
         root_dir: Root directory containing playbooks.
         env_extra: Optional extra environment variables.
+        file_snapshot: Uploaded bytes for complete static scenario exclusions.
         **_kwargs: Ignored keyword arguments.
 
     Returns:
@@ -167,10 +170,21 @@ def run(
         env.update(env_extra)
 
     static_paths: frozenset[str] = frozenset()
-    yaml_files = [path for extension in ("*.yml", "*.yaml") for path in root_dir.rglob(extension)]
-    if any(path.name in {"molecule.yml", "molecule.yaml"} for path in yaml_files):
-        snapshot = {str(path.relative_to(root_dir)): path.read_bytes() for path in yaml_files if path.is_file()}
-        static_paths = molecule_playbook_paths(snapshot)
+    if file_snapshot is not None:
+        static_paths = molecule_playbook_paths(file_snapshot)
+    elif any(path.is_file() for name in ("molecule.yml", "molecule.yaml") for path in root_dir.rglob(name)):
+        return [
+            {
+                "rule_id": RULE_ID,
+                "severity": "error",
+                "file": "",
+                "line": 1,
+                "path": "",
+                "scope": "playbook",
+                "message": "Molecule runtime exclusions require the complete uploaded snapshot; "
+                "runtime syntax checks were skipped",
+            }
+        ]
 
     for playbook_path in _find_playbooks(root_dir):
         rel_path = str(playbook_path.relative_to(root_dir)) if root_dir in playbook_path.parents else str(playbook_path)

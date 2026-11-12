@@ -34,6 +34,23 @@ distinguish unavailable content from a proven invalid reference. Scenario
 actions require semantic checks beyond the upstream schema's permissive strings.
 Respect optional stages, action arguments, repeated actions, and shared state.
 
+Treat collection-qualified imports separately from filesystem paths. Resolve
+uploaded collections under `collections/ansible_collections/` or
+`ansible_collections/`, and a source collection identified by its uploaded
+`galaxy.yml` or `MANIFEST.json`. Unavailable collection content needs L118.
+Cache project identities, including unavailable/malformed metadata, per request.
+Use the enclosing collection layout for nested sibling imports and select a
+collection copy before looking for its playbook, preserving shadowing.
+Represent documented generated Molecule paths with inert virtual runtime paths:
+argument use is known, but generated-file contents remain unavailable for
+reference checks. Optional explicit missing stage references identify the
+affected scenario and explain Molecule's ability to skip the stage.
+
+Merge values separately from source origins so wide mappings do not rescan the
+entire origin map per key. Decode source text once per file for excerpts; inline
+suppression examines only the diagnostic line while fingerprints retain the
+full excerpt.
+
 ## Playbooks and rescans
 
 Inspect explicitly referenced YAML as Ansible content and reuse existing graph
@@ -42,6 +59,9 @@ L057 excludes Molecule scenario content because runtime syntax checking may
 evaluate lookups. Avoid accidental runtime matches in config/inventory. Resolve
 only statically known context. Report unknown execution-time variables as
 coverage limits instead of treating them as definitive syntax failures.
+Forward the complete uploaded byte map through the Ansible adapter into L057's
+static exclusion lookup so extensionless collection imports and their YAML
+descendants receive the same exclusions as Native's assessment.
 
 Preserve config findings through convergence. Graph-only incremental requests
 must not imply that config files were revalidated. Shared config changes require

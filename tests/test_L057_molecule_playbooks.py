@@ -107,7 +107,8 @@ def test_L057_never_executes_molecule_scenario_lookups(tmp_path: Path) -> None:
     )
     (scenario / "verify.yml").write_text('- import_playbook: "{{ molecule_project_directory }}/site.yml"\n')
     with patch("apme_engine.validators.ansible.rules.L057_syntax.subprocess.run") as invoke:
-        assert run(tmp_path / "venv", tmp_path / "project") == []
+        snapshot = {str(path.relative_to(tmp_path / "project")): path.read_bytes() for path in scenario.iterdir()}
+        assert run(tmp_path / "venv", tmp_path / "project", file_snapshot=snapshot) == []
     invoke.assert_not_called()
 
 
@@ -139,5 +140,121 @@ def test_L057_shared_and_external_scenario_references_are_static(tmp_path: Path)
     external.parent.mkdir()
     external.write_text("- hosts: all\n  tasks:\n    - import_tasks: \"{{ lookup('pipe', 'unexpected-command') }}\"\n")
     with patch("apme_engine.validators.ansible.rules.L057_syntax.subprocess.run") as invoke:
-        assert run(tmp_path / "venv", root) == []
+        snapshot = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        assert run(tmp_path / "venv", root, file_snapshot=snapshot) == []
+    invoke.assert_not_called()
+
+
+def test_L057_collection_project_imports_remain_static_with_manifest(tmp_path: Path) -> None:
+    """Collection imports identified by JSON metadata cannot reach runtime checks.
+
+    Args:
+        tmp_path: Uploaded collection project and mock venv.
+    """
+    executable = tmp_path / "venv/bin/ansible-playbook"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    root = tmp_path / "project"
+    scenario = root / "molecule/default"
+    scenario.mkdir(parents=True)
+    (scenario / "molecule.yml").write_text("")
+    (scenario / "converge.yml").write_text("- import_playbook: example.testing.prepare\n")
+    (root / "MANIFEST.json").write_text('{"collection_info": {"namespace": "example", "name": "testing"}}')
+    target = root / "playbooks/prepare.yml"
+    target.parent.mkdir()
+    target.write_text("- hosts: all\n  tasks: []\n")
+    with patch("apme_engine.validators.ansible.rules.L057_syntax.subprocess.run") as invoke:
+        snapshot = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        assert run(tmp_path / "venv", root, file_snapshot=snapshot) == []
+    invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("use_snapshot", [False, True])  # type: ignore[untyped-decorator]
+def test_L057_extensionless_collection_imports_exclude_descendants(tmp_path: Path, use_snapshot: bool) -> None:
+    """An extensionless intermediate import must not expose its YAML descendants.
+
+    Args:
+        tmp_path: Materialized project and mock venv.
+        use_snapshot: Whether the caller supplies uploaded bytes directly.
+    """
+    executable = tmp_path / "venv/bin/ansible-playbook"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    root = tmp_path / "project"
+    files = {
+        "molecule/default/molecule.yml": b"",
+        "molecule/default/converge.yml": b"- import_playbook: example.testing.prepare\n",
+        "galaxy.yml": b"namespace: example\nname: testing\n",
+        "playbooks/prepare": b"- import_playbook: final.yml\n",
+        "playbooks/final.yml": b"- hosts: all\n  tasks: []\n",
+    }
+    for path, content in files.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    with patch("apme_engine.validators.ansible.rules.L057_syntax.subprocess.run") as invoke:
+        findings = run(tmp_path / "venv", root, file_snapshot=files if use_snapshot else None)
+    if use_snapshot:
+        assert findings == []
+    else:
+        assert len(findings) == 1
+        assert findings[0]["rule_id"] == "L057"
+        assert "complete uploaded snapshot" in str(findings[0]["message"])
+    invoke.assert_not_called()
+
+
+def test_ansible_service_forwards_complete_snapshot_to_static_exclusions(tmp_path: Path) -> None:
+    """RPC adaptation passes non-YAML uploaded content into L057 exclusion lookup.
+
+    Args:
+        tmp_path: Mock session venv.
+    """
+    from apme.v1.common_pb2 import File
+    from apme_engine.daemon.ansible_validator_server import _run_ansible_validate
+    from apme_engine.validators.ansible import AnsibleValidator
+
+    files = [
+        File(path="./molecule/default/molecule.yml", content=b""),
+        File(path="./playbooks/prepare", content=b"Earlier equivalent path"),
+        File(path="playbooks//prepare", content=b"- import_playbook: final.yml\n"),
+    ]
+    with patch.object(AnsibleValidator, "run_with_timing") as run_checks:
+        _run_ansible_validate(files, "2.19", {}, "snapshot-test", str(tmp_path))
+    assert run_checks.call_args.kwargs["file_snapshot"] == {
+        "molecule/default/molecule.yml": b"",
+        "playbooks/prepare": b"- import_playbook: final.yml\n",
+    }
+
+
+@pytest.mark.parametrize("intermediate", ["venv/prepare.yml", "shared/prepare.ansible"])  # type: ignore[untyped-decorator]
+def test_missing_snapshot_prevents_partial_import_exclusions(tmp_path: Path, intermediate: str) -> None:
+    """Missing uploaded bytes are explicit; partial filesystem snapshots are unsafe.
+
+    Args:
+        tmp_path: Local project with references outside a typical YAML-only snapshot.
+        intermediate: Import skipped by suffix or dependency-directory filtering.
+    """
+    executable = tmp_path / "venv/bin/ansible-playbook"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    root = tmp_path / "project"
+    files = {
+        "molecule/default/molecule.yml": b"",
+        "molecule/default/converge.yml": f"- import_playbook: ../../{intermediate}\n".encode(),
+        intermediate: b"- import_playbook: ../playbooks/final.yml\n",
+        "playbooks/final.yml": b"- hosts: all\n  tasks: []\n",
+        "large.bin": b"unrelated",
+    }
+    for name, content in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    with (
+        patch.object(Path, "read_bytes", side_effect=AssertionError("Do not reconstruct a partial snapshot")),
+        patch("apme_engine.validators.ansible.rules.L057_syntax.subprocess.run") as invoke,
+    ):
+        findings = run(tmp_path / "venv", root)
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L057"
+    assert "complete uploaded snapshot" in str(findings[0]["message"])
     invoke.assert_not_called()

@@ -969,3 +969,345 @@ def test_recursive_yaml_findings_support_full_fingerprints() -> None:
     findings = _scan("x: &cycle [*cycle]\n")
     assert findings[0]["rule_id"] == "L115"
     assert compute_fingerprint("L115", str(findings[0]["original_yaml"]))
+
+
+@pytest.mark.parametrize("action", ["create", "destroy", "prepare"])  # type: ignore[untyped-decorator]
+def test_collection_import_without_uploaded_collection_is_context(action: str) -> None:
+    """Collection imports need collection context rather than a local file.
+
+    Args:
+        action: Collection playbook named in the reported deployed output.
+    """
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": (
+                f"- ansible.builtin.import_playbook: david_igou.molecule_provisioners.{action}\n".encode()
+            )
+        },
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L118"
+    assert "collection" in str(findings[0]["message"]).lower()
+
+
+@pytest.mark.parametrize("reference", ["example.testing.create", "example.testing.nested.create.yaml"])  # type: ignore[untyped-decorator]
+def test_uploaded_collection_import_is_assessed(reference: str) -> None:
+    """Available collection playbooks get the same structural checks as local files.
+
+    Args:
+        reference: FQCN with or without subdirectories and an extension.
+    """
+    target = "collections/ansible_collections/example/testing/playbooks/"
+    target += "nested/create.yaml" if reference.endswith(".yaml") else "create.yml"
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": f"- import_playbook: {reference}\n".encode(),
+            target: b"settings: not-a-playbook\n",
+        },
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L119"
+    assert findings[0]["file"] == target
+
+
+def test_collection_project_import_uses_supplied_metadata() -> None:
+    """A source collection can refer to its own playbooks through its FQCN."""
+    assert not _scan(
+        "",
+        {
+            "galaxy.yml": b"namespace: example\nname: testing\n",
+            "molecule/default/converge.yml": b"- import_playbook: example.testing.create\n",
+            "playbooks/create.yml": PLAYBOOK,
+        },
+    )
+
+
+@pytest.mark.parametrize("section", ["ansible", "provisioner"])  # type: ignore[untyped-decorator]
+def test_molecule_generated_inventory_argument_is_valid(section: str) -> None:
+    """Molecule provides ephemeral paths; argument use does not need their contents.
+
+    Args:
+        section: Native or legacy argument layout.
+    """
+    arguments = "['--inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/']"
+    source = (
+        f"ansible:\n  executor:\n    args:\n      ansible_playbook: {arguments}\n"
+        if section == "ansible"
+        else f"provisioner:\n  ansible_args: {arguments}\n"
+    )
+    assert not _scan(source)
+
+
+def test_generated_playbook_reference_still_needs_context() -> None:
+    """A symbolic generated path must never turn into a missing local file."""
+    findings = _scan("ansible:\n  playbooks:\n    converge: ${MOLECULE_EPHEMERAL_DIRECTORY}/generated.yml\n")
+    assert {item["rule_id"] for item in findings} == {"L118"}
+
+
+def test_shared_optional_reference_identifies_each_affected_scenario() -> None:
+    """Shared file origins must not collapse distinct scenario-relative absences."""
+    findings = _scan(
+        "",
+        {
+            ".config/molecule/config.yml": b"ansible:\n  playbooks:\n    side_effect: side_effect.yml\n",
+            "molecule/other/molecule.yml": b"",
+            "molecule/present/molecule.yml": b"",
+            "molecule/present/side_effect.yml": PLAYBOOK,
+        },
+    )
+    assert len(findings) == 2
+    assert all(item["rule_id"] == "L116" for item in findings)
+    assert all(item["file"] == ".config/molecule/config.yml" and item["line"] == 3 for item in findings)
+    assert all("optional" in str(item["message"]) and "skip" in str(item["message"]) for item in findings)
+    assert any("molecule/default/molecule.yml" in str(item["message"]) for item in findings)
+    assert any("molecule/other/molecule.yml" in str(item["message"]) for item in findings)
+    assert not any("molecule/present/molecule.yml" in str(item["message"]) for item in findings)
+
+
+@pytest.mark.parametrize("extension", ["", ".yml", ".yaml"])  # type: ignore[untyped-decorator]
+def test_collection_import_supports_uploaded_install_layout(extension: str) -> None:
+    """Qualified targets preserve Ansible's extension lookup conventions.
+
+    Args:
+        extension: Explicit import extension, if supplied.
+    """
+    assert not _scan(
+        "",
+        {
+            "molecule/default/converge.yml": f"- import_playbook: example.testing.prepare{extension}\n".encode(),
+            "ansible_collections/example/testing/playbooks/prepare" + (extension or ".yaml"): PLAYBOOK,
+        },
+    )
+
+
+def test_dotted_local_playbook_is_not_assumed_to_be_a_collection() -> None:
+    """Explicit local dotted paths still get missing-file checks."""
+    findings = _scan("", {"molecule/default/converge.yml": b"- import_playbook: ./example.testing.prepare.yml\n"})
+    assert {item["rule_id"] for item in findings} == {"L116"}
+    assert not _scan(
+        "",
+        {
+            "molecule/default/converge.yml": b"- import_playbook: example.testing.prepare.yml\n",
+            "molecule/default/example.testing.prepare.yml": PLAYBOOK,
+        },
+    )
+
+
+def test_unrelated_collection_metadata_cannot_satisfy_an_import() -> None:
+    """Uploaded playbooks are not assigned to a collection with a different name."""
+    findings = _scan(
+        "",
+        {
+            "galaxy.yml": b"namespace: unrelated\nname: collection\n",
+            "molecule/default/converge.yml": b"- import_playbook: example.testing.prepare\n",
+            "playbooks/prepare.yml": PLAYBOOK,
+        },
+    )
+    assert {item["rule_id"] for item in findings} == {"L118"}
+
+
+def test_collection_playbook_imports_keep_missing_local_targets() -> None:
+    """Resolving an uploaded collection does not skip its ordinary local imports."""
+    target = "collections/ansible_collections/example/testing/playbooks/prepare.yml"
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": b"- import_playbook: example.testing.prepare\n",
+            target: b"- import_playbook: missing.yml\n",
+        },
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L116"
+    assert findings[0]["file"] == target
+
+
+def test_runtime_path_recognition_preserves_unknown_variables_and_host_isolation() -> None:
+    """Only documented generated variables are recognized, without host lookup."""
+    source = (
+        "ansible:\n  executor:\n    args:\n      ansible_playbook:\n"
+        "        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/${EXTERNAL}\n"
+    )
+    with patch.dict("os.environ", {"EXTERNAL": "host-secret", "MOLECULE_EPHEMERAL_DIRECTORY": "host-private"}):
+        findings = _scan(source)
+    assert {item["rule_id"] for item in findings} == {"L118"}
+    assert "host-secret" not in str(findings)
+    assert "host-private" not in str(findings)
+
+
+@pytest.mark.parametrize(
+    "variable", ["MOLECULE_FILE", "MOLECULE_STATE_FILE", "MOLECULE_INSTANCE_CONFIG", "MOLECULE_INVENTORY_FILE"]
+)  # type: ignore[untyped-decorator]
+def test_generated_file_paths_remain_unavailable_references(variable: str) -> None:
+    """Generated files cannot be claimed present merely by recognizing their names.
+
+    Args:
+        variable: Documented Molecule-generated runtime file variable.
+    """
+    findings = _scan(f"ansible:\n  playbooks:\n    converge: ${{{variable}}}\n")
+    assert {item["rule_id"] for item in findings} == {"L118"}
+
+
+def test_noqa_on_child_data_does_not_suppress_an_unrelated_import() -> None:
+    """Only the diagnostic line controls inline suppression, not its child data."""
+    from apme_engine.daemon.engine_server import _filter_file_noqa
+
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": (
+                b"- import_playbook: first-missing.yml\n  vars:\n    note: value # noqa: L116\n"
+                b"- import_playbook: second-missing.yml # noqa: L116\n"
+            )
+        },
+    )
+    assert len(findings) == 2
+    kept = _filter_file_noqa(findings)
+    assert len(kept) == 1
+    assert kept[0]["line"] == 1
+    assert "note:" in str(kept[0]["original_yaml"])
+
+
+def test_wide_config_merge_does_not_rescan_all_origins_per_key() -> None:
+    """Wide config layers have a bounded number of full source-map traversals."""
+    from typing import cast
+    from unittest.mock import MagicMock
+
+    from apme_engine.validators.native import molecule
+
+    layer = molecule._load("config.yml", "".join(f"key_{index}: {index}\n" for index in range(2000)).encode(), {})
+    origins = MagicMock(wraps=layer.origins)
+    layer.origins = cast(dict[molecule.YamlPath, molecule._Location], origins)
+    target = molecule._Document()
+    molecule._merge(target, layer)
+    assert len(target.data) == 2000
+    assert len(target.origins) == 2000
+    assert origins.items.call_count <= 4
+
+
+async def test_native_rpc_reported_multi_scenario_pattern() -> None:
+    """The deployed output pattern retains real coverage limits without false paths."""
+    from apme_engine.daemon.native_validator_server import NativeValidatorServicer
+
+    names = [
+        "armbian-netboot",
+        "codex-desktop",
+        "default",
+        "devenv",
+        "ghapp",
+        "grafana-kiosk",
+        "kubernetes-k3s",
+        "kubernetes-kubeadm",
+        "kubernetes-vps",
+        "linux-maintenance",
+        "upsmonitor",
+        "windows-domain",
+        "windows-general",
+        "windows-image-build",
+    ]
+    arguments = (
+        "  executor:\n    args:\n      ansible_playbook:\n"
+        "        - --inventory=${MOLECULE_EPHEMERAL_DIRECTORY}/inventory/\n"
+    )
+    files = {
+        ".config/molecule/config.yml": (
+            "ansible:\n"
+            + arguments
+            + "  playbooks:\n    create: ../shared/create.yml\n    destroy: ../shared/destroy.yml\n"
+            "    prepare: ../shared/prepare.yml\n    side_effect: side_effect.yml\n"
+        ).encode()
+    }
+    for name in names:
+        files[f"molecule/{name}/molecule.yml"] = b""
+        if name != "armbian-netboot":
+            files[f"molecule/{name}/side_effect.yml"] = PLAYBOOK
+    files["molecule/armbian-netboot/molecule.yml"] = (
+        "ansible:\n"
+        + arguments
+        + "  playbooks:\n    create: create.yml\n    destroy: destroy.yml\n    prepare: prepare.yml\n"
+    ).encode()
+    for directory in ("shared", "armbian-netboot"):
+        for action in ("create", "destroy", "prepare"):
+            files[f"molecule/{directory}/{action}.yml"] = (
+                f"- ansible.builtin.import_playbook: david_igou.molecule_provisioners.{action}\n".encode()
+            )
+    request = validate_pb2.ValidateRequest(
+        files=[common_pb2.File(path=path, content=content) for path, content in files.items()]
+    )
+    with patch("subprocess.run", side_effect=AssertionError("Static checks cannot execute project code")):
+        response = await NativeValidatorServicer().Validate(request, None)  # type: ignore[arg-type]
+    findings = response.violations  # type: ignore[attr-defined]
+    assert sum(finding.rule_id == "L116" for finding in findings) == 1
+    assert sum(finding.rule_id == "L118" for finding in findings) == 6
+    assert len(findings) == 7
+    missing = next(finding for finding in findings if finding.rule_id == "L116")
+    assert "molecule/armbian-netboot/molecule.yml" in missing.message
+    assert "optional" in missing.message
+    assert all("Collection" in finding.message for finding in findings if finding.rule_id == "L118")
+    assert response.diagnostics.files_received == len(files)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("metadata", [b"namespace: example\nname: testing\n", b"namespace: [\n"])  # type: ignore[untyped-decorator]
+def test_collection_metadata_is_parsed_once_per_request(metadata: bytes) -> None:
+    """Repeated imports cache both valid and malformed project metadata.
+
+    Args:
+        metadata: Valid or malformed uploaded collection metadata.
+    """
+    from apme_engine.validators.native import molecule
+
+    source = "- import_playbook: example.testing.prepare\n" * 25
+    with patch.object(molecule, "_load", wraps=molecule._load) as load:
+        _scan(
+            "",
+            {
+                "molecule/default/converge.yml": source.encode(),
+                "galaxy.yml": metadata,
+                "playbooks/prepare.yml": PLAYBOOK,
+            },
+        )
+    assert sum(call.args[0] == "galaxy.yml" for call in load.call_args_list) == 1
+
+
+def test_first_collection_copy_cannot_be_bypassed_to_find_a_playbook() -> None:
+    """A later collection copy must not hide missing content in the first one."""
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": b"- import_playbook: example.testing.prepare\n",
+            "collections/ansible_collections/example/testing/README.md": b"First installed copy",
+            "ansible_collections/example/testing/playbooks/prepare.yml": PLAYBOOK,
+        },
+    )
+    assert {item["rule_id"] for item in findings} == {"L118"}
+
+
+@pytest.mark.parametrize("reference", ["123.testing.prepare", "class.testing.prepare", "example.class.prepare"])  # type: ignore[untyped-decorator]
+def test_invalid_collection_identifiers_are_not_resolved_as_collections(reference: str) -> None:
+    """Python-invalid collection names must retain local missing-reference checks.
+
+    Args:
+        reference: Identifier rejected by Ansible's collection loader.
+    """
+    namespace, collection, _ = reference.split(".")
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": f"- import_playbook: {reference}\n".encode(),
+            f"ansible_collections/{namespace}/{collection}/playbooks/prepare.yml": PLAYBOOK,
+        },
+    )
+    assert {item["rule_id"] for item in findings} == {"L116"}
+
+
+def test_nested_collection_scenario_can_resolve_sibling_collection() -> None:
+    """Scenarios in an installed source collection can inspect uploaded siblings."""
+    root = "ansible_collections/example/testing/"
+    assert not validate_molecule(
+        {
+            root + "extensions/molecule/default/molecule.yml": b"",
+            root + "extensions/molecule/default/converge.yml": b"- import_playbook: other.tools.prepare\n",
+            "ansible_collections/other/tools/playbooks/prepare.yml": PLAYBOOK,
+        }
+    )

@@ -32,6 +32,15 @@ it. Reports never include substituted credential values. Incomplete assessment
 is distinguishable from a clean assessment. One malformed scenario does not
 prevent assessment of independent scenarios.
 
+Collection-qualified playbook imports are distinct from local paths. Assess
+collection playbooks available in supported uploaded layouts; otherwise report
+L118 for unavailable collection context rather than L116 for a missing local
+file. Recognize Molecule-generated path variables symbolically without using
+host state. Their use in arguments is valid; references to generated files still
+require L118 because their contents are absent from the snapshot. Missing
+explicit optional-stage references remain L116 notices, identify the affected
+scenario, and explain that Molecule may skip that stage.
+
 ## Compatibility
 
 The minimum compatibility target is Molecule 24.9.0+. Legacy configuration uses

@@ -210,6 +210,12 @@ artifact type, translate it:
    be O(1); `len(list(seq))` when `len(seq)` works; nested scans
    that are O(P×V) when an id→row map would be O(P+V) — reviewers
    treat these as dead weight even when functionally correct.
+   Follow bounded parser output through merges and reporting: a node limit
+   does not bound repeated full-map scans per key or full-source decoding per
+   diagnostic. Check scaling across both input width and nesting depth.
+   For inline annotations, verify the control's scope independently of the
+   source excerpt retained for display or identity: a comment on unrelated
+   child data must not suppress a neighboring diagnostic.
 
 7. **Is this internally and externally consistent?** Within each
    module: do all code paths use the same patterns (e.g., registry

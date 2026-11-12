@@ -107,7 +107,10 @@ def _run_ansible_validate(
         )
         validator = AnsibleValidator(venv_root=venv_root)
         run_result = validator.run_with_timing(
-            scan_context, content_graph_data=content_graph_data, check_syntax=check_syntax
+            scan_context,
+            content_graph_data=content_graph_data,
+            check_syntax=check_syntax,
+            file_snapshot={Path(file.path).as_posix(): bytes(file.content) for file in files},
         )
         return _AnsibleResult(
             run_result=run_result,

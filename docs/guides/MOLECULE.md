@@ -70,6 +70,22 @@ Scenario names honor merged overrides and native nested collection names.
 Literal `import_playbook` targets and imports using known Molecule project/scenario
 paths are followed within the uploaded snapshot. Missing imports and cycles are
 diagnosed. Unknown import expressions remain coverage notices; no Jinja is evaluated.
+The Ansible service forwards the complete normalized upload for static runtime
+exclusions, including extensionless imports. Standalone Python callers that omit
+that snapshot receive an explicit L057 coverage error and skip runtime syntax
+checks when Molecule content is detected.
+
+Collection-qualified imports such as `example.testing.prepare` are supported.
+Uploaded targets are checked in `collections/ansible_collections/` and
+`ansible_collections/`, or in the source project's `playbooks/` when uploaded
+`galaxy.yml` or `MANIFEST.json` identifies that collection. Subdirectories and
+explicit `.yml`/`.yaml` extensions are supported. If collection content is not
+supplied in those layouts, L118 explains the coverage limit; APME does not label
+the FQCN a missing local file or assume the collection is installed.
+Nested scenarios can also resolve sibling collections in their enclosing
+uploaded `ansible_collections/` tree. Lookup keeps the first available collection
+copy, matching collection shadowing rather than searching later copies for a
+missing playbook. Project metadata is parsed once per assessment.
 
 Custom Molecule `--base-config` arguments and home-directory configuration are
 not implicit scan inputs. Supply effective project configuration in the
@@ -81,12 +97,21 @@ Without a supplied value, the explicit fallback is used. Other environment or te
 an L118 coverage notice; server environment values are never substituted.
 Diagnostics exclude substituted secret values.
 
+Documented generated paths (`MOLECULE_EPHEMERAL_DIRECTORY`, `MOLECULE_FILE`,
+`MOLECULE_STATE_FILE`, `MOLECULE_INVENTORY_FILE`, `MOLECULE_INSTANCE_CONFIG`)
+are recognized symbolically. Using them in executor arguments does not require
+runtime context. References that need the generated files' contents still
+produce L118; scans never read or create Molecule's runtime directories.
+
 Reference checks use only the uploaded snapshot. L116 means a configured target
 is unavailable there, which can also result from exclusions or checking one
 file. Optional default stage files are not mandatory. The built-in default/delegated
 driver schema is checked; external driver schemas
 and runtime package availability remain unassessed and are identified by L118.
 Non-Ansible verifier code is outside Ansible playbook structural validation.
+Explicit optional-stage references that are absent still receive L116, with the
+affected scenario and a note that Molecule may skip the stage. Shared config
+stage findings retain their original source location and distinguish affected scenarios.
 
 Configuration findings retain source file/line locations after merging and
 remain manual-review findings across remediation approval gates. Graph-only

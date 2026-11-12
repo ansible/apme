@@ -13,6 +13,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
+from keyword import iskeyword
 from pathlib import Path, PurePosixPath
 from typing import cast
 
@@ -27,6 +28,14 @@ PROFILE_VERSION = "24.9.0"
 NATIVE_PROFILE_VERSION = "26.11.0"
 _ASSETS = Path(__file__).parent / "molecule_data"
 _VIRTUAL_ROOT = "/__apme_project__"
+_RUNTIME_ROOT = "/__apme_molecule_runtime__"
+_RUNTIME_PATHS = {
+    "MOLECULE_EPHEMERAL_DIRECTORY": "",
+    "MOLECULE_FILE": "molecule.yml",
+    "MOLECULE_STATE_FILE": "state.yml",
+    "MOLECULE_INVENTORY_FILE": "inventory/ansible_inventory.yml",
+    "MOLECULE_INSTANCE_CONFIG": "instance_config.yml",
+}
 _ENV = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-)([^{}]*))?\}|([A-Za-z_][A-Za-z0-9_]*))")
 _ACTIONS = frozenset(
     {
@@ -180,20 +189,19 @@ def _finding(rule_id: str, origin: _Location, message: str) -> ViolationDict:
     }
 
 
-def _source_excerpt(content: bytes, line: int) -> str:
+def _source_excerpt(lines: list[str], line: int) -> str:
     """Select original source at a diagnostic for content-based suppression.
 
     Args:
-        content: Unexpanded uploaded bytes.
+        lines: Unexpanded source lines, decoded once per source file.
         line: One-based diagnostic line.
 
     Returns:
         Original line and its indented children, or the document fallback.
     """
-    lines = content.decode("utf-8", errors="replace").splitlines()
     start = max(0, line - 1)
     if start >= len(lines):
-        return content.decode("utf-8", errors="replace")
+        return "\n".join(lines)
     indent = len(lines[start]) - len(lines[start].lstrip())
     end = start + 1
     while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) > indent):
@@ -334,28 +342,38 @@ def _load(file: str, content: bytes, variables: Mapping[str, str]) -> _Document:
     return _Document(cast(YAMLDict, data), locations)
 
 
-def _merge(target: _Document, layer: _Document, path: YamlPath = ()) -> None:
-    """Recursively merge a config layer, replacing sequences and source origins.
+def _merge_values(target: YAMLDict, layer: YAMLDict, path: YamlPath, replaced: set[YamlPath]) -> None:
+    """Merge values while recording subtrees whose previous origins are obsolete.
+
+    Args:
+        target: Effective configuration mapping to update.
+        layer: New configuration mapping.
+        path: Prefix for this recursive merge.
+        replaced: Replaced subtree paths, updated in place.
+    """
+    for key, value in layer.items():
+        current = (*path, key)
+        previous = target.get(key)
+        if isinstance(previous, dict) and isinstance(value, dict):
+            _merge_values(previous, value, current, replaced)
+        else:
+            target[key] = copy.deepcopy(value)
+            replaced.add(current)
+
+
+def _merge(target: _Document, layer: _Document) -> None:
+    """Merge a config layer with one origin traversal per input document.
 
     Args:
         target: Effective configuration to update.
-        layer: New configuration layer.
-        path: Prefix for this recursive merge.
+        layer: New configuration layer, which is not mutated.
     """
-    for key, value in layer.data.items():
-        current = (*path, key)
-        previous = target.data.get(key)
-        if isinstance(previous, dict) and isinstance(value, dict):
-            child = _Document(previous, target.origins)
-            _merge(child, _Document(value, layer.origins), current)
-        else:
-            target.data[key] = copy.deepcopy(value)
-            for old_path in list(target.origins):
-                if old_path[: len(current)] == current:
-                    del target.origins[old_path]
-        for source_path, origin in layer.origins.items():
-            if source_path[: len(current)] == current:
-                target.origins[source_path] = origin
+    replaced: set[YamlPath] = set()
+    _merge_values(target.data, layer.data, (), replaced)
+    for old_path in list(target.origins):
+        if any(old_path[:depth] in replaced for depth in range(1, len(old_path) + 1)):
+            del target.origins[old_path]
+    target.origins.update((path, origin) for path, origin in layer.origins.items() if path)
 
 
 def _origin(document: _Document, path: YamlPath, fallback: str) -> _Location:
@@ -464,6 +482,94 @@ def _mapping_items(node: yaml.MappingNode) -> dict[str, tuple[yaml.ScalarNode, y
     return entries
 
 
+@dataclass
+class _CollectionLookup:
+    """Request-local collection lookup using only uploaded paths and metadata.
+
+    Attributes:
+        files: Uploaded snapshot, including collection metadata.
+        directories: Directory membership index built once from uploaded paths.
+        identities: Cached source-project identities, including failed parses.
+    """
+
+    files: Mapping[str, bytes]
+    directories: set[str] = field(init=False)
+    identities: dict[str, tuple[str, str] | None] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        """Index uploaded parent paths without reading a filesystem."""
+        self.directories = {str(parent) for name in self.files for parent in PurePosixPath(name).parents}
+
+    def _identity(self, project: str) -> tuple[str, str] | None:
+        """Read a source collection identity once, caching unavailable metadata.
+
+        Args:
+            project: Uploaded project root.
+
+        Returns:
+            Declared namespace/name pair, if available.
+        """
+        if project in self.identities:
+            return self.identities[project]
+        self.identities[project] = None
+        for name in ("galaxy.yml", "MANIFEST.json"):
+            metadata_file = str(PurePosixPath(project, name))
+            if metadata_file not in self.files:
+                continue
+            try:
+                if name == "galaxy.yml":
+                    metadata: object = _load(metadata_file, self.files[metadata_file], {}).data
+                else:
+                    manifest = json.loads(self.files[metadata_file])
+                    metadata = manifest.get("collection_info") if isinstance(manifest, dict) else None
+                if isinstance(metadata, dict):
+                    namespace, collection = metadata.get("namespace"), metadata.get("name")
+                    if isinstance(namespace, str) and isinstance(collection, str):
+                        self.identities[project] = (namespace, collection)
+                        break
+            except (YAMLError, yaml.YAMLError, UnicodeError, ValueError, RecursionError):
+                continue
+        return self.identities[project]
+
+    def resolve(self, value: str, scenario: str) -> tuple[bool, str | None]:
+        """Resolve a qualified import inside the first available collection copy.
+
+        Args:
+            value: Literal import reference, possibly with a YAML extension.
+            scenario: Scenario supplying the project root.
+
+        Returns:
+            Whether this is collection syntax and an available playbook path.
+        """
+        extension = next((suffix for suffix in (".yml", ".yaml") if value.endswith(suffix)), "")
+        stem = value.removesuffix(extension) if extension else value
+        match = re.fullmatch(r"(\w+)\.(\w+)\.(\w+(?:\.\w+)*)", stem)
+        if match is None:
+            return False, None
+        namespace, collection, resource = match.groups()
+        if any(not part.isidentifier() or iskeyword(part) for part in (namespace, collection)):
+            return False, None
+        project = _project_root(scenario)
+        roots = [
+            str(PurePosixPath(project, "collections/ansible_collections", namespace, collection)),
+            str(PurePosixPath(project, "ansible_collections", namespace, collection)),
+        ]
+        parts = PurePosixPath(project).parts
+        if "ansible_collections" in parts:
+            index = parts.index("ansible_collections")
+            roots.append(str(PurePosixPath(*parts[: index + 1], namespace, collection)))
+        if self._identity(project) == (namespace, collection):
+            roots.append(project)
+        root = next((candidate for candidate in roots if candidate in self.directories), None)
+        if root is None:
+            return True, None
+        target = str(PurePosixPath(root, "playbooks", resource.replace(".", "/") + extension))
+        for candidate in (target,) if extension else (target, target + ".yml", target + ".yaml"):
+            if candidate in self.files:
+                return True, candidate
+        return True, None
+
+
 def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
     """Inspect scenario YAML structure without evaluating Ansible plugins.
 
@@ -562,15 +668,15 @@ def _migrate_native(document: _Document) -> None:
 
 
 def _assess_playbook(
-    file: str, files: Mapping[str, bytes], cache: PlaybookCache, scenario: str, active: frozenset[str] = frozenset()
+    file: str, cache: PlaybookCache, scenario: str, collections: _CollectionLookup, active: frozenset[str] = frozenset()
 ) -> list[ViolationDict]:
     """Assess each referenced snapshot playbook at most once per request.
 
     Args:
         file: Snapshot-relative playbook.
-        files: Uploaded snapshot.
         cache: Request-local findings keyed by source and scenario context.
         scenario: Scenario supplying the known Molecule context.
+        collections: Request-local snapshot and collection lookup.
         active: Current import chain for cycle and depth limits.
 
     Returns:
@@ -582,6 +688,7 @@ def _assess_playbook(
         return [_finding("L118", _Location(file), "Playbook import depth exceeds the static assessment limit")]
     key = (file, scenario)
     if key not in cache:
+        files = collections.files
         assessment = _playbook(file, files[file])
         cache[key] = assessment.findings
         directories = {
@@ -595,6 +702,19 @@ def _assess_playbook(
                 value,
             )
             reference = _reference(str(PurePosixPath(file).parent), value)
+            is_collection, collection_reference = collections.resolve(value, scenario)
+            if collection_reference is not None:
+                reference = collection_reference
+            elif is_collection and reference not in files:
+                cache[key].append(
+                    _finding(
+                        "L118",
+                        origin,
+                        "Collection playbook content is unavailable in the supplied scan; "
+                        "collection resolution was not assessed",
+                    )
+                )
+                continue
             if reference is None:
                 cache[key].append(
                     _finding(
@@ -613,12 +733,12 @@ def _assess_playbook(
                         _finding("L118", origin, "Playbook import depth exceeds the static assessment limit")
                     ]
                 else:
-                    _assess_playbook(reference, files, cache, scenario, active | {file})
+                    _assess_playbook(reference, cache, scenario, collections, active | {file})
     return cache[key]
 
 
 def _references(
-    document: _Document, scenario: str, files: Mapping[str, bytes], cache: PlaybookCache
+    document: _Document, scenario: str, files: Mapping[str, bytes], cache: PlaybookCache, collections: _CollectionLookup
 ) -> list[ViolationDict]:
     """Check configured playbooks, inventory links, and Galaxy requirement files.
 
@@ -627,6 +747,7 @@ def _references(
         scenario: Molecule config path.
         files: Complete supplied snapshot, including non-YAML artifacts.
         cache: Request-local playbook assessment cache.
+        collections: Request-local collection lookup.
 
     Returns:
         Reference, context, and playbook findings.
@@ -705,22 +826,27 @@ def _references(
         )
         if not present:
             if explicit:
+                message = "Configured reference is absent from the supplied scan; it may be missing or excluded"
+                if is_playbook:
+                    message += f" (scenario: {scenario})"
+                    if path[-1] != "converge":
+                        message += "; Molecule may skip this optional stage"
                 findings.append(
                     _finding(
                         "L116",
                         origin,
-                        "Configured reference is absent from the supplied scan; it may be missing or excluded",
+                        message,
                     )
                 )
             continue
         if is_playbook and reference in files and reference not in checked:
             checked.add(reference)
-            findings.extend(_assess_playbook(reference, files, cache, scenario))
+            findings.extend(_assess_playbook(reference, cache, scenario, collections))
     return findings
 
 
 def _sequences(
-    document: _Document, scenario: str, files: Mapping[str, bytes], cache: PlaybookCache
+    document: _Document, scenario: str, files: Mapping[str, bytes], cache: PlaybookCache, collections: _CollectionLookup
 ) -> list[ViolationDict]:
     """Validate action names and references for supported action arguments.
 
@@ -729,6 +855,7 @@ def _sequences(
         scenario: Config file path.
         files: Supplied snapshot.
         cache: Request-local playbook assessment cache.
+        collections: Request-local collection lookup.
 
     Returns:
         Invalid-action and action-reference findings.
@@ -781,7 +908,7 @@ def _sequences(
                         _finding("L116", origin, "Action playbook reference is absent from the supplied scan")
                     )
                 else:
-                    findings.extend(_assess_playbook(reference, files, cache, scenario))
+                    findings.extend(_assess_playbook(reference, cache, scenario, collections))
     return findings
 
 
@@ -799,6 +926,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         return [], frozenset()
     findings: list[ViolationDict] = []
     playbook_cache: PlaybookCache = {}
+    collections = _CollectionLookup(files)
     for scenario in scenarios:
         root = _project_root(scenario)
         directory = str(PurePosixPath(scenario).parent)
@@ -806,6 +934,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
             "MOLECULE_PROJECT_DIRECTORY": posixpath.normpath(f"{_VIRTUAL_ROOT}/{root}"),
             "MOLECULE_SCENARIO_DIRECTORY": posixpath.normpath(f"{_VIRTUAL_ROOT}/{directory}"),
             "MOLECULE_SCENARIO_NAME": PurePosixPath(directory).name,
+            **{name: str(PurePosixPath(_RUNTIME_ROOT, suffix)) for name, suffix in _RUNTIME_PATHS.items()},
         }
         environment_values: dict[str, str] = {}
         environment_file = posixpath.normpath(posixpath.join(root, ".env.yml"))
@@ -946,18 +1075,20 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
                     "Core schema checked; external driver installation and driver-specific schema were not assessed",
                 )
             )
-        findings.extend(_references(effective, scenario, files, playbook_cache))
-        findings.extend(_sequences(effective, scenario, files, playbook_cache))
+        findings.extend(_references(effective, scenario, files, playbook_cache, collections))
+        findings.extend(_sequences(effective, scenario, files, playbook_cache, collections))
     findings.extend(finding for cached in playbook_cache.values() for finding in cached)
     unique = {
         (str(item["rule_id"]), str(item["file"]), str(item["line"]), str(item["path"]), str(item["message"])): item
         for item in findings
     }
     result = [unique[key] for key in sorted(unique)]
+    source_lines: dict[str, list[str]] = {}
     for finding in result:
-        finding["original_yaml"] = _source_excerpt(
-            files.get(str(finding["file"]), b""), int(str(finding.get("line") or 1))
-        )
+        source_file = str(finding["file"])
+        if source_file not in source_lines:
+            source_lines[source_file] = files.get(source_file, b"").decode("utf-8", errors="replace").splitlines()
+        finding["original_yaml"] = _source_excerpt(source_lines[source_file], int(str(finding.get("line") or 1)))
     return result, frozenset(file for file, _scenario in playbook_cache)
 
 
