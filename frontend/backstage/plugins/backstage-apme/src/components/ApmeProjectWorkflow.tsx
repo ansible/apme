@@ -1,6 +1,6 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import "./layout.css";
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { Alert, Box, Button, Flex, Text } from "@backstage/ui";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import {
@@ -21,6 +21,8 @@ export interface ApmeProjectWorkflowProps {
   enableAi?: boolean;
   feedbackEnabled?: boolean;
   onViewDetails?: (scanId: string) => void;
+  /** Host controls beside commit/result pull request actions. */
+  hostShipActions?: ReactNode;
 }
 
 /** Embeddable in Local or a Portal-authorized project surface. */
@@ -41,6 +43,7 @@ function ProjectWorkflow({
   enableAi: aiAvailable = true,
   feedbackEnabled = false,
   onViewDetails,
+  hostShipActions,
 }: ApmeProjectWorkflowProps) {
   const [ansibleVersion, setAnsibleVersion] = useState("");
   const [collections, setCollections] = useState("");
@@ -92,6 +95,7 @@ function ProjectWorkflow({
           enableAi={aiAvailable && enableAi}
           feedbackEnabled={feedbackEnabled}
           onViewDetails={onViewDetails}
+          hostShipActions={hostShipActions}
         />
       ) : (
         <Flex className="apme-form apme-panel" direction="column" gap="4">

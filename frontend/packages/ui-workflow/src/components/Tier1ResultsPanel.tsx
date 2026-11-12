@@ -1,12 +1,5 @@
 import { useState } from 'react';
-import {
-  Button,
-  Card,
-  CardBody,
-  Label,
-  Split,
-  SplitItem,
-} from '@patternfly/react-core';
+import { Button, Card, CardBody, Badge, Flex } from '@backstage/ui';
 import type { Tier1Result } from '../hooks/useSessionStream';
 import { DiffView } from './DiffView';
 
@@ -24,22 +17,30 @@ export function Tier1ResultsPanel({ tier1 }: Tier1ResultsPanelProps) {
   return (
     <Card style={{ marginBottom: 16 }}>
       <CardBody>
-        <Split hasGutter>
-          <SplitItem>
-            <Label color="green" isCompact>Rule-based fix</Label>
-          </SplitItem>
-          <SplitItem isFilled>
+        <Flex gap="3" align="center">
+          <div>
+            <Badge size="small" style={{ color: 'var(--bui-fg-success)' }}>
+              Rule-based fix
+            </Badge>
+          </div>
+          <div style={{ flex: 1 }}>
             <h3>
-              Rule-based fix — {patchCount} fix{patchCount !== 1 ? 'es' : ''} applied
+              Rule-based fix — {patchCount} fix{patchCount !== 1 ? 'es' : ''}{' '}
+              applied
               {formatCount > 0 && `, ${formatCount} formatted`}
             </h3>
-          </SplitItem>
-          <SplitItem>
-            <Button variant="secondary" onClick={() => setExpanded(!expanded)} size="sm">
+          </div>
+          <div>
+            <Button
+              variant="secondary"
+              onPress={() => setExpanded(!expanded)}
+              aria-expanded={expanded}
+              size="small"
+            >
               {expanded ? 'Collapse' : 'Show Diffs'}
             </Button>
-          </SplitItem>
-        </Split>
+          </div>
+        </Flex>
         {expanded && (
           <div className="apme-tier1-diffs" style={{ marginTop: 16 }}>
             {tier1.patches.map((p, i) => (
@@ -47,10 +48,14 @@ export function Tier1ResultsPanel({ tier1 }: Tier1ResultsPanelProps) {
                 <div className="apme-diff-file">
                   <span className="apme-file-name">{p.file}</span>
                   {p.applied_rules.length > 0 && (
-                    <span className="apme-diff-rules">{p.applied_rules.join(', ')}</span>
+                    <span className="apme-diff-rules">
+                      {p.applied_rules.join(', ')}
+                    </span>
                   )}
                 </div>
-                {p.diff && <DiffView diff={p.diff} className="apme-diff-content" />}
+                {p.diff && (
+                  <DiffView diff={p.diff} className="apme-diff-content" />
+                )}
               </div>
             ))}
           </div>

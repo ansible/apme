@@ -2,7 +2,7 @@
   "name": "@apme/ui-workflow",
   "version": "0.0.0-dev",
   "type": "module",
-  "description": "Shared APME scan → pause → choose → remediate workflow UI (native SPA + Portal host).",
+  "description": "APME check and remediation workflow presentation for BUI hosts, with a headless controller entry.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -35,15 +35,15 @@
     "prepack": "npm run build"
   },
   "peerDependencies": {
-    "@patternfly/react-core": "^6.3.1",
-    "@patternfly/react-icons": "^6.3.1",
-    "@types/react": "^18.3.31 || ^19.2.18",
-    "react": "^18.3.1 || ^19.2.7",
-    "react-dom": "^18.3.1 || ^19.2.7"
+    "@backstage/ui": "^0.17.1",
+    "@types/react": "^18.3.31",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6"
   },
   "devDependencies": {
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
     "typescript": "^5.9.3",
     "@types/prismjs": "^1.26.5",
     "@types/d3": "^7.4.3",
@@ -53,6 +53,7 @@
     "@apme/client": "*",
     "prismjs": "^1.30.0",
     "d3": "^7.9.0",
-    "dagre": "^0.8.5"
+    "dagre": "^0.8.5",
+    "@remixicon/react": ">=4.6.0 <4.9.0"
   }
 }

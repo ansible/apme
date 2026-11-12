@@ -1,3 +1,4 @@
+import { Button, Link } from '@backstage/ui';
 import { bareRuleId } from './severity';
 
 export interface RuleIdProps {
@@ -58,10 +59,19 @@ function SingleRuleId({
       }
     : undefined;
 
+  const interactiveHoverHandlers = hoverable
+    ? {
+        onHoverStart: () => onHoverChange!(true),
+        onHoverEnd: () => onHoverChange!(false),
+        onFocus: () => onHoverChange!(true),
+        onBlur: () => onHoverChange!(false),
+      }
+    : undefined;
+
   if (href) {
     const opensNewTab = ruleHrefTarget === '_blank';
     return (
-      <a
+      <Link
         href={href}
         className={spanClassName}
         target={ruleHrefTarget}
@@ -72,6 +82,9 @@ function SingleRuleId({
             : `View rule definition: ${bare}`
         }
         {...hoverHandlers}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.stopPropagation();
+        }}
         onClick={(e) => {
           e.stopPropagation();
           if (opensNewTab) {
@@ -81,24 +94,23 @@ function SingleRuleId({
         }}
       >
         {bare}
-      </a>
+      </Link>
     );
   }
 
   if (filterClickable) {
     return (
-      <button
+      <Button
+        variant="tertiary"
+        size="small"
         type="button"
         className={spanClassName}
-        title={`Toggle filter: ${bare}`}
-        {...hoverHandlers}
-        onClick={(e) => {
-          e.stopPropagation();
-          onRuleClick(bare);
-        }}
+        aria-description={`Toggle filter: ${bare}`}
+        {...interactiveHoverHandlers}
+        onPress={() => onRuleClick(bare)}
       >
         {bare}
-      </button>
+      </Button>
     );
   }
 
@@ -121,7 +133,10 @@ export function RuleId({
   resolveRuleHref,
   ruleHrefTarget,
 }: RuleIdProps) {
-  const ids = ruleId.split(',').map((s) => s.trim()).filter(Boolean);
+  const ids = ruleId
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (ids.length <= 1) {
     return (
       <SingleRuleId

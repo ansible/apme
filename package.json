@@ -30,8 +30,6 @@
     "@backstage/core-app-api": "1.20.4",
     "@backstage/core-plugin-api": "1.12.9",
     "@backstage/ui": "0.17.1",
-    "@patternfly/react-core": "6.6.2",
-    "@patternfly/react-icons": "6.6.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-router-dom": "6.30.6"
@@ -56,7 +54,9 @@
     "typescript-eslint": "8.72.1",
     "vite": "8.3.5",
     "vitest": "5.0.5",
-    "@red-hat-developer-hub/cli": "2.1.2"
+    "@red-hat-developer-hub/cli": "2.1.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/user-event": "^14.6.1"
   },
   "overrides": {
     "minimatch@^10.0.1": "11.0.1",

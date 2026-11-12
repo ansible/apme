@@ -3,23 +3,55 @@
  */
 
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
-import type { ProjectWorkflowController } from "@apme/ui-workflow";
 import {
-  findPullRequestControl,
-  PortalProjectWorkflowPanel,
-} from "./PortalProjectWorkflowPanel";
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { BUIProvider } from "@backstage/ui";
+import { MemoryRouter } from "react-router-dom";
+import type {
+  ProjectOperationState,
+  ProjectWorkflowController,
+} from "@apme/ui-workflow";
+import { PortalProjectWorkflowPanel } from "./PortalProjectWorkflowPanel";
 
-jest.mock("@apme/ui-workflow", () => ({
-  OperationPanel: () => (
-    <div data-testid="operation-panel">
-      <a href="https://github.com/acme/repo/pull/12">View pull request</a>
-    </div>
+// Exercise the shared source, including OperationPanel and both shipping panels,
+// without requiring a previously packed workflow artifact.
+jest.mock("@apme/ui-workflow", () =>
+  jest.requireActual(
+    "../../../../../packages/ui-workflow/src/ProjectWorkflowPanel",
   ),
-}));
+);
+
+// Draft persistence is owned by ProjectWorkflowPanel; a small review surface
+// lets these tests trigger it without coupling to proposal editor internals.
+jest.mock(
+  "../../../../../packages/ui-workflow/src/components/ProposalReviewPanel",
+  () => ({
+    ProposalReviewPanel: ({
+      onDraftUpdate,
+    }: {
+      onDraftUpdate: (updates: []) => void;
+    }) => <button onClick={() => onDraftUpdate([])}>Save draft</button>,
+  }),
+);
+
+// React Aria measures controls in the browser; jsdom has no layout observer.
+beforeAll(() => {
+  if (!globalThis.ResizeObserver) {
+    globalThis.ResizeObserver = class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
+});
 
 function workflowStub(
-  overrides: Partial<ProjectWorkflowController>,
+  overrides: Partial<ProjectWorkflowController> = {},
 ): ProjectWorkflowController {
   return {
     attachOp: false,
@@ -37,7 +69,7 @@ function workflowStub(
     approve: jest.fn(),
     cancel: jest.fn(),
     createPR: jest.fn(),
-    patchProposals: jest.fn(),
+    patchProposals: jest.fn().mockResolvedValue(undefined),
     dismiss: jest.fn(),
     resumeSession: jest.fn(),
     startOver: jest.fn(),
@@ -46,115 +78,197 @@ function workflowStub(
   };
 }
 
-describe("findPullRequestControl", () => {
-  it("prefers a pull request href over button copy", () => {
-    const root = document.createElement("div");
-    root.innerHTML = `
-      <button type="button">View pull request</button>
-      <a href="https://github.com/acme/repo/pull/12">Open PR</a>
-    `;
+function operation(
+  overrides: Partial<ProjectOperationState> = {},
+): ProjectOperationState {
+  return {
+    operation_id: "op-1",
+    project_id: "proj-1",
+    scan_id: "scan-1",
+    status: "completed",
+    scan_type: "remediate",
+    started_at: "2026-01-01T00:00:00Z",
+    progress: [],
+    result: {
+      total_violations: 2,
+      fixable: 2,
+      manual_review: 0,
+      ai_proposed: 0,
+      ai_declined: 0,
+      ai_accepted: 0,
+      remediated_count: 2,
+      patches: [],
+      fixed_violations: [],
+    },
+    ...overrides,
+  };
+}
 
-    expect(findPullRequestControl(root)?.getAttribute("href")).toBe(
-      "https://github.com/acme/repo/pull/12",
-    );
-  });
+function panel(workflow: ProjectWorkflowController, withActions = true) {
+  return (
+    <MemoryRouter>
+      <BUIProvider>
+        <PortalProjectWorkflowPanel
+          workflow={workflow}
+          enableAi={false}
+          feedbackEnabled={false}
+          hostShipActions={
+            withActions ? <button>Open in Dev Spaces</button> : undefined
+          }
+        />
+      </BUIProvider>
+    </MemoryRouter>
+  );
+}
 
-  it("falls back to English button copy when no PR href exists", () => {
-    const root = document.createElement("div");
-    root.innerHTML = `<button type="button">View pull request</button>`;
+describe("PortalProjectWorkflowPanel shared workflow", () => {
+  it.each([null, operation()])(
+    "prioritizes cancellation and allows dismissal (%#)",
+    (opState) => {
+      const workflow = workflowStub({ isCancelling: true, opState });
+      render(panel(workflow));
 
-    expect(findPullRequestControl(root)?.textContent).toBe("View pull request");
-  });
-});
+      expect(screen.getByText("Stopping session…")).toBeInTheDocument();
+      expect(screen.queryByText("Starting scan…")).not.toBeInTheDocument();
+      expect(screen.queryByText("Open in Dev Spaces")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(workflow.dismiss).toHaveBeenCalledTimes(1);
+    },
+  );
 
-describe("PortalProjectWorkflowPanel", () => {
-  it("renders the stopping spinner while cancel is in progress", () => {
-    render(
-      <PortalProjectWorkflowPanel
-        workflow={workflowStub({
-          isCancelling: true,
-          operationActive: true,
-          opState: null,
-        })}
-        enableAi={false}
-        feedbackEnabled={false}
-      />,
-    );
-
-    expect(screen.getByText("Stopping session…")).toBeInTheDocument();
-    expect(screen.queryByTestId("operation-panel")).not.toBeInTheDocument();
-  });
-
-  it("renders the starting spinner when the workflow session is not active", () => {
-    render(
-      <PortalProjectWorkflowPanel
-        workflow={workflowStub({
-          operationActive: false,
-          opState: null,
-        })}
-        enableAi={false}
-        feedbackEnabled={false}
-      />,
-    );
-
+  it("shows the initial loading state and allows dismissal", () => {
+    const workflow = workflowStub();
+    render(panel(workflow));
     expect(screen.getByText("Starting scan…")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(workflow.dismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("renders OperationPanel when the workflow session is active", () => {
-    render(
-      <PortalProjectWorkflowPanel
-        workflow={workflowStub({
-          operationActive: true,
-          opState: {
-            operation_id: "op-1",
-            project_id: "proj-1",
-            scan_id: "scan-1",
-            status: "scanning",
-            scan_type: "check",
-            started_at: "2026-01-01T00:00:00Z",
-            progress: [],
-          },
-        })}
-        enableAi={false}
-        feedbackEnabled={false}
-      />,
-    );
-
-    expect(screen.getByTestId("operation-panel")).toBeInTheDocument();
-  });
-
-  it("removes the injected host-action slot on unmount", async () => {
-    const { unmount } = render(
-      <PortalProjectWorkflowPanel
-        workflow={workflowStub({
-          operationActive: true,
-          opState: {
-            operation_id: "op-1",
-            project_id: "proj-1",
-            scan_id: "scan-1",
-            status: "pr_submitted",
-            scan_type: "remediate",
-            started_at: "2026-01-01T00:00:00Z",
-            progress: [],
-            pr_url: "https://github.com/acme/repo/pull/12",
-          },
-        })}
-        enableAi={false}
-        feedbackEnabled={false}
-        hostShipActions={<button type="button">Open in Dev Spaces</button>}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(
-        document.querySelector("[data-apme-host-ship-actions]"),
-      ).toBeInTheDocument();
+  it("keeps host actions beside commit and PR actions through completion", async () => {
+    const workflow = workflowStub({
+      operationActive: true,
+      opState: operation(),
+      createPR: jest.fn().mockResolvedValue({
+        branch_name: "apme/remediate-scan-1",
+        commit_sha: "12345678",
+        pr_url: "https://github.com/acme/repo/pull/12",
+        provider: "github",
+      }),
     });
+    render(panel(workflow));
 
-    unmount();
-
+    const commit = screen.getByRole("button", { name: "Commit & open PR" });
     expect(
-      document.querySelector("[data-apme-host-ship-actions]"),
+      screen.queryByRole("button", { name: "Open in Dev Spaces" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(commit);
+
+    await waitFor(() =>
+      expect(screen.getByText("Operation Complete")).toBeInTheDocument(),
+    );
+    expect(workflow.createPR).toHaveBeenCalledWith(
+      expect.objectContaining({ create_pr: true }),
+    );
+    const pr = screen.getByRole("link", { name: /View pull request/i });
+    expect(pr).toHaveAttribute(
+      "href",
+      "https://github.com/acme/repo/pull/12/files",
+    );
+    expect(
+      screen.getAllByRole("button", { name: "Open in Dev Spaces" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Open in Dev Spaces" }).parentElement,
+    ).toBe(pr.parentElement?.parentElement);
+  });
+
+  it("keeps terminal snapshots visible when operationActive is false", () => {
+    render(
+      panel(
+        workflowStub({
+          operationActive: false,
+          opState: operation({
+            status: "pr_submitted",
+            pr_url: "https://github.com/acme/repo/pull/12",
+          }),
+        }),
+      ),
+    );
+    expect(screen.getByText("Operation Complete")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open in Dev Spaces" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /View pull request/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders commit and completion without the optional slot", () => {
+    const workflow = workflowStub({ opState: operation() });
+    const { rerender } = render(panel(workflow, false));
+    expect(
+      screen.getByRole("button", { name: "Commit & open PR" }),
+    ).toBeInTheDocument();
+    rerender(
+      panel(
+        {
+          ...workflow,
+          opState: operation({
+            status: "pr_submitted",
+            pr_url: "https://github.com/acme/repo/pull/12",
+          }),
+        },
+        false,
+      ),
+    );
+    expect(screen.getByText("Operation Complete")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open in Dev Spaces" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows and dismisses draft save errors", async () => {
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(
+        panel(
+          workflowStub({
+            opState: operation({ status: "awaiting_approval", proposals: [] }),
+            patchProposals: jest
+              .fn()
+              .mockRejectedValue(new Error("Draft unavailable")),
+          }),
+        ),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+      expect(await screen.findByText("Draft unavailable")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
+      expect(screen.queryByText("Draft unavailable")).not.toBeInTheDocument();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("ignores draft failures arriving after the operation changes", async () => {
+    let rejectDraft!: (error: Error) => void;
+    const pending = new Promise<void>((_resolve, reject) => {
+      rejectDraft = reject;
+    });
+    const workflow = workflowStub({
+      opState: operation({ status: "awaiting_approval", proposals: [] }),
+      patchProposals: jest.fn().mockReturnValue(pending),
+    });
+    const { rerender } = render(panel(workflow));
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    rerender(
+      panel({ ...workflow, opState: operation({ operation_id: "op-2" }) }),
+    );
+    await act(async () => {
+      rejectDraft(new Error("Old draft failure"));
+    });
+    expect(screen.queryByText("Old draft failure")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Could not save draft proposals"),
     ).not.toBeInTheDocument();
   });
 });

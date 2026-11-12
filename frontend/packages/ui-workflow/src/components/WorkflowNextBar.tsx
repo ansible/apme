@@ -2,8 +2,8 @@
  * Workflow primary CTA: Next + short summary of what the next step does.
  */
 
-import { Button, Flex } from '@patternfly/react-core';
-import { ArrowRightIcon } from '@patternfly/react-icons';
+import { Button, Flex } from '@backstage/ui';
+import { RiArrowRightLine } from '@remixicon/react';
 import type { ReactNode } from 'react';
 
 export interface WorkflowNextConfig {
@@ -41,25 +41,15 @@ export function WorkflowNextBar({
           : 'apme-workflow-next'
       }
     >
-      <Flex
-        direction={{ default: 'column' }}
-        alignItems={{
-          default: isHeader ? 'alignItemsFlexEnd' : 'alignItemsFlexStart',
-        }}
-        gap={{ default: 'gapSm' }}
-      >
-        <Flex
-          gap={{ default: 'gapSm' }}
-          alignItems={{ default: 'alignItemsCenter' }}
-        >
+      <Flex direction="column" align={isHeader ? 'end' : 'start'} gap="2">
+        <Flex gap="2" align="center">
           {secondary}
           <Button
             variant="primary"
-            onClick={onNext}
-            isLoading={isLoading}
+            onPress={onNext}
+            isPending={isLoading}
             isDisabled={isDisabled || isLoading}
-            icon={<ArrowRightIcon />}
-            iconPosition="end"
+            iconEnd={<RiArrowRightLine aria-hidden />}
           >
             {label}
           </Button>

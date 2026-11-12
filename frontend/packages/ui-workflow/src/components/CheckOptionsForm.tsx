@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
+  Accordion,
+  AccordionTrigger,
+  AccordionPanel,
   Checkbox,
-  ExpandableSection,
   Flex,
-  FlexItem,
-  FormSelect,
-  FormSelectOption,
-  TextInput,
-} from '@patternfly/react-core';
+  Select,
+  TextField,
+} from '@backstage/ui';
 import { listAiModels, type AiModelInfo } from '../api/listAiModels';
 import { useApmeApi } from '../api/apmeApiAdapter';
 import { AI_MODEL_STORAGE_KEY } from '../shared/constants';
@@ -26,7 +26,7 @@ export interface CheckOptionsFormProps {
    */
   autoApplyTier1?: boolean;
   onAutoApplyTier1Change?: (checked: boolean) => void;
- /** Platform-level AI availability flag; hides AI controls when false and defaults to true for standalone SPA backward compatibility. */
+  /** Platform-level AI availability flag; hides AI controls when false and defaults to true for standalone SPA backward compatibility. */
   showAiOptions?: boolean;
   /** Hide the Collections text input from the form. Defaults to true for standalone SPA backward compatibility. */
   showCollections?: boolean;
@@ -55,7 +55,9 @@ export function CheckOptionsForm({
   );
 
   useEffect(() => {
-    if (ANSIBLE_CORE_VERSION_OPTIONS.some((version) => version === ansibleVersion)) {
+    if (
+      ANSIBLE_CORE_VERSION_OPTIONS.some((version) => version === ansibleVersion)
+    ) {
       setCustomVersionSelected(false);
     } else if (ansibleVersion) {
       setCustomVersionSelected(true);
@@ -91,108 +93,118 @@ export function CheckOptionsForm({
   };
 
   return (
-    <ExpandableSection toggleText="Advanced Options" style={{ marginTop: 8 }}>
-      <Flex direction={{ default: 'column' }} gap={{ default: 'gapMd' }}>
-        <FlexItem>
-          <label htmlFor={`${prefix}ansible-version`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
-            Ansible Core Version
-          </label>
-          <FormSelect
-            id={`${prefix}ansible-version`}
-            value={customVersionSelected ? '__custom__' : ansibleVersion}
-            onChange={(_e, v) => {
-              if (v === '__custom__') {
-                setCustomVersionSelected(true);
-                if (ANSIBLE_CORE_VERSION_OPTIONS.some((version) => version === ansibleVersion)) {
-                  onAnsibleVersionChange('');
-                }
-              } else {
-                setCustomVersionSelected(false);
-                onAnsibleVersionChange(v);
+    <Accordion style={{ marginTop: 8 }}>
+      <AccordionTrigger title="Advanced Options" />
+      <AccordionPanel>
+        <Flex direction="column" gap="4">
+          <div>
+            <Select
+              label="Ansible Core Version"
+              id={`${prefix}ansible-version`}
+              value={
+                customVersionSelected
+                  ? '__custom__'
+                  : ansibleVersion || '__default__'
               }
-            }}
-          >
-            <FormSelectOption value="" label="Engine default" />
-            <FormSelectOption value="__custom__" label="Custom version…" />
-            {ansibleVersion && !ANSIBLE_CORE_VERSION_OPTIONS.some((version) => version === ansibleVersion) && (
-              <FormSelectOption value={ansibleVersion} label={`ansible-core ${ansibleVersion}`} />
-            )}
-            {ANSIBLE_CORE_VERSION_OPTIONS.map((version) => (
-              <FormSelectOption key={version} value={version} label={`ansible-core ${version}`} />
-            ))}
-          </FormSelect>
-          {customVersionSelected && (
-            <TextInput
-              aria-label="Custom Ansible Core version"
-              placeholder="e.g. 2.16.3 or 2.21"
-              value={ansibleVersion}
-              onChange={(_e, value) => onAnsibleVersionChange(value)}
-              style={{ marginTop: 8 }}
+              onChange={(key) => {
+                const v = String(key);
+                if (v === '__custom__') {
+                  setCustomVersionSelected(true);
+                  if (
+                    ANSIBLE_CORE_VERSION_OPTIONS.some(
+                      (version) => version === ansibleVersion,
+                    )
+                  ) {
+                    onAnsibleVersionChange('');
+                  }
+                } else {
+                  setCustomVersionSelected(false);
+                  onAnsibleVersionChange(v === '__default__' ? '' : v);
+                }
+              }}
+              options={[
+                { id: '__default__', label: 'Engine default' },
+                { id: '__custom__', label: 'Custom version…' },
+                ...ANSIBLE_CORE_VERSION_OPTIONS.map((version) => ({
+                  id: version,
+                  label: `ansible-core ${version}`,
+                })),
+              ]}
             />
+            {customVersionSelected && (
+              <TextField
+                aria-label="Custom Ansible Core version"
+                placeholder="e.g. 2.16.3 or 2.21"
+                value={ansibleVersion}
+                onChange={onAnsibleVersionChange}
+                style={{ marginTop: 8 }}
+              />
+            )}
+          </div>
+          {showCollections && (
+            <div>
+              <TextField
+                label="Collections (comma-separated)"
+                id={`${prefix}collections`}
+                placeholder="e.g. ansible.posix, community.general"
+                value={collections}
+                onChange={onCollectionsChange}
+              />
+            </div>
           )}
-        </FlexItem>
-        {showCollections && (
-          <FlexItem>
-            <label htmlFor={`${prefix}collections`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
-              Collections (comma-separated)
-            </label>
-            <TextInput
-              id={`${prefix}collections`}
-              placeholder="e.g. ansible.posix, community.general"
-              value={collections}
-              onChange={(_e, v) => onCollectionsChange(v)}
-            />
-          </FlexItem>
-        )}
-        {showAiOptions && (
-          <FlexItem>
-            <Checkbox
-              id={`${prefix}enable-ai`}
-              label="Enable AI fix"
-              isChecked={enableAi}
-              onChange={(_e, checked) => onEnableAiChange(checked)}
-            />
-          </FlexItem>
-        )}
-        {showAiOptions && onAutoApplyTier1Change && (
-          <FlexItem>
-            <Checkbox
-              id={`${prefix}auto-apply-tier1`}
-              label="Auto-apply rule-based fixes (skip review)"
-              description="Applies after you leave Assessment (Remediate). Scan always pauses on findings first. When unchecked (default), rule-based fix proposals pause for per-location Accept / Decline."
-              isChecked={autoApplyTier1}
-              onChange={(_e, checked) => onAutoApplyTier1Change(checked)}
-            />
-          </FlexItem>
-        )}
-        {showAiOptions && enableAi && (
-          <FlexItem>
-            <label htmlFor={`${prefix}ai-model`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
-              AI Model
-            </label>
-            {models.length === 0 ? (
-              <div style={{ opacity: 0.6, fontSize: 13 }}>
-                No models available — check Abbenay configuration
-              </div>
-            ) : (
-              <FormSelect
-                id={`${prefix}ai-model`}
-                value={selectedModel}
-                onChange={(_e, v) => handleModelChange(v)}
-                aria-label="Select AI model"
+          {showAiOptions && (
+            <div>
+              <Checkbox
+                id={`${prefix}enable-ai`}
+
+                isSelected={enableAi}
+                onChange={onEnableAiChange}
               >
-                {models.map((m) => (
-                  <FormSelectOption
-                    key={m.id}
-                    value={m.id}
-                    label={`${m.name || m.id} (${m.provider})`}
-                  />
-                ))}
-              </FormSelect>
-            )}
-          </FlexItem>
-        )}
-      </Flex>
-    </ExpandableSection>
+                Enable AI fix
+              </Checkbox>
+            </div>
+          )}
+          {showAiOptions && onAutoApplyTier1Change && (
+            <div>
+              <Checkbox
+                id={`${prefix}auto-apply-tier1`}
+
+                aria-describedby={`${prefix}auto-apply-tier1-description`}
+                isSelected={autoApplyTier1}
+                onChange={onAutoApplyTier1Change}
+              >
+                Auto-apply rule-based fixes (skip review)
+              </Checkbox>
+              <div id={`${prefix}auto-apply-tier1-description`}>
+                Applies after you leave Assessment (Remediate). Scan always
+                pauses on findings first. When unchecked (default), rule-based
+                fix proposals pause for per-location Accept / Decline.
+              </div>
+            </div>
+          )}
+          {showAiOptions && enableAi && (
+            <div>
+              {models.length === 0 ? (
+                <div style={{ opacity: 0.6, fontSize: 13 }}>
+                  No models available — check Abbenay configuration
+                </div>
+              ) : (
+                <Select
+                  label="AI Model"
+                  id={`${prefix}ai-model`}
+                  value={selectedModel}
+                  onChange={(value) => handleModelChange(String(value))}
+                  aria-label="Select AI model"
+                  options={models.map((m) => ({
+                    id: m.id,
+                    label: `${m.name || m.id} (${m.provider})`,
+                  }))}
+                />
+              )}
+            </div>
+          )}
+        </Flex>
+      </AccordionPanel>
+    </Accordion>
   );
 }

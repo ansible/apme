@@ -1,14 +1,6 @@
 import type { ReactNode } from 'react';
-import {
-  Button,
-  Card,
-  CardBody,
-  Flex,
-  FlexItem,
-  Split,
-  SplitItem,
-} from '@patternfly/react-core';
-import { ExternalLinkAltIcon } from '@patternfly/react-icons';
+import { Button, ButtonLink, Alert, Card, CardBody, Flex } from '@backstage/ui';
+import { RiExternalLinkLine } from '@remixicon/react';
 import type { OperationResult } from '../types/operation';
 import { toPrFilesDiffUrl } from '../utils/prDiffUrl';
 
@@ -17,29 +9,47 @@ export interface OperationResultCardProps {
   isRemediate?: boolean;
   onDismiss?: () => void;
   actions?: ReactNode;
+  /** Host controls beside an existing pull request action. */
+  hostShipActions?: ReactNode;
   prUrl?: string | null;
   prError?: string | null;
   scanId?: string;
-  /** Host navigation (no react-router in this package). */
+  /** Host navigation for durable run details. */
   onViewDetails?: (scanId: string) => void;
 }
 
-function Metric({ value, label, color }: { value: number; label: string; color?: string }) {
+function Metric({
+  value,
+  label,
+  color,
+}: {
+  value: number;
+  label: string;
+  color?: string;
+}) {
   return (
-    <SplitItem>
+    <div>
       <div style={{ fontSize: 32, fontWeight: 700, color }}>{value}</div>
       <div style={{ opacity: 0.7 }}>{label}</div>
-    </SplitItem>
+    </div>
   );
 }
 
-function SmallMetric({ value, label, color }: { value: number; label: string; color?: string }) {
+function SmallMetric({
+  value,
+  label,
+  color,
+}: {
+  value: number;
+  label: string;
+  color?: string;
+}) {
   if (!value) return null;
   return (
-    <SplitItem>
+    <div>
       <div style={{ fontSize: 20, fontWeight: 700, color }}>{value}</div>
       <div style={{ opacity: 0.7, fontSize: 12 }}>{label}</div>
-    </SplitItem>
+    </div>
   );
 }
 
@@ -48,85 +58,114 @@ export function OperationResultCard({
   isRemediate,
   onDismiss,
   actions,
+  hostShipActions,
   prUrl,
   prError,
   scanId,
   onViewDetails,
 }: OperationResultCardProps) {
   const wasRemediate = isRemediate ?? result.remediated_count != null;
-  const hasAi = (result.ai_proposed ?? 0) > 0 || (result.ai_declined ?? 0) > 0 || (result.ai_accepted ?? 0) > 0;
+  const hasAi =
+    (result.ai_proposed ?? 0) > 0 ||
+    (result.ai_declined ?? 0) > 0 ||
+    (result.ai_accepted ?? 0) > 0;
 
   return (
-    <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--success--default)' }}>
+    <Card
+      style={{
+        marginBottom: 16,
+        borderLeft: '4px solid var(--bui-fg-success)',
+      }}
+    >
       <CardBody style={{ textAlign: 'center', padding: 32 }}>
-        <div style={{ fontSize: 48, color: 'var(--pf-t--global--color--status--success--default)' }}>&#10003;</div>
+        <div style={{ fontSize: 48, color: 'var(--bui-fg-success)' }}>
+          &#10003;
+        </div>
         <h2>Operation Complete</h2>
 
-        <Split hasGutter style={{ justifyContent: 'center', margin: '16px 0' }}>
+        <Flex gap="4" style={{ justifyContent: 'center', margin: '16px 0' }}>
           <Metric value={result.total_violations} label="Violations" />
           {!wasRemediate && (
-            <Metric value={result.fixable} label="Fixable" color="var(--pf-t--global--color--status--success--default)" />
+            <Metric
+              value={result.fixable}
+              label="Fixable"
+              color="var(--bui-fg-success)"
+            />
           )}
           {wasRemediate && (
-            <Metric value={result.remediated_count ?? 0} label="Remediated" color="var(--pf-t--global--color--status--success--default)" />
+            <Metric
+              value={result.remediated_count ?? 0}
+              label="Remediated"
+              color="var(--bui-fg-success)"
+            />
           )}
-          <Metric value={result.manual_review} label="Manual review" color="#9e8700" />
-        </Split>
+          <Metric
+            value={result.manual_review}
+            label="Manual review"
+            color="var(--bui-fg-warning)"
+          />
+        </Flex>
 
         {hasAi && (
-          <Split hasGutter style={{ justifyContent: 'center', margin: '8px 0 16px' }}>
+          <Flex
+            gap="4"
+            style={{ justifyContent: 'center', margin: '8px 0 16px' }}
+          >
             <SmallMetric
               value={result.ai_proposed ?? 0}
               label="AI Proposed"
-              color="var(--pf-t--global--color--status--warning--default)"
+              color="var(--bui-fg-warning)"
             />
             <SmallMetric
               value={result.ai_accepted ?? 0}
               label="AI Accepted"
-              color="var(--pf-t--global--color--status--success--default)"
+              color="var(--bui-fg-success)"
             />
             <SmallMetric
               value={result.ai_declined ?? 0}
               label="AI Declined"
-              color="var(--pf-t--global--color--status--danger--default)"
+              color="var(--bui-fg-danger)"
             />
-          </Split>
+          </Flex>
         )}
 
         {prError && (
-          <div style={{ margin: '0 0 12px', padding: '8px 16px', borderRadius: 6, background: 'var(--pf-t--global--color--status--danger--default)', color: '#fff', fontSize: 13 }}>
-            PR creation failed: {prError}
-          </div>
+          <Alert
+            status="danger"
+            title={`PR creation failed: ${prError}`}
+            style={{ marginBottom: 12 }}
+          />
         )}
 
-        <Flex justifyContent={{ default: 'justifyContentCenter' }} gap={{ default: 'gapSm' }}>
+        <Flex justify="center" gap="2">
           {actions}
+          {prUrl && hostShipActions}
           {prUrl && (
-            <FlexItem>
-              <Button
+            <div>
+              <ButtonLink
                 variant="secondary"
-                component="a"
                 href={toPrFilesDiffUrl(prUrl)}
                 target="_blank"
                 rel="noopener noreferrer"
-                icon={<ExternalLinkAltIcon />}
-                iconPosition="end"
+                iconEnd={<RiExternalLinkLine />}
               >
                 View Pull Request
-              </Button>
-            </FlexItem>
+              </ButtonLink>
+            </div>
           )}
           {scanId && onViewDetails && (
-            <FlexItem>
-              <Button variant="secondary" onClick={() => onViewDetails(scanId)}>
+            <div>
+              <Button variant="secondary" onPress={() => onViewDetails(scanId)}>
                 View details
               </Button>
-            </FlexItem>
+            </div>
           )}
           {onDismiss && (
-            <FlexItem>
-              <Button variant="link" onClick={onDismiss}>Dismiss</Button>
-            </FlexItem>
+            <div>
+              <Button variant="tertiary" onPress={onDismiss}>
+                Dismiss
+              </Button>
+            </div>
           )}
         </Flex>
       </CardBody>

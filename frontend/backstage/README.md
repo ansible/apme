@@ -90,7 +90,8 @@ baseline; they do not constitute RHDH/Portal runtime certification.
 
 The workspace root is the **repository root**, with one lockfile for these
 packages. `frontend/` retains its legacy native workspace/lockfile during the
-replacement. Keep both installs reproducible until native retirement. Shared
+replacement. Native backward compatibility is waived for the BUI migration; the legacy
+workspace is not a compatibility target. This does not retire the native UI. Shared
 sources stay in `frontend/packages`; all new host code is under this directory.
 
 ## Develop
@@ -146,23 +147,32 @@ CSS-free controller entry point, repository list/register/select, project findin
 inventory, and the shared Gateway operation workflow, using the original plugin transport boundary.
 The workbench also includes searchable/paged rules with overrides and system health.
 Model preferences and Galaxy server management are available through Settings.
-Pure client/transport extraction preserves native import paths.
+The shared presentation targets the React 18 / Router 6 hosts; native backward
+compatibility is waived for this migration.
 
 Before native removal, finish
 Portal artifact consumption and contribution integration,
 and actual two-host scan/remediation/SCM and permission-denial acceptance.
-Existing PatternFly workflow presentation is an explicit transitional exception
-to new BUI host controls. Measure real host startup/memory after a runnable RHDH
+Shared workflow presentation uses BUI alongside the host controls. Portal still
+needs its PatternFly theme bridge for remaining Portal-owned PatternFly components
+until those components migrate. Measure real host startup/memory after a runnable RHDH
 installation exists; compressed bundle sizes alone cannot establish runtime cost.
 
 ### Local host colors
 
-The Local wrapper follows the host's selected light/dark theme and Auto mode,
-using the same root PatternFly dark-theme class as the original Portal plugin.
-It restores that class when the page unmounts. PatternFly's base CSS is loaded
-in the CSS `base` layer so its global reset cannot override BUI component colors
-or form controls, including dialogs rendered outside the page container. The
-libraries and host supply the palettes; Local does not define custom colors.
+The Local wrapper resolves the host's selected installed theme, including custom
+light/dark IDs and Auto mode, into BUI's `data-theme-mode="light|dark"` attribute
+on the document root. Auto follows the system preference using the installed host
+themes. The root attribute reaches BUI dialogs portaled to the body and is restored
+when the last Local provider unmounts. BUIProvider supplies component context;
+the host loads `@backstage/ui/css/styles.css` and supplies the BUI palette.
+Local layout colors use BUI tokens without a PatternFly theme class or reset.
+
+The shared BUI contract targets React 18 and Router 6. Native backward
+compatibility is waived; native retirement and issue #833 acceptance are not
+claimed by this migration. Actual two-host workflow, theme, accessibility and
+resource acceptance remain outstanding in TASK-005. Portal's separate PatternFly
+bridge remains necessary for its unmigrated Portal components.
 
 ### Local navigation and settings
 

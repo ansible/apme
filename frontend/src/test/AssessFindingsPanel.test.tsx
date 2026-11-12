@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AssessFindingsPanel } from "@apme/ui-workflow";
 import type { AssessFinding } from "@apme/ui-workflow";
@@ -42,14 +42,16 @@ describe("AssessFindingsPanel rule filter", () => {
     render(<AssessFindingsPanel findings={findings} />);
 
     await user.click(screen.getByLabelText("Filter by rule ID"));
-    const combobox = screen.getByRole("combobox");
+    const combobox = screen.getByRole("searchbox");
     await user.type(combobox, "L050");
-    await user.click(within(await screen.findByRole("listbox")).getByText("L050"));
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("L050"),
+    );
 
     expect(screen.getByText(/Showing 2 findings of 3/i)).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("Selected rule filters"),
-    ).toHaveTextContent("L050");
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "L050",
+    );
   });
 
   it("OR-filters when multiple rules are selected", async () => {
@@ -57,21 +59,25 @@ describe("AssessFindingsPanel rule filter", () => {
     render(<AssessFindingsPanel findings={findings} />);
 
     await user.click(screen.getByLabelText("Filter by rule ID"));
-    await user.type(screen.getByRole("combobox"), "L050");
-    await user.click(within(await screen.findByRole("listbox")).getByText("L050"));
+    await user.type(screen.getByRole("searchbox"), "L050");
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("L050"),
+    );
 
     await user.click(screen.getByLabelText("Filter by rule ID"));
-    await user.type(screen.getByRole("combobox"), "M001");
-    await user.click(within(await screen.findByRole("listbox")).getByText("M001"));
+    await user.type(screen.getByRole("searchbox"), "M001");
+    await user.click(
+      within(await screen.findByRole("listbox")).getByText("M001"),
+    );
 
     // All three findings match L050 or M001.
     expect(screen.getByText(/Showing 3 findings of 3/i)).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("Selected rule filters"),
-    ).toHaveTextContent("L050");
-    expect(
-      screen.getByLabelText("Selected rule filters"),
-    ).toHaveTextContent("M001");
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "L050",
+    );
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "M001",
+    );
   });
 
   it("clicking a RuleId chip toggles that rule into the filter", async () => {
@@ -83,9 +89,9 @@ describe("AssessFindingsPanel rule filter", () => {
     await user.click(ruleChips[0]!);
 
     expect(screen.getByText(/Showing 2 findings of 3/i)).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("Selected rule filters"),
-    ).toHaveTextContent("L050");
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "L050",
+    );
   });
 
   it("initialRuleFilters seeds the Rule filter from the host", () => {
@@ -97,9 +103,9 @@ describe("AssessFindingsPanel rule filter", () => {
     );
 
     expect(screen.getByText(/Showing 2 findings of 3/i)).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("Selected rule filters"),
-    ).toHaveTextContent("L050");
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "L050",
+    );
   });
 
   it("resolveRuleHref renders rule definition links instead of filter chips", () => {
@@ -178,8 +184,83 @@ describe("AssessFindingsPanel rule filter", () => {
     const m001Buttons = screen.getAllByRole("button", { name: "M001" });
     expect(m001Buttons.length).toBeGreaterThan(0);
     await user.click(m001Buttons[0]!);
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "M001",
+    );
+  });
+  it("supports keyboard rule selection, backspace removal, and clearing", async () => {
+    const user = userEvent.setup();
+    render(<AssessFindingsPanel findings={findings} />);
+    const trigger = screen.getByLabelText("Filter by rule ID");
+    await user.click(trigger);
+    let input = screen.getByRole("searchbox");
+    await user.type(input, "L050");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(screen.getByText(/Showing 2 findings of 3/i)).toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    await user.click(trigger);
+    input = screen.getByRole("searchbox");
+    await user.keyboard("{Backspace}");
+    expect(
+      screen.queryByLabelText("Selected rule filters"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("needs FQCN")).toBeInTheDocument();
+    expect(screen.getByText("legacy module")).toBeInTheDocument();
+
+    await user.type(input, "M001");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "M001",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Clear rule filters" }),
+    );
+    expect(
+      screen.queryByLabelText("Selected rule filters"),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("shows an unavailable option for unmatched rule searches", async () => {
+    const user = userEvent.setup();
+    render(<AssessFindingsPanel findings={findings} />);
+    await user.click(screen.getByLabelText("Filter by rule ID"));
+    await user.type(screen.getByRole("searchbox"), "missing");
+    expect(
+      await screen.findByRole("option", { name: 'No rules match "missing"' }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(
+      screen.queryByLabelText("Selected rule filters"),
+    ).not.toBeInTheDocument();
+  });
+  it("marks every selected rule in the multiple selection popup", async () => {
+    const user = userEvent.setup();
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        initialRuleFilters={["L050", "M001"]}
+      />,
+    );
+    await user.click(screen.getByLabelText("Filter by rule ID"));
+    const list = screen.getByRole("listbox");
+    expect(list).toHaveAttribute("aria-multiselectable", "true");
+    expect(within(list).getByRole("option", { name: "L050" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(within(list).getByRole("option", { name: "M001" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.click(within(list).getByRole("option", { name: "L050" }));
     expect(
       screen.getByLabelText("Selected rule filters"),
-    ).toHaveTextContent("M001");
+    ).not.toHaveTextContent("L050");
+    expect(screen.getByLabelText("Selected rule filters")).toHaveTextContent(
+      "M001",
+    );
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });

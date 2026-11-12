@@ -64,7 +64,7 @@ to restrict the report to production dependencies. Findings produce a nonzero ex
 | `tox -e ai` | `pytest` with AI extras (abbenay) | After AI/remediation changes. |
 | `tox -e ui` | Playwright checks for the RHDH Local UI (needs `tox -e up`) | After Local host or UI changes. |
 | `tox -e ui-native` | Legacy native UI Playwright checks (needs its separate native UI + Gateway) | Only when changing or checking the legacy native host. |
-| `tox -e ui-workflow-pack` | `npm pack` for `@apme/ui-workflow` (release tarball) | After `frontend/packages/ui-workflow` or TypeScript changes. |
+| `tox -e ui-workflow-pack` | Build/test the BUI host workspace and pack `@apme/ui-workflow` | After `frontend/packages/ui-workflow` or TypeScript changes. |
 
 ### Code generation
 
@@ -115,7 +115,7 @@ tox -e unit              # run tests
 ### "I changed frontend/packages/ui-workflow or TypeScript in that package"
 
 ```bash
-tox -e ui-workflow-pack   # npm pack (prepack tsc + CSS copy); do not run npm pack directly
+tox -e ui-workflow-pack   # root React 18/BUI workspace tests + package; no native install
 ```
 
 tox substitutes `{name}` in `commands =`. Only use braces for tox placeholders

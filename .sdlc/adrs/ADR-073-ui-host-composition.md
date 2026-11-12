@@ -50,8 +50,15 @@ chrome, fleet/catalog scope and genuine experience variants are separate entry
 points or props. Domain components must not detect a host through globals,
 URL sniffing or `isPortal` branches. The full-page entry remains a convenience.
 
-Use BUI for new ordinary host layout and controls. Keep the existing specialist
-PatternFly workflow during the incremental port, with its dependency explicit.
+Use BUI for ordinary host layout, controls and the shared workflow presentation
+(issue #860, TASK-023). The workflow targets the shared React 18/Router 6 host
+baseline. The requester waived backward compatibility with the transitional
+native SPA for this migration on 2026-11-12; no native compatibility renderer is
+required. This does not waive TASK-005 runtime acceptance or retire native source.
+Custom diff/YAML and graph behavior remain, with BUI theme bindings and documented
+specialist styling exceptions. A narrow accessible progress/loading implementation
+is retained because BUI 0.17.1 lacks public primitives. Portal's remaining
+PatternFly components keep their bridge until companion #1076 removes them.
 Use one current Gateway client and one workflow source. Preserve Gateway state,
 `/api/v1`, structured results and Gateway-owned SCM writes.
 
@@ -164,6 +171,7 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 | 2026-11-04 | Codex | Kept plugin capabilities explicit, retained rule data during refresh, preserved independent project deletion permission, and required a supported user-selected severity when Portal omits numeric severity. Live two-host acceptance remains in #833. |
 | 2026-11-04 | Codex | Clarified that Local upload capability is disabled until the host opts in after installing the authenticated backend. |
 | 2026-11-04 | Codex | Hardened Portal's inherited project/repository routes with host entitlement and catalog authorization, protected SCM branch lookup against untrusted origins and redirects, and added focused authorization/transport regressions. Overall host acceptance remains in progress under #833. |
+| 2026-11-12 | Codex | TASK-023 migrates shared presentation and tokens to BUI, exposes host shipping actions, and records the explicit native compatibility waiver; actual host acceptance remains #833. |
 
 ## Staged delivery
 

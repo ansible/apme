@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Label } from '@patternfly/react-core';
+import { Button, Badge } from '@backstage/ui';
 import { RuleId } from '../shared/RuleId';
 import type { OperationProposal } from '../types/operation';
 import { DiffView } from './DiffView';
@@ -9,10 +9,7 @@ import {
   type NodeDecision,
   type NodeReviewItem,
 } from './NodeReviewList';
-import {
-  toggleInFilterSet,
-  type ReviewFilterGroup,
-} from './ReviewFilterBar';
+import { toggleInFilterSet, type ReviewFilterGroup } from './ReviewFilterBar';
 import { ReviewStepShell } from './ReviewStepShell';
 import { ReviewInventoryRow } from './ReviewInventoryRow';
 import { type WorkflowNextConfig } from './WorkflowNextBar';
@@ -27,7 +24,6 @@ import {
 import {
   descendantProposalIds,
   filterByRuleKeepingNodeContext,
-  fixTypeLabelColor,
   nodeTypeLabel,
   nodeTypeLabelColor,
   normalizeFindingNodeType,
@@ -64,7 +60,10 @@ function proposalSeverity(p: OperationProposal): string {
     }
   }
   if (found.length === 0) {
-    for (const rid of p.rule_id.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const rid of p.rule_id
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       found.push(severityClass('info', rid));
     }
   }
@@ -176,7 +175,10 @@ export function ProposalReviewPanel({
   scanId,
   onCancel,
 }: ProposalReviewPanelProps) {
-  const proposed = useMemo(() => proposals.filter(isInReviewQueue), [proposals]);
+  const proposed = useMemo(
+    () => proposals.filter(isInReviewQueue),
+    [proposals],
+  );
   const declined = useMemo(
     () => proposals.filter(isAiCouldNotFix),
     [proposals],
@@ -215,7 +217,8 @@ export function ProposalReviewPanel({
   );
   const [ruleFilters, setRuleFilters] = useState<string[]>([]);
   const [showDeclined, setShowDeclined] = useState(false);
-  const [feedbackTarget, setFeedbackTarget] = useState<OperationProposal | null>(null);
+  const [feedbackTarget, setFeedbackTarget] =
+    useState<OperationProposal | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevGateKey = useRef<string>('');
 
@@ -438,9 +441,7 @@ export function ProposalReviewPanel({
       };
     }
     const declinedNote =
-      declinedCount > 0
-        ? ` (${declinedCount} declined)`
-        : '';
+      declinedCount > 0 ? ` (${declinedCount} declined)` : '';
     let summary: string;
     if (isAiGate) {
       summary =
@@ -460,13 +461,7 @@ export function ProposalReviewPanel({
       // No actionable diffs (e.g. only "Declined by AI") — still allow continue.
       isDisabled: false,
     };
-  }, [
-    acceptedIds,
-    declinedCount,
-    isAiGate,
-    onApprove,
-    pendingCount,
-  ]);
+  }, [acceptedIds, declinedCount, isAiGate, onApprove, pendingCount]);
 
   const actionableItems: NodeReviewItem[] = useMemo(
     () =>
@@ -486,53 +481,82 @@ export function ProposalReviewPanel({
           meta: (
             <>
               <RuleId ruleId={p.rule_id} onRuleClick={toggleRuleFilter} />
-              <Label
-                isCompact
-                color={fixTypeLabelColor(isAiGate ? 'ai' : 'auto')}
+              <Badge
+                size="small"
+                style={{
+                  color: isAiGate
+                    ? 'var(--bui-fg-info)'
+                    : 'var(--bui-fg-success)',
+                }}
               >
                 {isAiGate ? 'AI fix' : 'Rule-based fix'}
-              </Label>
-              <Label
-                isCompact
-                color={nodeTypeLabelColor(
-                  normalizeFindingNodeType(p.node_type),
-                )}
+              </Badge>
+              <Badge
+                size="small"
+                style={{
+                  color: {
+                    red: 'var(--bui-fg-danger)',
+                    orange: 'var(--bui-fg-warning)',
+                    yellow: 'var(--bui-fg-warning)',
+                    blue: 'var(--bui-fg-info)',
+                    grey: 'var(--bui-fg-secondary)',
+                    green: 'var(--bui-fg-success)',
+                    teal: 'var(--bui-fg-info)',
+                    purple: 'var(--bui-fg-info)',
+                  }[nodeTypeLabelColor(normalizeFindingNodeType(p.node_type))],
+                }}
               >
                 {nodeTypeLabel(normalizeFindingNodeType(p.node_type))}
-              </Label>
+              </Badge>
             </>
           ),
           detail: (
             <>
               {p.explanation && (
                 <div className="apme-assess-findings-detail">
-                  {p.explanation.split('\n').filter(Boolean).map((line, i) => {
-                    const { ruleId, severity, message } = parseViolationLine(line);
-                    const sev = severity || 'info';
-                    return (
-                      <div
-                        key={`${p.id}-desc-${i}`}
-                        className="apme-assess-finding-row"
-                      >
-                        {ruleId ? (
-                          <RuleId
-                            ruleId={ruleId}
-                            onRuleClick={toggleRuleFilter}
-                          />
-                        ) : null}
-                        {(ruleId || severity) && (
-                          <Label
-                            isCompact
-                            color={severityLabelColor(sev, ruleId)}
-                          >
-                            {severityDisplayLabel(sev, ruleId)}
-                          </Label>
-                        )}
-                        {!isAiGate && <Label isCompact>Rule-based fix</Label>}
-                        <span className="apme-assess-finding-msg">{message}</span>
-                      </div>
-                    );
-                  })}
+                  {p.explanation
+                    .split('\n')
+                    .filter(Boolean)
+                    .map((line, i) => {
+                      const { ruleId, severity, message } =
+                        parseViolationLine(line);
+                      const sev = severity || 'info';
+                      return (
+                        <div
+                          key={`${p.id}-desc-${i}`}
+                          className="apme-assess-finding-row"
+                        >
+                          {ruleId ? (
+                            <RuleId
+                              ruleId={ruleId}
+                              onRuleClick={toggleRuleFilter}
+                            />
+                          ) : null}
+                          {(ruleId || severity) && (
+                            <Badge
+                              size="small"
+                              style={{
+                                color: {
+                                  red: 'var(--bui-fg-danger)',
+                                  orange: 'var(--bui-fg-warning)',
+                                  yellow: 'var(--bui-fg-warning)',
+                                  blue: 'var(--bui-fg-info)',
+                                  grey: 'var(--bui-fg-secondary)',
+                                }[severityLabelColor(sev, ruleId)],
+                              }}
+                            >
+                              {severityDisplayLabel(sev, ruleId)}
+                            </Badge>
+                          )}
+                          {!isAiGate && (
+                            <Badge size="small">Rule-based fix</Badge>
+                          )}
+                          <span className="apme-assess-finding-msg">
+                            {message}
+                          </span>
+                        </div>
+                      );
+                    })}
                 </div>
               )}
               {(p.diff_hunk || p.before_text || p.after_text) && (
@@ -548,9 +572,9 @@ export function ProposalReviewPanel({
               {feedbackEnabled && isAiGate && (
                 <div style={{ padding: '4px 12px 8px' }}>
                   <Button
-                    variant="link"
-                    size="sm"
-                    onClick={() => setFeedbackTarget(p)}
+                    variant="tertiary"
+                    size="small"
+                    onPress={() => setFeedbackTarget(p)}
                   >
                     Report Issue
                   </Button>
@@ -590,9 +614,7 @@ export function ProposalReviewPanel({
     );
     const visible = new Set(
       afterRules
-        .filter((p) =>
-          decisionFilters.has(effectiveDecision(p.id, decisions)),
-        )
+        .filter((p) => decisionFilters.has(effectiveDecision(p.id, decisions)))
         .map((p) => p.id),
     );
     return actionableItems.filter((item) => visible.has(item.id));
@@ -632,9 +654,9 @@ export function ProposalReviewPanel({
         meta: (
           <>
             <RuleId ruleId={p.rule_id} />
-            <Label color="grey" isCompact>
+            <Badge style={{ color: 'var(--bui-fg-secondary)' }} size="small">
               No visible diff
-            </Label>
+            </Badge>
           </>
         ),
         detail: p.explanation ? (
@@ -777,10 +799,11 @@ export function ProposalReviewPanel({
         {actionable.length > 0 ? (
           pendingCount > 0 ? (
             <>
-              Every location starts undecided. Next stays disabled until you Accept
-              or Decline each one. Decided rows collapse. Accept remaining /
-              Decline remaining only apply to currently visible rows — widen
-              filters to decide the rest, or Clear to reset and expand again.
+              Every location starts undecided. Next stays disabled until you
+              Accept or Decline each one. Decided rows collapse. Accept
+              remaining / Decline remaining only apply to currently visible rows
+              — widen filters to decide the rest, or Clear to reset and expand
+              again.
             </>
           ) : (
             <>
@@ -845,18 +868,20 @@ export function ProposalReviewPanel({
           <FeedbackModal
             isOpen={!!feedbackTarget}
             onClose={() => setFeedbackTarget(null)}
-            prefill={{
-              type: 'bad_ai_suggestion',
-              rule_id: feedbackTarget.rule_id,
-              file: feedbackTarget.file,
-              scan_id: scanId ?? '',
-              context: {
-                violation_message: '',
-                ai_proposal_diff: feedbackTarget.diff_hunk ?? '',
-                ai_explanation: feedbackTarget.explanation ?? '',
-                source_snippet: '',
-              },
-            } satisfies Partial<FeedbackPayload>}
+            prefill={
+              {
+                type: 'bad_ai_suggestion',
+                rule_id: feedbackTarget.rule_id,
+                file: feedbackTarget.file,
+                scan_id: scanId ?? '',
+                context: {
+                  violation_message: '',
+                  ai_proposal_diff: feedbackTarget.diff_hunk ?? '',
+                  ai_explanation: feedbackTarget.explanation ?? '',
+                  source_snippet: '',
+                },
+              } satisfies Partial<FeedbackPayload>
+            }
           />
         ) : undefined
       }
@@ -896,12 +921,12 @@ export function ProposalReviewPanel({
             <span style={{ opacity: 0.5, fontSize: 12 }}>
               {showDeclined ? '\u25BC' : '\u25B6'}
             </span>
-            <Label color="orange" isCompact>
+            <Badge style={{ color: 'var(--bui-fg-warning)' }} size="small">
               Declined by AI
-            </Label>
+            </Badge>
             <span style={{ fontSize: 13, opacity: 0.7 }}>
-              {declined.length} violation{declined.length !== 1 ? 's' : ''} the AI
-              could not fix
+              {declined.length} violation{declined.length !== 1 ? 's' : ''} the
+              AI could not fix
             </span>
           </div>
           {showDeclined && (
