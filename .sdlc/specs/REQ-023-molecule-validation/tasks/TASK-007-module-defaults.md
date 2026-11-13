@@ -32,6 +32,8 @@ Apply the same correction to ordinary playbook argument checks.
   inactive include paths when applying edge-specific context.
 - Preserve distinct coverage and argument findings through the ledger, rescans,
   and output. Keep explicit manual-review findings out of remediation routing.
+- Carry bounded assessment coverage independently of visible findings so a
+  rescan does not mark unassessed arguments fixed, even when notices are filtered.
 
 ## Test Cases
 
@@ -49,8 +51,8 @@ Apply the same correction to ordinary playbook argument checks.
 
 - [x] Focused tests via `tox -e unit -- ... --no-cov`
 - [x] `tox -e lint`
-- [x] Full `tox -e unit` with local OPA and container-only skips: 5,689 passed,
-      52 skipped, 86.89% coverage
+- [x] Full `tox -e unit` with local OPA and container-only skips: 5,732 passed,
+      52 skipped, 86.97% coverage
 
 ## Completion Checklist
 

@@ -47,11 +47,14 @@ class AnsibleRunResult:
         metadata: Extra metadata: cumulative ``cache_<store>_hits/misses``
             counters plus per-scan ``scan_cache_<store>_hits/misses``
             deltas (zero when the scan touched nothing).
+        unassessed_argspec: Task IDs mapped to argspec rules with excluded contexts,
+            or None when assessment coverage could not be established.
     """
 
     violations: list[dict[str, object]] = field(default_factory=list)
     rule_timings: list[AnsibleRuleTiming] = field(default_factory=list)
     metadata: dict[str, int] = field(default_factory=dict)
+    unassessed_argspec: dict[str, set[str]] | None = None
 
 
 def _extract_task_nodes(hierarchy_payload: YAMLDict | None) -> list[dict[str, object]]:
@@ -320,11 +323,14 @@ class AnsibleValidator:
 
         t0 = time.monotonic()
         defaults = resolve_module_defaults(task_nodes, self._venv_root, self._env_extra)
+        unassessed_l058 = set(defaults.unassessed_task_keys)
+        unassessed_l059 = set(defaults.unassessed_task_keys)
         l058 = L058_argspec_doc.run(
             task_nodes=defaults.tasks,
             venv_root=self._venv_root,
             env_extra=self._env_extra,
             defaults_resolved=True,
+            unassessed_tasks=unassessed_l058,
         )
         l058 = defaults.violations + l058
         elapsed = (time.monotonic() - t0) * 1000
@@ -338,6 +344,7 @@ class AnsibleValidator:
             venv_root=self._venv_root,
             env_extra=self._env_extra,
             defaults_resolved=True,
+            unassessed_tasks=unassessed_l059,
         )
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(l059)
@@ -351,4 +358,8 @@ class AnsibleValidator:
             violations=violations,
             rule_timings=rule_timings,
             metadata=metadata,
+            unassessed_argspec={
+                key: {rule for rule, keys in (("L058", unassessed_l058), ("L059", unassessed_l059)) if key in keys}
+                for key in unassessed_l058 | unassessed_l059
+            },
         )

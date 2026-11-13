@@ -1708,17 +1708,22 @@ class TestSessionRescanBridge:
     """
 
     @pytest.mark.parametrize("argspec_rule", ["L058", "L059"])  # type: ignore[untyped-decorator]
-    async def test_bridge_passed_to_graph_engine_as_rescan_fn(self, tmp_path: Path, argspec_rule: str) -> None:
+    @pytest.mark.parametrize("coverage_state", ["incomplete", "complete", "missing", "malformed"])  # type: ignore[untyped-decorator]
+    async def test_bridge_passed_to_graph_engine_as_rescan_fn(
+        self, tmp_path: Path, argspec_rule: str, coverage_state: str
+    ) -> None:
         """Bridge closure is constructed and passed into GraphRemediationEngine as rescan_fn.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
             argspec_rule: Rule whose severity override must also apply on rescan.
+            coverage_state: Independent coverage metadata from the Ansible RPC.
         """
         from unittest.mock import MagicMock
 
-        from apme.v1.common_pb2 import SEVERITY_HIGH
+        from apme.v1.common_pb2 import SEVERITY_HIGH, ValidatorDiagnostics
         from apme.v1.engine_pb2 import RuleConfig
+        from apme_engine.argspec_coverage import ARGSPEC_COVERAGE_KEY, ARGSPEC_RULE_IDS, encode_argspec_coverage
         from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
@@ -1773,6 +1778,13 @@ class TestSessionRescanBridge:
             mock_engine.remediate = AsyncMock(return_value=mock_report)
             return mock_engine
 
+        configs: list[object] = [
+            RuleConfig(rule_id=argspec_rule, enabled=True, severity=SEVERITY_HIGH),
+            RuleConfig(rule_id="L001", enabled=False),
+        ]
+        if argspec_rule == "L059":
+            configs.append(RuleConfig(rule_id="L058", enabled=False))
+
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch(
@@ -1797,10 +1809,7 @@ class TestSessionRescanBridge:
                 _heartbeat=_noop_heartbeat,
                 format_content=_noop_format,
                 format_diffs=[],
-                rule_configs=[
-                    RuleConfig(rule_id=argspec_rule, enabled=True, severity=SEVERITY_HIGH),
-                    RuleConfig(rule_id="L001", enabled=False),
-                ],
+                rule_configs=configs,
             ):
                 events.append(event)
 
@@ -1845,6 +1854,17 @@ class TestSessionRescanBridge:
             }
         )
         dirty_ids = frozenset({"play.yml/plays[0]/tasks[0]", second.node_id})
+        coverage = {"play.yml/plays[0]/tasks[0]": ARGSPEC_RULE_IDS} if coverage_state == "incomplete" else {}
+        diagnostics = None
+        if coverage_state != "missing":
+            diagnostics = ValidatorDiagnostics(
+                metadata={
+                    ARGSPEC_COVERAGE_KEY: "[]" if coverage_state == "malformed" else encode_argspec_coverage(coverage)
+                }
+            )
+        disabled_findings: list[ViolationDict] = []
+        if argspec_rule == "L059":
+            disabled_findings.append({"rule_id": "L058", "severity": "warning", "path": "play.yml/plays[0]/tasks[0]"})
         with (
             patch.dict(
                 os.environ,
@@ -1862,12 +1882,16 @@ class TestSessionRescanBridge:
                         "message": "Missing required parameter 'path' for ansible.builtin.file",
                     },
                     {"rule_id": "L001", "severity": "error", "path": "play.yml/plays[0]/tasks[0]"},
-                ]
+                    *disabled_findings,
+                ],
+                diagnostics=diagnostics,
             )
             rescanned = await captured_rescan_fn[0](graph, dirty_ids)
-        assert rescanned
-        assert {finding["rule_id"] for finding in rescanned} == {argspec_rule}
-        assert all(finding["severity"] == "high" for finding in rescanned)
+        assert rescanned.violations
+        assert {finding["rule_id"] for finding in rescanned.violations} == {argspec_rule}
+        assert all(finding["severity"] == "high" for finding in rescanned.violations)
+        expected = {"*": ARGSPEC_RULE_IDS} if coverage_state in {"missing", "malformed"} else coverage
+        assert rescanned.unassessed == expected
         assert len(serialization_threads) == 1
         assert serialization_threads[0] != event_loop_thread
         request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "ansible")

@@ -7,21 +7,31 @@ import importlib
 import json
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from apme.v1.common_pb2 import SEVERITY_HIGH
+from apme.v1.common_pb2 import SEVERITY_HIGH, ValidatorDiagnostics
 from apme.v1.engine_pb2 import RuleConfig
+from apme.v1.validate_pb2 import ValidateRequest
+from apme_engine.argspec_coverage import (
+    ARGSPEC_COVERAGE_KEY,
+    ARGSPEC_RULE_IDS,
+    decode_argspec_coverage,
+    encode_argspec_coverage,
+)
 from apme_engine.cli.output import deduplicate_violations
 from apme_engine.daemon.engine_server import _apply_rule_configs, _deduplicate_violations, _sort_violations
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType, _violation_key
-from apme_engine.graph.types import ViolationDict
-from apme_engine.remediation.graph_engine import _resolve_dirty_violations
+from apme_engine.graph.types import ViolationDict, YAMLDict
+from apme_engine.remediation.graph_engine import GraphRemediationEngine, RescanResult, _resolve_dirty_violations
+from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.validators.ansible import AnsibleRunResult, AnsibleValidator
 from apme_engine.validators.ansible.cache import PluginCache
 from apme_engine.validators.ansible.module_defaults import resolve_module_defaults
-from apme_engine.validators.ansible.rules import L058_argspec_doc
+from apme_engine.validators.ansible.rules import L058_argspec_doc, L059_argspec_mock, M001_M004_introspect
+from apme_engine.validators.base import ScanContext
 
 _NODE_ID = "site.yml/plays[0]/tasks[0]"
 
@@ -232,18 +242,42 @@ def test_argspec_ledger_identity_survives_order_changes_and_serialization(rule_i
 
 
 @pytest.mark.parametrize("remaining_index", [0, 1])  # type: ignore[untyped-decorator]
-def test_rescan_resolves_only_the_absent_argspec_diagnostic(remaining_index: int) -> None:
-    """A remaining warning cannot keep a disappeared argument error open.
+@pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
+def test_rescan_resolves_only_assessed_argspec_diagnostics(remaining_index: int, rule_id: str) -> None:
+    """Coverage gaps keep argument errors open without marking a false fix.
 
     Args:
         remaining_index: Whether coverage or the argument error remains.
+        rule_id: Argspec rule whose prior error must remain open if unassessed.
     """
-    diagnostics = _diagnostics()
+    diagnostics = _diagnostics(rule_id)
     graph = _graph()
     graph.register_violations(diagnostics, pass_number=0)
     remaining = diagnostics[remaining_index]
     absent = diagnostics[1 - remaining_index]
-    _resolve_dirty_violations(graph, [remaining], frozenset({_NODE_ID}), fixed_by="deterministic", pass_number=1)
+    unassessed = {_NODE_ID: ARGSPEC_RULE_IDS} if remaining_index == 0 else {}
+    _resolve_dirty_violations(
+        graph,
+        [remaining],
+        frozenset({_NODE_ID}),
+        fixed_by="deterministic",
+        pass_number=1,
+        unassessed=unassessed,
+    )
+    if remaining_index == 0:
+        assert len(graph.query_violations(status="open")) == 2
+        assert graph.query_violations(status="fixed") == []
+        node = graph.get_node(_NODE_ID)
+        assert node is not None
+        assert all(
+            record.fixed_by is None and record.fixed_in_pass is None for record in node.violation_ledger.values()
+        )
+        # Once every invocation is assessable and clean, genuine fixes resolve.
+        _resolve_dirty_violations(
+            graph, [], frozenset({_NODE_ID}), fixed_by="deterministic", pass_number=2, unassessed={}
+        )
+        assert len(graph.query_violations(status="fixed")) == 2
+        return
     assert [finding["message"] for finding in graph.query_violations(status="open")] == [remaining["message"]]
     assert [finding["message"] for finding in graph.query_violations(status="fixed")] == [absent["message"]]
     graph.register_violations([remaining], pass_number=1)
@@ -339,3 +373,276 @@ def test_real_l058_coverage_and_argument_error_survive_full_identity_pipeline(tm
     assert len(output) == 2
     assert {finding["severity"] for finding in output} == {"warning", "error"}
     assert all(finding["remediation_class"] == "manual-review" for finding in output)
+
+
+def _validate_argspec_tasks(
+    tasks: list[dict[str, object]], venv_root: Path, *, unavailable_rule: str = ""
+) -> AnsibleRunResult:
+    """Run the real defaults/rule orchestration against controlled installed specs.
+
+    Args:
+        tasks: Raw invocation payloads for the validator.
+        venv_root: Runtime identity; all spec fetches are intercepted.
+        unavailable_rule: Rule whose installed spec cannot be obtained.
+
+    Returns:
+        Real validator findings and independent coverage.
+    """
+    parameters = {"url": {"required": True}, "method": {"choices": ["GET", "POST"]}}
+    with (
+        patch.object(M001_M004_introspect, "run", return_value=[]),
+        patch.object(L058_argspec_doc, "plugin_cache", PluginCache()),
+        patch.object(L059_argspec_mock, "plugin_cache", PluginCache()),
+        patch.object(
+            L058_argspec_doc,
+            "_fetch_specs",
+            return_value={} if unavailable_rule == "L058" else {"ansible.builtin.uri": {"options": parameters}},
+        ),
+        patch.object(
+            L059_argspec_mock,
+            "_fetch_specs",
+            return_value={} if unavailable_rule == "L059" else {"ansible.builtin.uri": {"argument_spec": parameters}},
+        ),
+        patch("apme_engine.validators.ansible.module_defaults._resolve", return_value=[{"unavailable": True}]),
+    ):
+        return AnsibleValidator(venv_root=venv_root).run_with_timing(
+            ScanContext(hierarchy_payload=cast(YAMLDict, {"hierarchy": [{"nodes": tasks}]})), check_syntax=False
+        )
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "excluded_context",
+    [
+        {"module_defaults_incomplete": True},
+        {"module_defaults_contexts": [[], ["malformed"]]},
+        {"module_defaults_contexts": [[], [{"ansible.builtin.uri": "{{ defaults }}"}]]},
+        {"module_defaults_inactive": True},
+        {"module_defaults_contexts": [[]] * 65},
+    ],
+)
+async def test_unassessed_defaults_survive_disabled_l058_and_resolve_independent_tasks(
+    tmp_path: Path, excluded_context: dict[str, object]
+) -> None:
+    """A skipped invocation never proves an old error fixed in either rule.
+
+    Args:
+        tmp_path: Intercepted runtime identity.
+        excluded_context: Incomplete, partial, malformed or inactive invocation.
+    """
+    other_id = "site.yml/plays[0]/tasks[1]"
+    task: dict[str, object] = {
+        "type": "taskcall",
+        "key": _NODE_ID,
+        "file": "site.yml",
+        "module": "ansible.builtin.uri",
+        "module_options": {},
+    }
+    initial = _validate_argspec_tasks([task, {**task, "key": other_id}], tmp_path)
+    assert len(initial.violations) == 4
+    assert initial.unassessed_argspec == {}
+    fixed = {**task, "module_options": {"url": "https://example.invalid"}}
+    rescan = _validate_argspec_tasks([{**fixed, **excluded_context}, {**fixed, "key": other_id}], tmp_path)
+    assert rescan.unassessed_argspec == {_NODE_ID: set(ARGSPEC_RULE_IDS)}
+    # Even an assessed clean invocation of this task cannot clear another
+    # invocation that was skipped. A separate physical task can resolve.
+    visible = _apply_rule_configs(
+        cast(list[ViolationDict], rescan.violations), [RuleConfig(rule_id="L058", enabled=False)]
+    )
+    assert visible == []
+    diagnostics = ValidatorDiagnostics(
+        metadata={ARGSPEC_COVERAGE_KEY: encode_argspec_coverage(rescan.unassessed_argspec)}
+    )
+    transported = ValidatorDiagnostics.FromString(diagnostics.SerializeToString())  # type: ignore[attr-defined]
+    coverage = decode_argspec_coverage(transported.metadata.get(ARGSPEC_COVERAGE_KEY))
+    graph = _graph()
+    graph.add_node(ContentNode(identity=NodeIdentity(path=other_id, node_type=NodeType.TASK), file_path="site.yml"))
+    graph.register_violations(cast(list[ViolationDict], initial.violations), pass_number=0)
+    for node_id in (_NODE_ID, other_id):
+        graph.apply_yaml(node_id, "- ansible.builtin.uri:\n    url: https://example.invalid\n")
+
+    async def rescan_fn(g: ContentGraph, dirty: frozenset[str]) -> RescanResult:
+        assert dirty == frozenset({_NODE_ID, other_id})
+        return RescanResult(violations=visible, unassessed=coverage)
+
+    engine = GraphRemediationEngine(TransformRegistry(), graph, [], rescan_fn=rescan_fn)
+    await engine._rescan_and_record(graph, 1, resolve_fixed_by="deterministic")
+    assert {finding["path"] for finding in graph.query_violations(status="open")} == {_NODE_ID}
+    assert {finding["path"] for finding in graph.query_violations(status="fixed")} == {other_id}
+    assert {finding["rule_id"] for finding in graph.query_violations(status="open")} == ARGSPEC_RULE_IDS
+    node = graph.get_node(_NODE_ID)
+    assert node is not None
+    assert all(record.fixed_by is None and record.fixed_in_pass is None for record in node.violation_ledger.values())
+
+
+@pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("inherited", [False, True])  # type: ignore[untyped-decorator]
+def test_dynamic_choice_is_unassessed_until_effective_value_is_static(
+    tmp_path: Path, rule_id: str, inherited: bool
+) -> None:
+    """Dynamic leaves retain prior errors, including values inherited by defaults.
+
+    Args:
+        tmp_path: Intercepted runtime identity.
+        rule_id: Argspec rule whose choice diagnostic would disappear.
+        inherited: Whether the dynamic choice comes from module defaults.
+    """
+    rule = L058_argspec_doc if rule_id == "L058" else L059_argspec_mock
+    field = "options" if rule_id == "L058" else "argument_spec"
+    task: dict[str, object] = {
+        "key": _NODE_ID,
+        "file": "site.yml",
+        "module": "ansible.builtin.uri",
+        "module_options": {"method": "INVALID"},
+    }
+    with (
+        patch.object(rule, "plugin_cache", PluginCache()),
+        patch.object(
+            rule, "_fetch_specs", return_value={"ansible.builtin.uri": {field: {"method": {"choices": ["GET"]}}}}
+        ),
+        patch(
+            "apme_engine.validators.ansible.module_defaults._resolve",
+            return_value=[{"module": "ansible.builtin.uri", "defaults": [{"method": "{{ selected_method }}"}]}],
+        ),
+    ):
+        initial = rule.run([task], tmp_path)
+        assert len(initial) == 1
+        dynamic_task = {**task, "module_options": {"method": "{{ selected_method }}"}}
+        if inherited:
+            dynamic_task = {
+                **task,
+                "module_options": {},
+                "module_defaults_contexts": [[{"ansible.builtin.uri": {"method": "{{ selected_method }}"}}]],
+            }
+        unassessed: set[str] = set()
+        findings = rule.run([dynamic_task], tmp_path, unassessed_tasks=unassessed)
+        assert findings == []
+        assert unassessed == {_NODE_ID}
+        graph = _graph()
+        graph.register_violations(cast(list[ViolationDict], initial), pass_number=0)
+        _resolve_dirty_violations(
+            graph,
+            [],
+            frozenset({_NODE_ID}),
+            fixed_by="deterministic",
+            pass_number=1,
+            unassessed={_NODE_ID: frozenset({rule_id})},
+        )
+        assert len(graph.query_violations(status="open")) == 1
+        assert graph.query_violations(status="fixed") == []
+        # Explicit static arguments override inherited templates, so this
+        # invocation really is assessable and a valid choice really resolves.
+        unassessed.clear()
+        assert (
+            rule.run([{**dynamic_task, "module_options": {"method": "GET"}}], tmp_path, unassessed_tasks=unassessed)
+            == []
+        )
+        assert unassessed == set()
+        _resolve_dirty_violations(
+            graph, [], frozenset({_NODE_ID}), fixed_by="deterministic", pass_number=2, unassessed={}
+        )
+        assert len(graph.query_violations(status="fixed")) == 1
+
+
+@pytest.mark.parametrize("unavailable_rule", ["L058", "L059"])  # type: ignore[untyped-decorator]
+def test_unavailable_spec_does_not_block_independently_assessed_rule(tmp_path: Path, unavailable_rule: str) -> None:
+    """Each runtime rule reports its own coverage even when the other succeeds.
+
+    Args:
+        tmp_path: Intercepted runtime identity.
+        unavailable_rule: Rule whose spec fetch fails on rescan.
+    """
+    task: dict[str, object] = {
+        "type": "taskcall",
+        "key": _NODE_ID,
+        "module": "ansible.builtin.uri",
+        "module_options": {},
+    }
+    initial = _validate_argspec_tasks([task], tmp_path)
+    rescan = _validate_argspec_tasks(
+        [{**task, "module_options": {"url": "https://example.invalid"}}], tmp_path, unavailable_rule=unavailable_rule
+    )
+    assert rescan.violations == []
+    assert rescan.unassessed_argspec == {_NODE_ID: {unavailable_rule}}
+    graph = _graph()
+    graph.register_violations(cast(list[ViolationDict], initial.violations), pass_number=0)
+    _resolve_dirty_violations(
+        graph,
+        [],
+        frozenset({_NODE_ID}),
+        fixed_by="deterministic",
+        pass_number=1,
+        unassessed=decode_argspec_coverage(encode_argspec_coverage(rescan.unassessed_argspec)),
+    )
+    assert [finding["rule_id"] for finding in graph.query_violations(status="open")] == [unavailable_rule]
+    assert len(graph.query_violations(status="fixed")) == 1
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "value", [None, "not-json", "[]", '{"task": ["L001"]}', '{"task": "L058"}', "x" * (256 * 1024 + 1)]
+)
+def test_invalid_or_missing_coverage_cannot_prove_argspec_fixed(value: str | None) -> None:
+    """Bad/absent metadata protects both argspec rules but not independent rules.
+
+    Args:
+        value: Missing, malformed or excessive metadata from the validator.
+    """
+    graph = _graph()
+    errors = [_diagnostics(rule)[1] for rule in ("L058", "L059", "M001")]
+    graph.register_violations(errors, pass_number=0)
+    _resolve_dirty_violations(
+        graph,
+        [],
+        frozenset({_NODE_ID}),
+        fixed_by="ai",
+        pass_number=1,
+        status="proposed",
+        unassessed=decode_argspec_coverage(value),
+    )
+    assert {finding["rule_id"] for finding in graph.query_violations(status="open")} == ARGSPEC_RULE_IDS
+    assert [finding["rule_id"] for finding in graph.query_violations(status="proposed")] == ["M001"]
+
+
+def test_coverage_transport_overflow_protects_all_argspec_tasks() -> None:
+    """Neither task-count nor byte limits silently drop coverage exclusions."""
+    for mapping in ({str(i): ARGSPEC_RULE_IDS for i in range(4097)}, {"x" * (256 * 1024): ARGSPEC_RULE_IDS}):
+        value = encode_argspec_coverage(mapping)
+        assert len(value) < 100
+        assert decode_argspec_coverage(value) == {"*": ARGSPEC_RULE_IDS}
+    assert decode_argspec_coverage(encode_argspec_coverage({})) == {}
+
+
+@pytest.mark.parametrize("legacy_callback", [False, True])  # type: ignore[untyped-decorator]
+async def test_rescan_without_explicit_runtime_coverage_keeps_argspec_open(legacy_callback: bool) -> None:
+    """A graph-only scan or a legacy finding list cannot establish runtime fixes.
+
+    Args:
+        legacy_callback: Whether an injected old-style callback supplies findings.
+    """
+    graph = _graph()
+    graph.register_violations([_diagnostics(rule)[1] for rule in ("L058", "L059", "M001")], pass_number=0)
+    graph.apply_yaml(_NODE_ID, "- ansible.builtin.uri: {}\n")
+
+    async def rescan_fn(g: ContentGraph, dirty: frozenset[str]) -> list[ViolationDict]:
+        return []
+
+    engine = GraphRemediationEngine(TransformRegistry(), graph, [], rescan_fn=rescan_fn if legacy_callback else None)
+    await engine._rescan_and_record(graph, 1, resolve_fixed_by="deterministic")
+    assert {finding["rule_id"] for finding in graph.query_violations(status="open")} == ARGSPEC_RULE_IDS
+    assert [finding["rule_id"] for finding in graph.query_violations(status="fixed")] == ["M001"]
+
+
+async def test_ansible_adapter_emits_coverage_separately_from_diagnostics(tmp_path: Path) -> None:
+    """The real RPC adapter carries resolver exclusions outside rule findings.
+
+    Args:
+        tmp_path: Intercepted runtime identity.
+    """
+    from apme_engine.daemon.ansible_validator_server import AnsibleValidatorServicer, _AnsibleResult
+
+    run = _validate_argspec_tasks([{"type": "taskcall", "key": _NODE_ID, "module_defaults_incomplete": True}], tmp_path)
+    with patch("apme_engine.daemon.ansible_validator_server._run_ansible_validate", return_value=_AnsibleResult(run)):
+        response = await AnsibleValidatorServicer().Validate(ValidateRequest(hierarchy_payload=b"{}"), MagicMock())
+    assert {finding.rule_id for finding in response.violations} == {"L058"}  # type: ignore[attr-defined]
+    assert decode_argspec_coverage(response.diagnostics.metadata.get(ARGSPEC_COVERAGE_KEY)) == {  # type: ignore[attr-defined]
+        _NODE_ID: ARGSPEC_RULE_IDS
+    }

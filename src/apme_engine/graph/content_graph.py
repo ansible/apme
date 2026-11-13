@@ -887,12 +887,14 @@ class ContentGraph:
         pass_number: int,
         status: str = "fixed",
         remaining_violations: list[ViolationDict] | None = None,
+        unassessed_rule_ids: frozenset[str] = frozenset(),
     ) -> int:
         """Transition open violations when absent from a rescan.
 
         For the given node, any open ledger entry whose rule_id is
         **not** in ``remaining_rule_ids`` transitions to *status*. When rescan
         payloads are supplied, distinct argspec diagnostics resolve separately.
+        Rules with incomplete assessment retain their open ledger entries.
 
         Use ``status="fixed"`` for deterministic transforms (auto-approved),
         ``status="pending_review"`` for deterministic transforms awaiting
@@ -908,6 +910,8 @@ class ContentGraph:
             status: Target status (``"fixed"`` or ``"proposed"``).
             remaining_violations: Rescan payloads for distinguishing diagnostics
                 with the same rule ID; None retains rule-level reconciliation.
+            unassessed_rule_ids: Rules that could not assess every invocation
+                context on this node, independent of visible findings.
 
         Returns:
             Number of violations transitioned.
@@ -921,6 +925,8 @@ class ContentGraph:
             if record.status != "open":
                 continue
             rule_id = record.key[1]
+            if rule_id in unassessed_rule_ids:
+                continue
             if rule_id not in remaining_rule_ids or (
                 len(record.key) == 3 and remaining_keys is not None and record.key not in remaining_keys
             ):

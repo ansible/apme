@@ -177,6 +177,7 @@ def run(
     venv_root: Path,
     env_extra: dict[str, str] | None = None,
     defaults_resolved: bool = False,
+    unassessed_tasks: set[str] | None = None,
     **_kwargs: object,
 ) -> list[dict[str, object]]:
     """Run docstring-based argspec validation in the venv's Python.
@@ -189,24 +190,33 @@ def run(
         venv_root: Path to ansible venv root.
         env_extra: Optional extra environment variables.
         defaults_resolved: Whether the caller already prepared inherited defaults.
+        unassessed_tasks: Optional output set of tasks with excluded contexts.
         **_kwargs: Ignored keyword arguments.
 
     Returns:
         List of violation dicts.
     """
     coverage: list[dict[str, object]] = []
+    unassessed = unassessed_tasks if unassessed_tasks is not None else set()
     if not defaults_resolved:
         prepared = resolve_module_defaults(task_nodes, venv_root, env_extra)
         task_nodes, coverage = prepared.tasks, prepared.violations
+        unassessed.update(prepared.unassessed_task_keys)
     task_modules: dict[str, bool] = {}
     tasks_for_check: list[dict[str, object]] = []
     for node in task_nodes:
         if node.get("args_templated") is True:
+            unassessed.add(str(node.get("key") or "*"))
             continue
         module = node.get("module", "")
         module_options = node.get("module_options")
         if not module or not isinstance(module_options, dict):
+            unassessed.add(str(node.get("key") or "*"))
             continue
+        if is_dynamic(module_options):
+            # Known literal keys still produce errors below, but skipped value
+            # checks cannot establish that a previously observed error is fixed.
+            unassessed.add(str(node.get("key") or "*"))
         module_str = str(module)
         collections = node.get("collections_in_play", [])
         if (
@@ -214,6 +224,7 @@ def run(
             and isinstance(collections, list | tuple)
             and any(str(name) not in {"ansible.builtin", "ansible.legacy"} for name in collections)
         ):
+            unassessed.add(str(node.get("key") or "*"))
             continue
         task_modules[module_str] = True
         tasks_for_check.append(
@@ -240,6 +251,12 @@ def run(
         for name, spec in fresh_specs.items():
             plugin_cache.put("docspec", venv_str, name, spec)
         all_specs.update(fresh_specs)
+
+    for task in tasks_for_check:
+        spec = all_specs.get(str(task["module"]))
+        options = spec.get("options", {}) if isinstance(spec, dict) else None
+        if not isinstance(options, dict) or "free_form" in options:
+            unassessed.add(str(task.get("key") or "*"))
 
     raw_violations = _check_tasks_against_specs(all_specs, tasks_for_check)
 

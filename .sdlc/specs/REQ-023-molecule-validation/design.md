@@ -89,6 +89,8 @@ and explicit task arguments. Reuse the resolved arguments for both argspec
 checks; distinguish malformed defaults from unavailable runtime/template context.
 Preserve distinct argument errors and coverage warnings through output and
 the graph ledger, and retain manual-review routing for inherited defaults.
+Do not resolve prior argument errors solely because a rescan could not assess
+the associated invocation; preserve distinct same-line Molecule findings.
 Native scenario validation also checks task-section shapes in referenced files;
 Ansible-compatible empty play sections remain valid.
 

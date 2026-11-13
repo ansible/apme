@@ -270,7 +270,9 @@ artifact type, translate it:
    Bound expanded representations, including repeated shared references and
    serialized bytes, at every downstream consumer; account for repeated work
    after an aggregate budget is exhausted. Trace distinct findings and explicit
-   remediation constraints through deduplication, storage, and routing.
+   remediation constraints through deduplication, storage, and routing. Treat
+   missing results as evidence of a fix only when the relevant check actually
+   assessed that input, including when findings are filtered or disabled.
    When combining graph paths,
    distinguish inactive paths from paths with unavailable context so inactive
    metadata cannot affect an active invocation.

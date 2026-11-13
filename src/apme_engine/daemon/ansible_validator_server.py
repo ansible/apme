@@ -26,6 +26,7 @@ from google.protobuf.message import DecodeError
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateRequest, ValidateRequestChunk, ValidateResponse
+from apme_engine.argspec_coverage import ARGSPEC_COVERAGE_KEY, encode_argspec_coverage
 from apme_engine.daemon.fs_utils import write_chunked_fs
 from apme_engine.daemon.validator_errors import (
     PUBLIC_VALIDATOR_ERROR,
@@ -198,6 +199,7 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 ]
                 diag_metadata: dict[str, str] = {
                     "ansible_core_version": result.ansible_core_version,
+                    ARGSPEC_COVERAGE_KEY: encode_argspec_coverage(result.run_result.unassessed_argspec),
                 }
                 for mk, mv in result.run_result.metadata.items():
                     diag_metadata[mk] = str(mv)

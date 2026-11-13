@@ -102,3 +102,4 @@ changing service boundaries, transport fields, or the graph library dependency.
 | 2026-11-12 | Codex | Added inert module-defaults structure checks and context-aware Ansible argument validation for inherited defaults, resets, and action groups |
 | 2026-11-13 | Codex | Bounded expanded defaults and graph transport serialization and isolated inactive invocation paths after review |
 | 2026-11-13 | Codex | Preserved separate defaults coverage and argument findings, manual-review routing, and bounded repeated defaults processing |
+| 2026-11-13 | Codex | Preserve same-line file findings and avoid resolving argument errors when rescans lack coverage |

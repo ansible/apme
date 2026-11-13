@@ -64,10 +64,23 @@ class DefaultsResult:
     Attributes:
         tasks: Copies of task payloads, one per assessable invocation context.
         violations: L058 errors or coverage warnings for excluded contexts.
+        unassessed_task_keys: Tasks with at least one excluded invocation context.
     """
 
     tasks: list[dict[str, object]] = field(default_factory=list)
     violations: list[dict[str, object]] = field(default_factory=list)
+    unassessed_task_keys: set[str] = field(default_factory=set)
+
+    def exclude(self, task: dict[str, object], message: str, *, error: bool = False) -> None:
+        """Record incomplete assessment independently of its visible finding.
+
+        Args:
+            task: Task with an excluded invocation context.
+            message: Coverage or malformed-defaults diagnostic.
+            error: Whether the defaults are provably malformed.
+        """
+        self.unassessed_task_keys.add(str(task.get("key") or "*"))
+        self.violations.append(_finding(task, message, error=error))
 
 
 def _literal_properties(value: object) -> tuple[bool, bool]:
@@ -290,21 +303,16 @@ def resolve_module_defaults(
     pending: list[tuple[dict[str, object], int]] = []
     for task in task_nodes:
         if task.get("module_defaults_incomplete"):
-            result.violations.append(
-                _finding(task, "Module defaults invocation context is incomplete; argument checks are incomplete")
-            )
+            result.exclude(task, "Module defaults invocation context is incomplete; argument checks are incomplete")
             continue
         if task.get("module_defaults_inactive"):
+            result.unassessed_task_keys.add(str(task.get("key") or "*"))
             continue
         if task.get("args_serialization_incomplete"):
-            result.violations.append(
-                _finding(task, "Task arguments exceed serialization limits; argument checks are incomplete")
-            )
+            result.exclude(task, "Task arguments exceed serialization limits; argument checks are incomplete")
             continue
         if not _literal_properties(task.get("module_options"))[1]:
-            result.violations.append(
-                _finding(task, "Task arguments exceed literal assessment limits; argument checks are incomplete")
-            )
+            result.exclude(task, "Task arguments exceed literal assessment limits; argument checks are incomplete")
             continue
         contexts = task.get("module_defaults_contexts")
         if contexts is None:
@@ -313,30 +321,22 @@ def resolve_module_defaults(
                 [[options["module_defaults"]]] if isinstance(options, dict) and "module_defaults" in options else [[]]
             )
         if not isinstance(contexts, list) or not contexts or len(contexts) > _MAX_CONTEXTS:
-            result.violations.append(
-                _finding(task, "Module defaults invocation context is unavailable; argument checks are incomplete")
-            )
+            result.exclude(task, "Module defaults invocation context is unavailable; argument checks are incomplete")
             continue
         if not _literal_properties(contexts)[1]:
-            result.violations.append(
-                _finding(task, "Module defaults exceed literal assessment limits; argument checks are incomplete")
-            )
+            result.exclude(task, "Module defaults exceed literal assessment limits; argument checks are incomplete")
             continue
         for layers in contexts:
             if isinstance(layers, list) and len(layers) > _MAX_LAYERS:
-                result.violations.append(
-                    _finding(
-                        task, "Module defaults exceed the context assessment limit; argument checks are incomplete"
-                    )
+                result.exclude(
+                    task, "Module defaults exceed the context assessment limit; argument checks are incomplete"
                 )
                 continue
             if not isinstance(layers, list) or _shape_error(layers):
-                result.violations.append(
-                    _finding(
-                        task,
-                        "Invalid module_defaults: expected static module/group names with parameter mappings",
-                        error=True,
-                    )
+                result.exclude(
+                    task,
+                    "Invalid module_defaults: expected static module/group names with parameter mappings",
+                    error=True,
                 )
                 continue
             if not layers or all(layer is None or layer == {} or layer == [] for layer in layers):
@@ -344,9 +344,7 @@ def resolve_module_defaults(
                 continue
             collections = task.get("collections_in_play", [])
             if not isinstance(collections, list | tuple) or any(not isinstance(name, str) for name in collections):
-                result.violations.append(
-                    _finding(task, "Task collection search context is unavailable; argument checks are incomplete")
-                )
+                result.exclude(task, "Task collection search context is unavailable; argument checks are incomplete")
                 continue
             request: dict[str, object] = {
                 "module": str(task.get("module", "")),
@@ -357,10 +355,8 @@ def resolve_module_defaults(
             signature = json.dumps(request)
             if signature not in request_indices:
                 if len(requests) >= _MAX_REQUESTS:
-                    result.violations.append(
-                        _finding(
-                            task, "Module defaults exceed the context assessment limit; argument checks are incomplete"
-                        )
+                    result.exclude(
+                        task, "Module defaults exceed the context assessment limit; argument checks are incomplete"
                     )
                     continue
                 request_indices[signature] = len(requests)
@@ -386,7 +382,7 @@ def resolve_module_defaults(
                     "Module defaults metadata resolution failed or exceeded its assessment limits; "
                     "argument checks are incomplete"
                 )
-            result.violations.append(_finding(task, message))
+            result.exclude(task, message)
             continue
         effective: dict[str, object] = {}
         for value in defaults:

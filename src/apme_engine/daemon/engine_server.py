@@ -2737,6 +2737,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         from apme_engine.remediation.graph_engine import (
             GraphRemediationEngine,
+            RescanResult,
             splice_modifications,
         )
         from apme_engine.remediation.partition import (
@@ -2791,7 +2792,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         async def _rescan_bridge(
             g: ContentGraph,
             dirty_ids: frozenset[str],
-        ) -> list[ViolationDict]:
+        ) -> RescanResult:
             """Rescan dirty nodes via gRPC to all configured validators.
 
             Native receives the full (slim) graph with ``dirty_node_ids``
@@ -2804,17 +2805,22 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 dirty_ids: Node IDs that changed since the last pass.
 
             Returns:
-                Merged violation list from all sources.
+                Merged findings and independent assessment coverage.
 
             Raises:
                 RequiredValidatorDependencyError: If a required validator
                     (native, opa, ansible) is not configured or its RPC fails.
             """
+            from apme_engine.argspec_coverage import ARGSPEC_COVERAGE_KEY, decode_argspec_coverage
+
             all_violations: list[ViolationDict] = []
+            # No response, old validators and malformed metadata cannot prove
+            # argument findings fixed. Only Ansible can establish this coverage.
+            unassessed = decode_argspec_coverage(None)
 
             dirty_nodes = [node for nid in sorted(dirty_ids) if (node := g.get_node(nid)) is not None]
             if not dirty_nodes:
-                return all_violations
+                return RescanResult(violations=all_violations, unassessed=unassessed)
 
             ext_coros: list[Awaitable[_ValidatorResult]] = []
             ext_names: list[str] = []
@@ -2968,9 +2974,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         msg = f"Required validator {name} RPC failed during rescan: {result.error}"
                         raise RequiredValidatorDependencyError(msg)
                     all_violations.extend(result.violations)
+                    if name == "ansible":
+                        metadata = result.diagnostics.metadata if result.diagnostics is not None else {}
+                        unassessed = decode_argspec_coverage(metadata.get(ARGSPEC_COVERAGE_KEY))
 
             all_violations = _apply_rule_configs(all_violations, rule_configs or [])
-            return filter_noqa_violations(all_violations, g)
+            return RescanResult(violations=filter_noqa_violations(all_violations, g), unassessed=unassessed)
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
