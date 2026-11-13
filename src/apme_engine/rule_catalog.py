@@ -130,7 +130,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
             DISABLED_BY_DEFAULT_GRAPH_RULE_IDS,
             load_graph_rules,
         )
-        from apme_engine.validators.native.molecule import MOLECULE_RULES
+        from apme_engine.molecule import MOLECULE_RULES
 
         rules_dir = str(_GRAPH_RULES_DIR)
         graph_rules, _ = load_graph_rules(

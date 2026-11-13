@@ -29,7 +29,7 @@ from apme_engine.graph.scanner import (
 )
 from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.log_bridge import attach_collector
-from apme_engine.validators.native.molecule import validate_molecule
+from apme_engine.molecule import validate_molecule
 
 logger = logging.getLogger("apme.native")
 

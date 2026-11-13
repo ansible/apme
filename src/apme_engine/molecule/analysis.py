@@ -2,6 +2,11 @@
 
 All inputs come from the uploaded snapshot. This module never imports Molecule,
 executes project code, reads host configuration, or resolves network schemas.
+
+This is neutral static analysis, not a validator: it imports only
+``apme_engine.graph.types`` so it can be shared by the Native file rules
+(L115-L119) and by Ansible ``L057`` scenario discovery without a
+validator-to-validator dependency (ADR-076).
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ from apme_engine.graph.types import RuleMetadata, RuleScope, Severity, Violation
 
 PROFILE_VERSION = "24.9.0"
 NATIVE_PROFILE_VERSION = "26.11.0"
-_ASSETS = Path(__file__).parent / "molecule_data"
+_ASSETS = Path(__file__).parent / "data"
 _VIRTUAL_ROOT = "/__apme_project__"
 _RUNTIME_ROOT = "/__apme_molecule_runtime__"
 _RUNTIME_PATHS = {

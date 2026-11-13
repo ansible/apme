@@ -27,6 +27,15 @@ is required. Configuration validation is independent of graph availability.
 This decision preserves all AGENTS.md invariants and ADR-059's graph/engine
 dependency boundary. It does not amend the read-only validator contract.
 
+Shared static analysis is not owned by a validator. The Molecule parsing,
+configuration merging, provenance, and reference-resolution code lives in the
+neutral `apme_engine/molecule` package, next to its bundled schema data. Native
+executes the rules (`L115`-`L119`) and Ansible `L057` reuses the same assessment
+to skip scenario playbooks it must not syntax-check, so neither validator imports
+the other. Validator packages stay independent of one another: a validator may
+depend on `apme_engine.molecule` and `apme_engine.graph`, never on a sibling
+validator's implementation.
+
 ## Alternatives Considered
 
 ### Alternative 1: Trigger file scans from GraphRule playbook nodes
@@ -109,3 +118,4 @@ changing service boundaries, transport fields, or the graph library dependency.
 | 2026-11-13 | Codex | Bound YAML composition and shared assessment, propagate incomplete exclusions, refresh invocation context, and harden validator transport and choice conversion |
 | 2026-11-13 | Codex | Retry interrupted applied-file assessments on resume and restrict stale role context to reachable callers |
 | 2026-11-13 | Codex | Retain applied patches before temporary-file writes so resume can retry synchronization before reassessment |
+| 2026-11-13 | Reviewer | Moved shared Molecule static analysis to the neutral `apme_engine/molecule` package so `L057` does not import the Native validator |

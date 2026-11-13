@@ -29,8 +29,8 @@ Implement L115-L119 against the pinned ADT configuration profile, including sour
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/apme_engine/validators/native/molecule.py` | Create | Built-in file assessment |
-| `src/apme_engine/validators/native/molecule_data/` | Create | Offline schema/defaults and provenance |
+| `src/apme_engine/molecule/` | Create | Neutral file assessment (moved out of `validators/native`) |
+| `src/apme_engine/molecule/data/` | Create | Offline schema/defaults and provenance |
 | `src/apme_engine/validators/native/rules/L115.md through L119.md` | Create | Rule documentation |
 | `tests/test_molecule_validation.py` | Create | Behavioral coverage |
 | `VENDORED.md` | Modify | Attribution and dependency review |

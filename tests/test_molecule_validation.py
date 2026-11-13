@@ -11,7 +11,7 @@ from ansible.playbook.play import Play
 from apme.v1 import common_pb2, validate_pb2
 from apme_engine.daemon.native_validator_server import _run_native
 from apme_engine.graph.types import ViolationDict
-from apme_engine.validators.native.molecule import MOLECULE_RULES, validate_molecule
+from apme_engine.molecule import MOLECULE_RULES, validate_molecule
 
 CONFIG = "molecule/default/molecule.yml"
 PLAYBOOK = b"- hosts: all\n  tasks: []\n"
@@ -1106,9 +1106,9 @@ def test_bundled_molecule_profiles_have_verified_provenance() -> None:
     import hashlib
     import json
 
-    from apme_engine.validators.native import molecule
+    from apme_engine import molecule
 
-    assets = Path(molecule.__file__).parent / "molecule_data"
+    assets = Path(molecule.__file__).parent / "data"
     manifest = json.loads((assets / "provenance.json").read_text())
     assert manifest["minimum_version"] == "24.9.0"
     assert {profile["version"] for profile in manifest["profiles"]} == {"24.9.0", "26.11.0"}
@@ -1255,9 +1255,9 @@ def test_native_collection_scenario_name_includes_nested_path() -> None:
 
 def test_repeated_action_playbooks_are_parsed_once() -> None:
     """Repeated valid verification steps do not repeat structural parsing."""
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis
 
-    with patch.object(molecule, "_playbook", wraps=molecule._playbook) as assess:
+    with patch.object(analysis, "_playbook", wraps=analysis._playbook) as assess:
         assert not _scan(
             'scenario:\n  test_sequence: ["verify check.yml", "verify check.yml"]\n',
             {
@@ -1392,7 +1392,7 @@ def test_yaml_merged_imports_are_checked_statically() -> None:
 
 def test_projects_without_molecule_are_unchanged() -> None:
     """Both public helpers accept ordinary projects without scenario files."""
-    from apme_engine.validators.native.molecule import molecule_playbook_paths
+    from apme_engine.molecule import molecule_playbook_paths
 
     files = {"site.yml": PLAYBOOK}
     assert validate_molecule(files) == []
@@ -1611,13 +1611,13 @@ def test_wide_config_merge_does_not_rescan_all_origins_per_key() -> None:
     from typing import cast
     from unittest.mock import MagicMock
 
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis
 
-    layer = molecule._load("config.yml", "".join(f"key_{index}: {index}\n" for index in range(2000)).encode(), {})
+    layer = analysis._load("config.yml", "".join(f"key_{index}: {index}\n" for index in range(2000)).encode(), {})
     origins = MagicMock(wraps=layer.origins)
-    layer.origins = cast(dict[molecule.YamlPath, molecule._Location], origins)
-    target = molecule._Document()
-    molecule._merge(target, layer)
+    layer.origins = cast(dict[analysis.YamlPath, analysis._Location], origins)
+    target = analysis._Document()
+    analysis._merge(target, layer)
     assert len(target.data) == 2000
     assert len(target.origins) == 2000
     assert origins.items.call_count <= 4
@@ -1692,10 +1692,10 @@ def test_collection_metadata_is_parsed_once_per_request(metadata: bytes) -> None
     Args:
         metadata: Valid or malformed uploaded collection metadata.
     """
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis
 
     source = "- import_playbook: example.testing.prepare\n" * 25
-    with patch.object(molecule, "_load", wraps=molecule._load) as load:
+    with patch.object(analysis, "_load", wraps=analysis._load) as load:
         _scan(
             "",
             {
@@ -1748,3 +1748,38 @@ def test_nested_collection_scenario_can_resolve_sibling_collection() -> None:
             "ansible_collections/other/tools/playbooks/prepare.yml": PLAYBOOK,
         }
     )
+
+
+def test_validators_share_neutral_molecule_analysis_without_importing_each_other() -> None:
+    """L057 reuses the neutral assessment instead of the Native validator module.
+
+    Ansible ``L057`` must exclude statically assessed scenario playbooks, and the
+    Native validator must run L115-L119. Both read the same shared analysis, so
+    that analysis lives in ``apme_engine.molecule`` and validator packages stay
+    independent of one another (ADR-076).
+    """
+    import ast
+
+    from apme_engine.molecule import molecule_playbook_paths
+
+    validators_dir = Path(__file__).resolve().parent.parent / "src" / "apme_engine" / "validators"
+    sibling_packages = {entry.name for entry in validators_dir.iterdir() if entry.is_dir()}
+    sibling_packages = {name for name in sibling_packages if not name.startswith("_")}
+    offenders: list[str] = []
+    for module in sorted(validators_dir.rglob("*.py")):
+        package = module.relative_to(validators_dir).parts[0]
+        imported: list[str] = []
+        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                imported.append(node.module)
+            elif isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+        for name in imported:
+            parts = name.split(".")
+            if parts[:2] != ["apme_engine", "validators"] or len(parts) < 3:
+                continue
+            if parts[2] in sibling_packages - {package}:
+                offenders.append(f"{module.relative_to(validators_dir)} imports {name}")
+    assert offenders == []
+
+    assert molecule_playbook_paths({"molecule/default/molecule.yml": b""}) == frozenset()

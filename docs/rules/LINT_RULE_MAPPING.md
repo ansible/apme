@@ -156,11 +156,11 @@ Red Hat ADT compatibility profile and coverage limits.
 
 | Rule | Implementation | Check |
 |------|----------------|-------|
-| L115 | native/molecule.py | Configuration YAML, duplicate keys, effective schema |
-| L116 | native/molecule.py | Supplied file references and inventory links |
-| L117 | native/molecule.py | Scenario action names and action arguments |
-| L118 | native/molecule.py | Assessment limited by unavailable context |
-| L119 | native/molecule.py | Referenced Ansible YAML/playbook structure |
+| L115 | molecule/analysis.py | Configuration YAML, duplicate keys, effective schema |
+| L116 | molecule/analysis.py | Supplied file references and inventory links |
+| L117 | molecule/analysis.py | Scenario action names and action arguments |
+| L118 | molecule/analysis.py | Assessment limited by unavailable context |
+| L119 | molecule/analysis.py | Referenced Ansible YAML/playbook structure |
 
 ## Modernize rules — M001-M004 / M048 (ansible validator)
 

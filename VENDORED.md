@@ -2,7 +2,7 @@
 
 ## Molecule configuration schema and defaults
 
-**Location:** `src/apme_engine/validators/native/molecule_data/`
+**Location:** `src/apme_engine/molecule/data/`
 
 **Source:** `ansible/molecule` released snapshots:
 

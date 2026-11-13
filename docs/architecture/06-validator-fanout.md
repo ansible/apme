@@ -99,8 +99,9 @@ are silently skipped — the fan-out adapts to the available services.
 Runs independent static Molecule checks over uploaded `files`, and deserializes
 `content_graph_data`, when present, into a `ContentGraph` for `GraphRule`
 evaluation via `graph_scanner.scan()`. Both run in the Native executor.
-Graph rules live under `src/apme_engine/graph/rules/`; Molecule file rules live
-in `src/apme_engine/validators/native/molecule.py` with bundled schemas/defaults.
+Graph rules live under `src/apme_engine/graph/rules/`; the static Molecule
+analysis the file rules and Ansible `L057` both need lives in the neutral
+`src/apme_engine/molecule/` package with bundled schemas/defaults.
 
 L115–L119 assess effective configuration, local references, lifecycle actions,
 unavailable context, and playbook structure. Findings retain original file/line

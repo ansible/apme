@@ -2,7 +2,8 @@
 
 Runs built-in GraphRules over serialized ContentGraph data and static file rules
 over the uploaded snapshot. Graph rules live in `apme_engine/graph/rules/`;
-Molecule file checks live in `molecule.py`, with documentation in `rules/`.
+the shared Molecule static analysis lives in the neutral
+`apme_engine/molecule/` package, with the rule documentation in `rules/`.
 
 File checks run even when no Ansible graph is available. They use the existing
 Native Validate RPC and executor, and report ordinary L-series findings.

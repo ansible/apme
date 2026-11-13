@@ -33,8 +33,8 @@ using pinned offline profiles and preserving source attribution after migration.
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `validators/native/molecule.py` | Modify | Profile selection and native references |
-| `validators/native/molecule_data/` | Add | Pinned modern schema/defaults |
+| `molecule/analysis.py` | Modify | Profile selection and native references |
+| `molecule/data/` | Add | Pinned modern schema/defaults |
 | `tests/test_molecule_validation.py` | Modify | Legacy/native regression coverage |
 | `docs/guides/MOLECULE.md` and rule docs | Modify | Compatibility and coverage |
 | `VENDORED.md` | Modify | Source provenance |

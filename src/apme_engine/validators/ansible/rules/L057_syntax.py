@@ -12,7 +12,7 @@ from typing import cast
 
 import yaml
 
-from apme_engine.validators.native.molecule import MoleculeAssessmentLimitError, molecule_playbook_closure
+from apme_engine.molecule import MoleculeAssessmentLimitError, molecule_playbook_closure
 
 RULE_ID = "L057"
 

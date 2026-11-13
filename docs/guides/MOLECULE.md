@@ -79,7 +79,8 @@ configuration contract, not the installed Molecule version. They cover the
 bundled syntax families; future new syntax requires a profile update. An
 unknown key remains a finding rather than being silently accepted as a future
 feature. Schema sources, commit hashes, and the MIT notice are included in
-`validators/native/molecule_data`. Scans never download schemas.
+`src/apme_engine/molecule/data` (neutral `apme_engine/molecule` package, shared
+by the Native rules and Ansible `L057`). Scans never download schemas.
 
 ## Configuration and scan context
 
