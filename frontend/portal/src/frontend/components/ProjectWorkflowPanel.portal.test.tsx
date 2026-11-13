@@ -16,20 +16,20 @@ import type {
   ProjectOperationState,
   ProjectWorkflowController,
 } from "@apme/ui-workflow";
-import { PortalProjectWorkflowPanel } from "./PortalProjectWorkflowPanel";
+import { ProjectWorkflowPanel } from "@apme/ui-workflow";
 
 // Exercise the shared source, including OperationPanel and both shipping panels,
 // without requiring a previously packed workflow artifact.
 jest.mock("@apme/ui-workflow", () =>
   jest.requireActual(
-    "../../../../../packages/ui-workflow/src/ProjectWorkflowPanel",
+    "../../../../packages/ui-workflow/src/ProjectWorkflowPanel",
   ),
 );
 
 // Draft persistence is owned by ProjectWorkflowPanel; a small review surface
 // lets these tests trigger it without coupling to proposal editor internals.
 jest.mock(
-  "../../../../../packages/ui-workflow/src/components/ProposalReviewPanel",
+  "../../../../packages/ui-workflow/src/components/ProposalReviewPanel",
   () => ({
     ProposalReviewPanel: ({
       onDraftUpdate,
@@ -108,7 +108,7 @@ function panel(workflow: ProjectWorkflowController, withActions = true) {
   return (
     <MemoryRouter>
       <BUIProvider>
-        <PortalProjectWorkflowPanel
+        <ProjectWorkflowPanel
           workflow={workflow}
           enableAi={false}
           feedbackEnabled={false}
@@ -121,7 +121,7 @@ function panel(workflow: ProjectWorkflowController, withActions = true) {
   );
 }
 
-describe("PortalProjectWorkflowPanel shared workflow", () => {
+describe("ProjectWorkflowPanel in the Portal host", () => {
   it.each([null, operation()])(
     "prioritizes cancellation and allows dismissal (%#)",
     (opState) => {

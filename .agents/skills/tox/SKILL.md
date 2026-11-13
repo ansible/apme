@@ -64,6 +64,7 @@ to restrict the report to production dependencies. Findings produce a nonzero ex
 | `tox -e ai` | `pytest` with AI extras (abbenay) | After AI/remediation changes. |
 | `tox -e ui` | Playwright checks for the RHDH Local UI (needs `tox -e up`) | After Local host or UI changes. |
 | `tox -e ui-native` | Legacy native UI Playwright checks (needs its separate native UI + Gateway) | Only when changing or checking the legacy native host. |
+| `tox -e ui-workflow-browser` | Chromium smoke for the shared BUI harness; the test serves `frontend/backstage/dist-dev` itself | After shared workflow browser or harness changes; build first with `tox -e frontend-ci,frontend-dev-build`. |
 | `tox -e ui-workflow-pack` | Build/test the BUI host workspace and pack `@apme/ui-workflow` | After `frontend/packages/ui-workflow` or TypeScript changes. |
 
 ### Code generation

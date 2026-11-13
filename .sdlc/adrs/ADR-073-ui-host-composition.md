@@ -58,7 +58,9 @@ required. This does not waive TASK-005 runtime acceptance or retire native sourc
 Custom diff/YAML and graph behavior remain, with BUI theme bindings and documented
 specialist styling exceptions. A narrow accessible progress/loading implementation
 is retained because BUI 0.17.1 lacks public primitives. Portal's remaining
-PatternFly components keep their bridge until companion #1076 removes them.
+PatternFly components keep their bridge until companion #1076 removes them; the
+bridge synchronizes both PatternFly's root class and BUI's `data-theme-mode` for
+the shared workflow during that transition.
 Use one current Gateway client and one workflow source. Preserve Gateway state,
 `/api/v1`, structured results and Gateway-owned SCM writes.
 
@@ -172,6 +174,7 @@ The temporary native workspace/lockfile remains until replacement acceptance.
 | 2026-11-04 | Codex | Clarified that Local upload capability is disabled until the host opts in after installing the authenticated backend. |
 | 2026-11-04 | Codex | Hardened Portal's inherited project/repository routes with host entitlement and catalog authorization, protected SCM branch lookup against untrusted origins and redirects, and added focused authorization/transport regressions. Overall host acceptance remains in progress under #833. |
 | 2026-11-12 | Codex | TASK-023 migrates shared presentation and tokens to BUI, exposes host shipping actions, and records the explicit native compatibility waiver; actual host acceptance remains #833. |
+| 2026-11-13 | Codex | Portal renders the shared workflow panel directly; while other Portal screens still use PatternFly, its theme bridge also sets and restores BUI's root theme mode. |
 
 ## Staged delivery
 

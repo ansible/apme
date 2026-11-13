@@ -29,6 +29,7 @@ import "@patternfly/react-core/dist/styles/base.css";
 import {
   ApmeApiProvider,
   CheckOptionsForm,
+  ProjectWorkflowPanel,
   useProjectWorkflow,
   type ProjectWorkflowController,
 } from "@apme/ui-workflow";
@@ -49,7 +50,6 @@ const PortalCheckOptionsForm =
 import { resolvePostPushDevSpacesUrl } from "../../utils/resolvePostPushDevSpacesUrl";
 import { ApmeUnavailable } from "../ApmeUnavailable";
 import { EditInDevSpacesButton } from "../EditInDevSpacesButton";
-import { PortalProjectWorkflowPanel } from "../PortalWorkflowPanel";
 import { PreviewLabelRow } from "../PreviewChip";
 
 export interface ApmeEntityTabProps {
@@ -173,7 +173,7 @@ function WorkflowBody({ projectId }: Readonly<{ projectId: string }>) {
 
   if (sessionTabVisible) {
     return (
-      <PortalProjectWorkflowPanel
+      <ProjectWorkflowPanel
         workflow={workflowForPanel}
         enableAi={portalAiEnabled && enableAi}
         feedbackEnabled={false}

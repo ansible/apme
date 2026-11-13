@@ -1,9 +1,9 @@
 """Chromium smoke for the mounted shared BUI workflow, with fixture HTTP data.
 
-Build with ``tox -e frontend-ci,frontend-dev-build``, serve
-``frontend/backstage/dist-dev`` on port 8081, then run
-``tox -e ui-workflow-browser``. Override the origin with APME_WORKFLOW_UI_URL.
-This checks the development harness; real host acceptance remains #833.
+Build with ``tox -e frontend-ci,frontend-dev-build``, then run
+``tox -e ui-workflow-browser``. The test serves the built harness itself;
+APME_WORKFLOW_UI_URL can point it at an already-running server. This checks the
+development harness; real host acceptance remains #833.
 """
 
 from __future__ import annotations
@@ -11,8 +11,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
+import threading
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Literal
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -26,20 +30,63 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.ui
 
-_BASE = os.environ.get("APME_WORKFLOW_UI_URL", "http://127.0.0.1:8081").rstrip("/")
 _PROJECT_ID = "workflow-smoke"
 _SCAN_ID = "smoke-scan"
 _PROJECT_PATH = f"/api/v1/projects/{_PROJECT_ID}"
 _CREATED_AT = "2026-01-01T00:00:00Z"
 
 
+@pytest.fixture(scope="session")  # type: ignore[untyped-decorator]
+def workflow_harness_url() -> Iterator[str]:
+    """Serve the built harness for the browser tests.
+
+    Yields:
+        str: Harness origin.
+    """
+    configured_url = os.environ.get("APME_WORKFLOW_UI_URL")
+    if configured_url:
+        yield configured_url.rstrip("/")
+        return
+
+    harness_directory = Path(__file__).resolve().parent.parent / "frontend/backstage/dist-dev"
+    if not harness_directory.is_dir():
+        pytest.fail(
+            "The shared workflow harness is missing; build it with tox -e frontend-ci,frontend-dev-build first.",
+        )
+
+    class HarnessRequestHandler(SimpleHTTPRequestHandler):
+        def __init__(
+            self,
+            request: socket.socket,
+            client_address: tuple[str, int],
+            server: ThreadingHTTPServer,
+        ) -> None:
+            super().__init__(request, client_address, server, directory=str(harness_directory))
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HarnessRequestHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    host, port = cast(tuple[str, int], server.server_address)
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=5)
+
+
 @pytest.fixture(params=["light", "dark"])  # type: ignore[untyped-decorator]
-def workflow_app(page: Page, request: pytest.FixtureRequest) -> Iterator[Page]:
+def workflow_app(
+    page: Page,
+    request: pytest.FixtureRequest,
+    workflow_harness_url: str,
+) -> Iterator[Page]:
     """Open the real harness with deterministic Gateway HTTP/SSE responses.
 
     Args:
         page: Isolated Playwright page.
         request: Parametrized BUI theme mode.
+        workflow_harness_url: Locally served harness origin.
 
     Yields:
         Page: Page showing the fixture repository list.
@@ -158,7 +205,7 @@ def workflow_app(page: Page, request: pytest.FixtureRequest) -> Iterator[Page]:
             route.fulfill(status=501, json={"detail": "Unexpected smoke fixture request"})
 
     page.route("**/api/v1/**", gateway)
-    page.goto(_BASE, wait_until="domcontentloaded")
+    page.goto(workflow_harness_url, wait_until="domcontentloaded")
     # The minimal dev harness has no host theme selector. Apply BUI's public
     # document attribute, including overlays portaled outside the workflow.
     page.evaluate("mode => document.documentElement.setAttribute('data-theme-mode', mode)", theme)

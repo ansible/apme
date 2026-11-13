@@ -52,11 +52,13 @@ locally-runnable tox environments; CI just calls them.
    in `ui-workflow-release.yml`, use `actions/setup-node`. Their tox
    environments run UI tests and package type checks, tests, builds, and smoke
    checks. The release job verifies both packed consumers and release-mode
-   package manifests before uploading artifacts. The `ui` job reads
-   `frontend/package.json`; the workspace, Backstage, Portal, and release jobs
-   read the root `package.json` because they install from the root. Each uses
-   the engine range in its package manifest. Add jobs to this exception only
-   when they are introduced with `actions/setup-node`.
+   package manifests before uploading artifacts. The current shared BUI `ui`
+   job reads the root `package.json` because its tox environments install the
+   root workspace; native UI jobs use `frontend/package.json`. The workspace,
+   Backstage, Portal, and release jobs also read the root manifest because
+   they install from the root. Each uses the engine range in the manifest for
+   the workspace it actually installs. Add jobs to this exception only when
+   they are introduced with `actions/setup-node`.
 
 5. **Pin actions to commit SHAs.** Mutable tags (`@v4`) allow upstream changes
    to affect CI without review. Always pin to a full commit SHA with a comment

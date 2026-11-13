@@ -23,12 +23,16 @@ remove the Portal DOM insertion workaround.
 
 1. Target BUI 0.17.1, React 18 and Router 6; retain one workflow/controller source.
 2. Forward optional `hostShipActions` through shared project/operation panels to
-   commit and completed result actions. Portal delegates to the shared panel.
+   commit and completed result actions. Portal imports and renders the shared
+   panel directly; no Portal wrapper remains.
 3. Migrate actual BUI controls, icons and theme tokens. Preserve diff parsing,
    YAML highlighting, graph behavior, approval decisions and authenticated I/O.
 4. Record missing BUI progress/loading primitives as narrow accessible exceptions.
-5. Keep Portal's theme bridge while its other PatternFly consumers remain; remove
-   the Local bridge when its workflow is fully migrated.
+5. Keep Portal's theme bridge while its other PatternFly consumers remain. It
+   mirrors both the PatternFly root class and BUI's `data-theme-mode`, restoring
+   the pre-existing root state on unmount. Remove it after companion #1076
+   migrates the remaining Portal PatternFly consumers. The Local bridge was
+   removed when its workflow presentation migrated.
 
 ## Files to Create/Modify
 
@@ -69,6 +73,8 @@ Backstage hosts without a native compatibility adapter.
   pinned SDK. Shared publishing tests cover success, failure, and completion.
 - Chromium harness: light/dark controls, HTTP/SSE workflow, host navigation and
   custom YAML rendering passed without PatternFly styles or its root class.
+- Portal renders the shared panel directly; its retained theme hook sets and
+  restores BUI's root mode while other Portal screens still use PatternFly.
 - Workflow tarball, standalone and Portal packed-consumer checks passed, including
   public declarations and browser bundles. Portal build and Local RHDH dynamic
   plugin export passed. These are package/harness checks, not host certification.

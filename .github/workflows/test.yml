@@ -125,21 +125,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install workspace and build shared BUI development harness
         run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-dev-build
-      - name: Serve built harness (API responses mocked by browser fixtures)
-        run: |
-          python -m http.server 8081 --bind 127.0.0.1 --directory frontend/backstage/dist-dev > /tmp/apme-workflow-harness.log 2>&1 &
-          for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:8081/ > /dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          cat /tmp/apme-workflow-harness.log
-          exit 1
       - name: Chromium shared workflow harness smoke (not host certification)
         run: uvx --with-requirements ci/tox-requirements.txt tox -e ui-workflow-browser
-        env:
-          APME_WORKFLOW_UI_URL: http://127.0.0.1:8081
 
   test-ai-extra:
     runs-on: ubuntu-24.04

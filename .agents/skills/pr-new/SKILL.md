@@ -597,6 +597,12 @@ critical/high/medium/low.
   (``requires-python``, ``frontend/package.json`` ``engines.node``):
   prefer ``node-version-file`` over a hard-coded number. Extra setup
   actions need an explicit lean-ci exception next to the job.
+- Match each CI job's setup manifest to the workspace its tox command installs,
+  rather than inheriting a historical job convention. Keep required service
+  startup and teardown inside a reproducible tox environment or test fixture,
+  not inline workflow shell. For multi-host UI changes, check that host
+  composition matches the migration boundary, retained bridges still serve
+  unmigrated consumers, and global theme state reaches portaled overlays.
 - **Dead weight** — unused imports/params; paid-for-but-wasteful work:
   double JSON parse, list.pop(0)/insert(0,…) vs deque, len(list(seq)),
   O(P×V) nested scans that should be O(P+V)
