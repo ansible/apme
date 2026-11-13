@@ -6,11 +6,13 @@ import json
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import cast
 
 import grpc
 import grpc.aio
+from google.protobuf.message import DecodeError
 
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import HealthResponse, ValidatorDiagnostics
@@ -32,6 +34,7 @@ from apme_engine.validators.native.molecule import validate_molecule
 logger = logging.getLogger("apme.native")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_NATIVE_MAX_RPCS", "32"))
+_MAX_STREAMED_VALIDATE_REQUEST_BYTES = 512 * 1024 * 1024
 
 
 @dataclass
@@ -186,6 +189,39 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
             except Exception:
                 logger.error("Native: unhandled error (req=%s): [REDACTED]", req_id)
                 return infra_error_response(req_id, sink.entries)
+
+    async def ValidateStream(
+        self,
+        request_iterator: AsyncIterator[validate_pb2.ValidateRequestChunk],
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> ValidateResponse:
+        """Receive a bounded streamed request and run the ordinary validation path.
+
+        Args:
+            request_iterator: Consecutive chunks of a serialized request.
+            context: RPC context forwarded to validation.
+
+        Returns:
+            The validation response, or an infrastructure error for invalid input.
+        """
+        serialized = bytearray()
+        try:
+            async for chunk in request_iterator:
+                if len(serialized) + len(chunk.serialized_request_chunk) > _MAX_STREAMED_VALIDATE_REQUEST_BYTES:
+                    return infra_error_response("", [])
+                serialized.extend(chunk.serialized_request_chunk)
+        except Exception:
+            logger.warning("Native: failed to receive streamed validation request", exc_info=True)
+            return infra_error_response("", [])
+        if not serialized:
+            return infra_error_response("", [])
+        try:
+            request = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: validate_pb2.ValidateRequest.FromString(bytes(serialized))
+            )
+        except DecodeError:
+            return infra_error_response("", [])
+        return await self.Validate(request, context)
 
     async def Health(
         self,

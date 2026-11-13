@@ -63,9 +63,10 @@ Forward the complete uploaded byte map through the Ansible adapter into L057's
 static exclusion lookup so extensionless collection imports and their YAML
 descendants receive the same exclusions as Native's assessment.
 
-Preserve config findings through convergence. Graph-only incremental requests
-must not imply that config files were revalidated. Shared config changes require
-rechecking dependent scenarios with an updated snapshot.
+Reassess file findings from the complete applied snapshot after changes and
+approval. Graph-only incremental requests must not imply that config files were
+revalidated. Shared config changes require rechecking dependent scenarios with
+an updated snapshot.
 
 ## Verification
 
@@ -94,6 +95,9 @@ the associated invocation; preserve distinct same-line Molecule findings.
 Scenario exclusions also apply to syntax-check entrypoints that statically
 import scenario content. Preserve authored import target whitespace and report
 caller-dependent nested imports as incomplete when their target is ambiguous.
+Enforce composition budgets while parsing and propagate incomplete scenario
+discovery to runtime dispatch. Refresh role invocation selectors after edits,
+and compare choices using the parameter type and supported Ansible conversions.
 Preserve outer argument keys when only nested values
 are templated, and reuse source excerpts for repeated diagnostic locations.
 Native scenario validation also checks task-section shapes in referenced files;

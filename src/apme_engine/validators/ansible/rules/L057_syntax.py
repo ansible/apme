@@ -12,7 +12,7 @@ from typing import cast
 
 import yaml
 
-from apme_engine.validators.native.molecule import molecule_playbook_paths
+from apme_engine.validators.native.molecule import MoleculeAssessmentLimitError, molecule_playbook_closure
 
 RULE_ID = "L057"
 
@@ -598,7 +598,22 @@ def run(
 
     static_paths: frozenset[str] = frozenset()
     if file_snapshot is not None:
-        static_paths = molecule_playbook_paths(file_snapshot)
+        try:
+            static_paths, closure_incomplete = molecule_playbook_closure(file_snapshot)
+        except MoleculeAssessmentLimitError:
+            closure_incomplete = True
+        if closure_incomplete:
+            return [
+                {
+                    "rule_id": RULE_ID,
+                    "severity": "error",
+                    "file": "",
+                    "line": 1,
+                    "path": "",
+                    "scope": "playbook",
+                    "message": "Molecule runtime exclusions are incomplete; runtime syntax checks were skipped",
+                }
+            ]
     elif any(path.is_file() for name in ("molecule.yml", "molecule.yaml") for path in root_dir.rglob(name)):
         return [
             {

@@ -3,7 +3,7 @@
 Run `apme check .` to assess Molecule configuration and scenario playbooks
 automatically. L115-L119 are Native lint rules tagged `molecule`, enabled by
 default at medium severity. Use ordinary rule overrides to change severity or
-disable them. Validators read uploaded content; they do not run Molecule,
+disable them. Molecule checks read uploaded content; they do not run Molecule,
 provision resources, evaluate project lookups, or execute dependency commands.
 
 As with other APME findings, active Molecule warnings affect `apme check`'s exit
@@ -36,7 +36,8 @@ Defaults do not use `collections` to qualify names. Fully qualified action group
 historical aliases, and extended groups follow Ansible's own metadata resolution.
 When a collection, group, templated mapping, or bounded invocation context cannot
 be assessed, L058 reports incomplete argument validation and excludes that context
-from both argument checks. No templates, lookups, or Molecule actions are run.
+from both argument checks. Defaults resolution does not run templates, lookups,
+or Molecule actions.
 If policy input or the complete graph exceeds serialization or transport limits,
 or contains a cycle, the scan fails with an incomplete-validation error instead
 of returning partial results.

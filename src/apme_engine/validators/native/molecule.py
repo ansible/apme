@@ -58,6 +58,12 @@ _STAGES = frozenset({"cleanup", "create", "converge", "destroy", "prepare", "sid
 # Leave headroom below the validator's 50 MiB message limit for graph findings,
 # metadata, and diagnostics. Charge escaped JSON as well as UTF-8 wire content.
 _MAX_DIAGNOSTIC_BYTES = 32 * 1024 * 1024
+_MAX_SOURCE_BYTES = 4 * 1024 * 1024
+_MAX_YAML_NODES = 50_000
+_MAX_YAML_DEPTH = 128
+_MAX_REQUEST_BYTES = 32 * 1024 * 1024
+_MAX_REQUEST_NODES = 500_000
+_MAX_REQUEST_STEPS = 100_000
 _DIAGNOSTIC_OVERHEAD_BYTES = 1024
 _NAMES = {
     "L115": "Molecule configuration does not match the supported profile",
@@ -87,7 +93,77 @@ class _NeedsContext(ValueError):
 
 
 class MoleculeAssessmentLimitError(RuntimeError):
-    """Complete Molecule findings cannot be serialized within safe limits."""
+    """The whole request cannot be assessed within safe work or output limits."""
+
+
+class _MoleculeFileLimitError(ValueError):
+    """A single source exceeds the limits for safe static assessment."""
+
+
+@dataclass
+class _WorkBudget:
+    """Request-wide limits on untrusted parsing and context traversal.
+
+    Attributes:
+        bytes_left: Remaining source and expansion bytes.
+        nodes_left: Remaining YAML composition nodes.
+        steps_left: Remaining traversal and assessment steps.
+    """
+
+    bytes_left: int = _MAX_REQUEST_BYTES
+    nodes_left: int = _MAX_REQUEST_NODES
+    steps_left: int = _MAX_REQUEST_STEPS
+
+    def charge(self, *, size: int = 0, nodes: int = 0, steps: int = 0) -> None:
+        self.bytes_left -= size
+        self.nodes_left -= nodes
+        self.steps_left -= steps
+        if min(self.bytes_left, self.nodes_left, self.steps_left) < 0:
+            raise MoleculeAssessmentLimitError(
+                "Molecule assessment exceeds request work limits; assessment is incomplete"
+            )
+
+
+class _BoundedLoader(yaml.SafeLoader):
+    """Enforce limits while composing, before allocating the complete tree."""
+
+    def __init__(self, source: str, budget: _WorkBudget) -> None:
+        """Initialize the composer with a shared request budget.
+
+        Args:
+            source: YAML source to compose.
+            budget: Remaining request-wide work allowance.
+        """
+        super().__init__(source)
+        self.budget = budget
+        self.nodes = 0
+        self.depth = 0
+
+    def compose_node(self, parent: yaml.Node | None, index: object) -> yaml.Node:
+        self.nodes += 1
+        self.budget.charge(nodes=1)
+        if self.nodes > _MAX_YAML_NODES or self.depth >= _MAX_YAML_DEPTH:
+            raise _MoleculeFileLimitError("Molecule YAML exceeds composition limits")
+        self.depth += 1
+        try:
+            return cast(yaml.Node, super().compose_node(parent, cast(int, index)))
+        finally:
+            self.depth -= 1
+
+
+def _compose(source: str, budget: _WorkBudget) -> yaml.Node | None:
+    loader = _BoundedLoader(source, budget)
+    try:
+        return loader.get_single_node()
+    finally:
+        loader.dispose()
+
+
+def _charge_source(content: bytes, budget: _WorkBudget) -> None:
+    budget.charge(steps=1)
+    if len(content) > _MAX_SOURCE_BYTES:
+        raise _MoleculeFileLimitError("Molecule source exceeds size limits")
+    budget.charge(size=len(content))
 
 
 @dataclass(frozen=True)
@@ -125,10 +201,12 @@ class _PlaybookAssessment:
     Attributes:
         findings: Structural diagnostics.
         imports: Source locations and literal, unrendered import values.
+        closure_incomplete: Whether imports could not be completely discovered.
     """
 
     findings: list[ViolationDict] = field(default_factory=list)
     imports: list[tuple[_Location, str]] = field(default_factory=list)
+    closure_incomplete: bool = False
 
 
 PlaybookCache = dict[tuple[str, str], list[ViolationDict]]
@@ -254,6 +332,7 @@ def _locations(
     path: YamlPath = (),
     active: frozenset[int] = frozenset(),
     budget: list[int] | None = None,
+    work: _WorkBudget | None = None,
 ) -> dict[YamlPath, _Location]:
     """Collect source locations and reject recursive or excessively deep YAML.
 
@@ -263,6 +342,7 @@ def _locations(
         path: Current YAML path.
         active: Ancestor node identities for alias-cycle detection.
         budget: Remaining traversal budget shared across alias expansions.
+        work: Optional request-wide work allowance.
 
     Returns:
         Source location map.
@@ -272,6 +352,8 @@ def _locations(
     """
     if budget is None:
         budget = [20_000]
+    if work is not None:
+        work.charge(steps=1)
     budget[0] -= 1
     if id(node) in active or len(path) > 64 or budget[0] < 0:
         raise ValueError("Recursive or excessively deep YAML")
@@ -282,18 +364,18 @@ def _locations(
             if isinstance(key, yaml.ScalarNode) and key.value == "<<":
                 merged = value.value if isinstance(value, yaml.SequenceNode) else [value]
                 for mapping in reversed(merged):
-                    result.update(_locations(mapping, file, path, active, budget))
+                    result.update(_locations(mapping, file, path, active, budget, work))
         for key, value in node.value:
             if not isinstance(key, yaml.ScalarNode):
                 raise ValueError("Complex YAML keys are not supported")
             if key.value == "<<":
                 continue
             child_path = (*path, key.value)
-            result.update(_locations(value, file, child_path, active, budget))
+            result.update(_locations(value, file, child_path, active, budget, work))
             result[child_path] = _Location(file, key.start_mark.line + 1, child_path)
     elif isinstance(node, yaml.SequenceNode):
         for index, value in enumerate(node.value):
-            result.update(_locations(value, file, (*path, index), active, budget))
+            result.update(_locations(value, file, (*path, index), active, budget, work))
     return result
 
 
@@ -309,28 +391,34 @@ def _expand(source: str, variables: Mapping[str, str]) -> str:
     """
     escaped = source.replace("$$", "\x00APME_DOLLAR\x00")
 
+    expanded_size = len(escaped)
+
     def replace(match: re.Match[str]) -> str:
+        nonlocal expanded_size
         name = match.group(1) or match.group(4)
         if name not in variables:
-            if match.group(2):
-                return match.group(3) or ""
-            return match.group(0)
-        value = variables[name]
-        if not value and match.group(2) == ":-":
-            return match.group(3) or ""
+            value = (match.group(3) or "") if match.group(2) else match.group(0)
+        else:
+            value = variables[name]
+            if not value and match.group(2) == ":-":
+                value = match.group(3) or ""
+        expanded_size += len(value) - len(match.group(0))
+        if expanded_size > _MAX_SOURCE_BYTES:
+            raise _MoleculeFileLimitError("Molecule expansion exceeds size limits")
         return value
 
     expanded = _ENV.sub(replace, escaped)
     return expanded.replace("\x00APME_DOLLAR\x00", "$$")
 
 
-def _load(file: str, content: bytes, variables: Mapping[str, str]) -> _Document:
+def _load(file: str, content: bytes, variables: Mapping[str, str], budget: _WorkBudget | None = None) -> _Document:
     """Parse one config with duplicate-key detection and original locations.
 
     Args:
         file: Snapshot path.
         content: File bytes.
         variables: Known static substitutions.
+        budget: Optional shared request-wide work allowance.
 
     Returns:
         Parsed mapping and its source map.
@@ -340,15 +428,18 @@ def _load(file: str, content: bytes, variables: Mapping[str, str]) -> _Document:
         _NeedsContext: If an unresolved substitution determines the root mapping.
         yaml.YAMLError: If substituted content contains invalid YAML.
     """
+    budget = budget if budget is not None else _WorkBudget()
+    _charge_source(content, budget)
     source = content.decode("utf-8")
     expanded = _expand(source, variables)
+    budget.charge(size=len(expanded.encode("utf-8")))
     try:
-        expanded_node = yaml.compose(expanded, Loader=yaml.SafeLoader)
+        expanded_node = _compose(expanded, budget)
     except yaml.YAMLError:
         masked_valid = False
         if _ENV.search(expanded):
             try:
-                yaml.compose(_ENV.sub("APME_ENV_VALUE", expanded), Loader=yaml.SafeLoader)
+                _compose(_ENV.sub("APME_ENV_VALUE", expanded), budget)
             except yaml.YAMLError:
                 pass
             else:
@@ -357,18 +448,20 @@ def _load(file: str, content: bytes, variables: Mapping[str, str]) -> _Document:
             raise _NeedsContext("Configuration structure requires unavailable environment context") from None
         raise
     if expanded_node is not None:
-        _locations(expanded_node, file)
+        _locations(expanded_node, file, work=budget)
     try:
-        node = yaml.compose(source, Loader=yaml.SafeLoader)
+        node = _compose(source, budget)
     except yaml.YAMLError:
         # Interpolation precedes parsing in Molecule; flow-style ${VAR}
         # placeholders can be invalid YAML until expanded. Mask them only
         # for the original line map, never for validation.
         try:
-            node = yaml.compose(_ENV.sub("APME_ENV_VALUE", source), Loader=yaml.SafeLoader)
+            node = _compose(_ENV.sub("APME_ENV_VALUE", source), budget)
         except yaml.YAMLError:
             node = None
-    locations: dict[YamlPath, _Location] = _locations(node, file) if node is not None else {(): _Location(file)}
+    locations: dict[YamlPath, _Location] = (
+        _locations(node, file, work=budget) if node is not None else {(): _Location(file)}
+    )
     loader = YAML(typ="safe", pure=True)
     loader.version = (1, 1)
     data: object = loader.load(expanded)
@@ -527,13 +620,19 @@ class _CollectionLookup:
 
     Attributes:
         files: Uploaded snapshot, including collection metadata.
+        budget: Shared request-wide work allowance.
         directories: Directory membership index built once from uploaded paths.
         identities: Cached source-project identities, including failed parses.
+        parsed_playbooks: Context-independent playbook assessments by path.
+        closure_incomplete: Whether scenario import discovery is incomplete.
     """
 
     files: Mapping[str, bytes]
+    budget: _WorkBudget = field(default_factory=_WorkBudget)
     directories: set[str] = field(init=False)
     identities: dict[str, tuple[str, str] | None] = field(default_factory=dict, init=False)
+    parsed_playbooks: dict[str, _PlaybookAssessment] = field(default_factory=dict, init=False)
+    closure_incomplete: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         """Index uploaded parent paths without reading a filesystem."""
@@ -557,8 +656,9 @@ class _CollectionLookup:
                 continue
             try:
                 if name == "galaxy.yml":
-                    metadata: object = _load(metadata_file, self.files[metadata_file], {}).data
+                    metadata: object = _load(metadata_file, self.files[metadata_file], {}, self.budget).data
                 else:
+                    _charge_source(self.files[metadata_file], self.budget)
                     manifest = json.loads(self.files[metadata_file])
                     metadata = manifest.get("collection_info") if isinstance(manifest, dict) else None
                 if isinstance(metadata, dict):
@@ -740,27 +840,39 @@ def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict
     return findings
 
 
-def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
+def _playbook(file: str, content: bytes, budget: _WorkBudget | None = None) -> _PlaybookAssessment:
     """Inspect scenario YAML structure without evaluating Ansible plugins.
 
     Args:
         file: Snapshot-relative playbook path.
         content: Playbook bytes.
+        budget: Optional shared request-wide work allowance.
 
     Returns:
         Structural findings and unrendered imports for static reference checks.
     """
+    budget = budget if budget is not None else _WorkBudget()
     try:
-        node = yaml.compose(content.decode("utf-8"), Loader=yaml.SafeLoader)
+        _charge_source(content, budget)
+        node = _compose(content.decode("utf-8"), budget)
         if node is not None:
-            _locations(node, file)
+            _locations(node, file, work=budget)
         if not isinstance(node, yaml.SequenceNode):
-            return _PlaybookAssessment([_finding("L119", _Location(file), "Scenario playbook must be a list of plays")])
+            return _PlaybookAssessment(
+                [_finding("L119", _Location(file), "Scenario playbook must be a list of plays")],
+                closure_incomplete=True,
+            )
         findings = _playbook_defaults(node, file)
         imports: list[tuple[_Location, str]] = []
+        closure_incomplete = False
         for index, play in enumerate(node.value):
             entries = _mapping_items(play) if isinstance(play, yaml.MappingNode) else {}
-            if not entries.keys() & {"hosts", "import_playbook", "ansible.builtin.import_playbook"}:
+            if not entries.keys() & {
+                "hosts",
+                "import_playbook",
+                "ansible.builtin.import_playbook",
+                "ansible.legacy.import_playbook",
+            }:
                 findings.append(
                     _finding(
                         "L119",
@@ -772,6 +884,7 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
                 if isinstance(key, yaml.ScalarNode) and key.value in {
                     "import_playbook",
                     "ansible.builtin.import_playbook",
+                    "ansible.legacy.import_playbook",
                 }:
                     origin = _Location(file, key.start_mark.line + 1, (index, key.value))
                     if (
@@ -781,10 +894,11 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
                     ):
                         imports.append((origin, value.value))
                     else:
+                        closure_incomplete = True
                         findings.append(
                             _finding("L119", origin, "Scenario play import_playbook must be a non-empty string path")
                         )
-        return _PlaybookAssessment(findings, imports)
+        return _PlaybookAssessment(findings, imports, closure_incomplete)
     except (yaml.YAMLError, UnicodeError, ValueError, RecursionError) as error:
         mark = getattr(error, "problem_mark", None)
         return _PlaybookAssessment(
@@ -794,7 +908,8 @@ def _playbook(file: str, content: bytes) -> _PlaybookAssessment:
                     _Location(file, mark.line + 1 if mark is not None else 1),
                     "Scenario playbook contains invalid YAML",
                 )
-            ]
+            ],
+            closure_incomplete=True,
         )
 
 
@@ -861,20 +976,27 @@ def _assess_playbook(
     Returns:
         Cached structural findings, treated as immutable by callers.
     """
+    collections.budget.charge(steps=1)
     if file in active:
         return [_finding("L119", _Location(file), "Scenario playbook imports form a cycle")]
     if len(active) > 64:
+        collections.closure_incomplete = True
         return [_finding("L118", _Location(file), "Playbook import depth exceeds the static assessment limit")]
     key = (file, scenario)
     if key not in cache:
         files = collections.files
-        assessment = _playbook(file, files[file])
-        cache[key] = assessment.findings
+        if file not in collections.parsed_playbooks:
+            collections.parsed_playbooks[file] = _playbook(file, files[file], collections.budget)
+        assessment = collections.parsed_playbooks[file]
+        cache[key] = list(assessment.findings)
+        if assessment.closure_incomplete:
+            collections.closure_incomplete = True
         directories = {
             "project": posixpath.normpath(f"{_VIRTUAL_ROOT}/{_project_root(scenario)}"),
             "scenario": posixpath.normpath(f"{_VIRTUAL_ROOT}/{PurePosixPath(scenario).parent}"),
         }
         for origin, value in assessment.imports:
+            collections.budget.charge(steps=1)
             value = re.sub(
                 r"{{\s*molecule_(project|scenario)_directory\s*}}",
                 lambda match: directories[match.group(1)],
@@ -885,6 +1007,7 @@ def _assess_playbook(
             if collection_reference is not None:
                 reference = collection_reference
             elif is_collection and reference not in files:
+                collections.closure_incomplete = True
                 cache[key].append(
                     _finding(
                         "L118",
@@ -895,6 +1018,7 @@ def _assess_playbook(
                 )
                 continue
             if reference is None:
+                collections.closure_incomplete = True
                 cache[key].append(
                     _finding(
                         "L118", origin, "Playbook import needs unavailable context; expressions were not evaluated"
@@ -908,6 +1032,7 @@ def _assess_playbook(
                 if reference in active | {file}:
                     cache[key].append(_finding("L119", origin, "Scenario playbook imports form a cycle"))
                 elif len(active) >= 64:
+                    collections.closure_incomplete = True
                     cache[(reference, scenario)] = [
                         _finding("L118", origin, "Playbook import depth exceeds the static assessment limit")
                     ]
@@ -971,6 +1096,7 @@ def _references(
         paths.extend((("provisioner", "inventory", "links", key), value, False) for key, value in links.items())
     checked: set[str] = set()
     for path, value, is_playbook in paths:
+        collections.budget.charge(steps=1)
         verifier = document.data.get("verifier")
         if (
             path[-1] == "verify"
@@ -983,6 +1109,8 @@ def _references(
             continue
         origin = _origin(document, path, scenario)
         if not isinstance(value, str) or not value.strip():
+            if is_playbook:
+                collections.closure_incomplete = True
             if explicit:
                 findings.append(
                     _finding("L116", origin, "Configured file reference must be a non-empty string or null")
@@ -991,6 +1119,8 @@ def _references(
         base = _project_root(scenario) if path[0] == "dependency" else str(PurePosixPath(scenario).parent)
         reference = _reference(base, value)
         if reference is None:
+            if is_playbook:
+                collections.closure_incomplete = True
             if explicit and not _unknowns(value):
                 findings.append(
                     _finding("L118", origin, "Configured reference cannot be resolved within the supplied snapshot")
@@ -1045,6 +1175,7 @@ def _sequences(
         if not isinstance(key, str) or not key.endswith("_sequence") or not isinstance(sequence, list):
             continue
         for index, value in enumerate(sequence):
+            collections.budget.charge(steps=1)
             path = ("scenario", key, index)
             origin = _origin(document, path, scenario)
             if not isinstance(value, str) or _unknowns(value):
@@ -1079,6 +1210,7 @@ def _sequences(
                     continue
                 reference = _reference(str(PurePosixPath(scenario).parent), argument)
                 if reference is None:
+                    collections.closure_incomplete = True
                     findings.append(_finding("L118", origin, "Action argument requires unavailable path context"))
                 elif reference not in files:
                     findings.append(
@@ -1089,7 +1221,7 @@ def _sequences(
     return findings
 
 
-def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict], frozenset[str]]:
+def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict], frozenset[str], bool]:
     """Validate all supplied Molecule scenarios without requiring a graph.
 
     Args:
@@ -1103,11 +1235,12 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
     """
     scenarios = sorted(file for file in files if PurePosixPath(file).name in {"molecule.yml", "molecule.yaml"})
     if not scenarios:
-        return [], frozenset()
+        return [], frozenset(), False
     findings: list[ViolationDict] = []
     playbook_cache: PlaybookCache = {}
     collections = _CollectionLookup(files)
     for scenario in scenarios:
+        collections.budget.charge(steps=1)
         root = _project_root(scenario)
         directory = str(PurePosixPath(scenario).parent)
         variables = {
@@ -1120,7 +1253,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         environment_file = posixpath.normpath(posixpath.join(root, ".env.yml"))
         if environment_file in files:
             try:
-                environment = _load(environment_file, files[environment_file], {})
+                environment = _load(environment_file, files[environment_file], {}, collections.budget)
                 environment_values.update(
                     (key, str(value))
                     for key, value in environment.data.items()
@@ -1141,7 +1274,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         valid = True
         for file in layers:
             try:
-                _merge(supplied, _load(file, files[file], variables))
+                _merge(supplied, _load(file, files[file], variables, collections.budget))
             except _NeedsContext:
                 findings.append(
                     _finding("L118", _Location(file), "Configuration root requires unavailable environment context")
@@ -1158,6 +1291,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
                 )
                 valid = False
         if not valid:
+            collections.closure_incomplete = True
             continue
         version = NATIVE_PROFILE_VERSION if {"ansible", "shared_state"} & supplied.data.keys() else PROFILE_VERSION
         scenario_config = supplied.data.get("scenario")
@@ -1174,13 +1308,15 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
             supplied = _Document({}, {(): _Location(scenario)})
             try:
                 for file in layers:
-                    _merge(supplied, _load(file, files[file], variables))
+                    _merge(supplied, _load(file, files[file], variables, collections.budget))
             except _NeedsContext:
+                collections.closure_incomplete = True
                 findings.append(
                     _finding("L118", _Location(file), "Configuration root requires unavailable environment context")
                 )
                 continue
             except (YAMLError, yaml.YAMLError, UnicodeError, ValueError, RecursionError):
+                collections.closure_incomplete = True
                 findings.append(
                     _finding(
                         "L115",
@@ -1195,6 +1331,13 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         effective = _Document(copy.deepcopy(defaults), {(): _Location(scenario)})
         _merge(effective, supplied)
         unknown = _unknowns(effective.data)
+        if any(
+            path in {("provisioner",), ("ansible",), ("scenario",), ("driver",)}
+            or path[:2] in {("provisioner", "playbooks"), ("ansible", "playbooks"), ("driver", "name")}
+            or (len(path) >= 2 and path[0] == "scenario" and str(path[1]).endswith("_sequence"))
+            for path in unknown
+        ):
+            collections.closure_incomplete = True
         for path in unknown:
             findings.append(
                 _finding(
@@ -1208,6 +1351,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         if isinstance(driver, dict) and driver.get("name") in ("default", "delegated"):
             validators.append(_driver_profile(version))
         for schema_error in (error for profile in validators for error in profile.iter_errors(effective.data)):
+            collections.budget.charge(steps=1)
             path = tuple(schema_error.absolute_path)
             if any(path[: len(item)] == item for item in unknown):
                 continue
@@ -1286,7 +1430,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
                 "Molecule diagnostics exceed safe serialization limits; assessment is incomplete"
             )
         finding["original_yaml"] = excerpt
-    return result, frozenset(file for file, _scenario in playbook_cache)
+    return result, frozenset(file for file, _scenario in playbook_cache), collections.closure_incomplete
 
 
 def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
@@ -1319,3 +1463,16 @@ def molecule_playbook_paths(files: Mapping[str, bytes]) -> frozenset[str]:
 
     """
     return _molecule_assessment(files)[1]
+
+
+def molecule_playbook_closure(files: Mapping[str, bytes]) -> tuple[frozenset[str], bool]:
+    """Return static playbook paths and whether their discovery is incomplete.
+
+    Args:
+        files: Uploaded snapshot paths mapped to bytes.
+
+    Returns:
+        Discovered paths and whether the closure is incomplete.
+    """
+    _, paths, incomplete = _molecule_assessment(files)
+    return paths, incomplete

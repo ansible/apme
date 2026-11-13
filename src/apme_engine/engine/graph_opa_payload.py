@@ -46,6 +46,11 @@ _APPLY_INCLUDE_MODULES = frozenset(
     for prefix in ("", "ansible.builtin.", "ansible.legacy.")
     for name in ("include_tasks", "include_role")
 )
+_ROLE_CALL_MODULES = frozenset(
+    f"{prefix}{name}"
+    for prefix in ("", "ansible.builtin.", "ansible.legacy.")
+    for name in ("include_role", "import_role")
+)
 
 
 @dataclass(frozen=True)
@@ -235,6 +240,41 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
         Context cache for every node; cyclic ancestry is marked incomplete.
     """
     nodes = {node.node_id: node for node in graph.nodes()}
+    role_names: dict[str, set[str]] = {}
+    role_ids: set[str] = set()
+    for nid, node in nodes.items():
+        if node.node_type == NodeType.ROLE:
+            role_ids.add(nid)
+            for name in (node.name, node.role_fqcn, node.role_fqcn.rsplit(".", 1)[-1]):
+                if name:
+                    role_names.setdefault(name, set()).add(nid)
+    stale_roles: set[str] = set()
+    for source, node in nodes.items():
+        if node.node_type not in {NodeType.TASK, NodeType.HANDLER}:
+            continue
+        role_edges = [
+            (target, attrs)
+            for target, attrs in graph.edges_from(source)
+            if target in role_ids and attrs.get("edge_type") in {EdgeType.INCLUDE.value, EdgeType.IMPORT.value}
+        ]
+        if node.module not in _ROLE_CALL_MODULES:
+            stale_roles.update(target for target, _attrs in role_edges)
+            continue
+        arguments = node.effective_module_options
+        role_name = arguments.get("name")
+        dynamic_name = isinstance(role_name, str) and any(marker in role_name for marker in ("{{", "{%", "{#"))
+        if dynamic_name:
+            stale_roles.update(role_ids)
+        elif isinstance(role_name, str) and role_name:
+            candidates = role_names.get(role_name, set())
+            targets = {target for target, _attrs in role_edges}
+            stale_roles.update(candidates - targets)
+            for target in targets:
+                role = nodes[target]
+                if (role.name or role.role_fqcn) and target not in candidates:
+                    stale_roles.add(target)
+        expected_edge = EdgeType.IMPORT.value if node.module.endswith("import_role") else EdgeType.INCLUDE.value
+        stale_roles.update(target for target, attrs in role_edges if attrs.get("edge_type") != expected_edge)
     parents: dict[str, list[tuple[str, dict[str, object]]]] = {nid: [] for nid in nodes}
     children: dict[str, set[str]] = {nid: set() for nid in nodes}
     role_files: dict[str, dict[str, dict[str, str]]] = {}
@@ -315,7 +355,9 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
         except RecursionError:
             local, local_signature, local_unknown = (), (), True
         state = _ModuleDefaultsContexts(
-            incomplete=local_unknown or any(cache[parent].incomplete for parent, _attrs in parents[nid])
+            incomplete=(
+                local_unknown or nid in stale_roles or any(cache[parent].incomplete for parent, _attrs in parents[nid])
+            )
         )
         if not parents[nid]:
             entries, incomplete = role_entries(nid, {}) if node.node_type == NodeType.ROLE else (None, False)
@@ -333,7 +375,21 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
                     applied_layers[parent] = _include_apply_defaults(nodes[parent], _budget=defaults_budget)
                 applied, unknown_apply = applied_layers[parent]
                 state.incomplete |= unknown_apply
-            invocation = attrs.get("role_invocation", {})
+            # Task arguments are mutable through apply_yaml; edge metadata is
+            # only a snapshot from graph construction. Static role and role
+            # dependency declarations instead have distinct per-edge options.
+            parent_node = nodes[parent]
+            invocation: object
+            if (
+                node.node_type == NodeType.ROLE
+                and attrs.get("edge_type") in {EdgeType.INCLUDE.value, EdgeType.IMPORT.value}
+                and parent_node.module in _ROLE_CALL_MODULES
+            ):
+                invocation = parent_node.effective_module_options
+                if isinstance(parent_node.options.get("args"), str):
+                    state.incomplete = True
+            else:
+                invocation = attrs.get("role_invocation", {})
             invocation_options = cast(dict[str, object], invocation) if isinstance(invocation, dict) else {}
             try:
                 edge_defaults = (

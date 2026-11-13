@@ -121,9 +121,10 @@ async def test_native_rpc_rejects_expanded_excerpts_before_proto_conversion() ->
     )
     with (
         patch.object(molecule, "_MAX_DIAGNOSTIC_BYTES", 8192),
-        patch.object(native_validator_server, "violation_dict_to_proto", side_effect=AssertionError),
+        patch.object(native_validator_server, "violation_dict_to_proto", side_effect=AssertionError) as convert,
     ):
         response = await native_validator_server.NativeValidatorServicer().Validate(request, None)  # type: ignore[arg-type]
+    convert.assert_not_called()
     assert response.request_id == "excerpt-expansion"  # type: ignore[attr-defined]
     assert len(response.violations) == 1  # type: ignore[attr-defined]
     assert response.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]

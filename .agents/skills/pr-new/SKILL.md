@@ -269,7 +269,11 @@ artifact type, translate it:
    rescan the full input for each reference.
    Bound expanded representations, including repeated shared references and
    serialized bytes, at every downstream consumer; account for repeated work
-   after an aggregate budget is exhausted and combined transport payloads.
+   after an aggregate budget is exhausted and combined transport payloads. Enforce
+   the budget during parsing as well as after it, and trace incomplete discovery
+   into every downstream decision that relies on the discovered set. After edits,
+   check that cached relationships and selectors reflect the current input.
+   Validate values after the same type conversions used by their real consumer.
    Trace reachability through imports using the runtime's exact path and value
    semantics, including alternative caller bases and whitespace. Check execution
    ordering and the outer value containing nested dynamic values. Trace distinct findings and explicit

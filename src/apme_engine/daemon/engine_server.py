@@ -92,6 +92,7 @@ from apme_engine.daemon.session import (
     SessionStore,
     limit_venv_builds,
 )
+from apme_engine.daemon.validator_errors import RULE_MISSING_VENV, RULE_VALIDATOR_FAILURE
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
@@ -258,6 +259,10 @@ def _bounded_transport_json(value: object) -> bytes:
                     else:
                         raise GraphTransportError(
                             "Graph transport contains an unsupported key; validation is incomplete"
+                        )
+                    if name in mapping:
+                        raise GraphTransportError(
+                            "Graph transport contains colliding mapping keys; validation is incomplete"
                         )
                     size += string_size(name) + 1
                     count += 1
@@ -572,6 +577,61 @@ def _filter_file_noqa(violations: list[ViolationDict]) -> list[ViolationDict]:
     ]
 
 
+async def _refresh_session_file_violations(session: SessionState) -> None:
+    """Reassess file findings against the session's currently applied bytes.
+
+    The complete snapshot can also raise GraphTransportError during transport.
+
+    Args:
+        session: Session with the complete applied file snapshot.
+
+    Raises:
+        RequiredValidatorDependencyError: Native is unavailable or assessment fails.
+
+    """
+    address = os.environ.get("NATIVE_GRPC_ADDRESS")
+    if not address:
+        raise RequiredValidatorDependencyError("Required validator native not configured for file rescan")
+    files = [File(path=path, content=content) for path, content in session.working_files.items()]
+    result = await _call_validator(
+        address,
+        ValidateRequest(request_id=f"{session.session_id}-file-rescan", files=files),
+        stream_large_request=True,
+        fail_on_infra=True,
+    )
+    if result.error:
+        raise RequiredValidatorDependencyError(f"Required validator native file rescan failed: {result.error}")
+    configs, _complete = _scan_rule_audit_inputs(session.scan_options)
+    findings = [v for v in result.violations if str(v.get("path", "")).startswith("$")]
+    findings = _apply_rule_configs(findings, configs)
+    findings = _filter_file_noqa(_deduplicate_violations(_sort_violations(findings)))
+    _attach_snippets(findings, files)
+    session.file_violations = findings
+
+
+def _sync_session_file_report(session: SessionState) -> None:
+    """Replace file findings in an existing report after applied changes.
+
+    Args:
+        session: Session with freshly reassessed file findings.
+    """
+    from apme_engine.remediation.partition import add_classification_to_violations, count_by_remediation_class
+
+    remaining = [
+        v for v in session.remaining_ai + session.remaining_manual if not str(v.get("path", "")).startswith("$")
+    ]
+    remaining.extend(dict(v) for v in session.file_violations)
+    add_classification_to_violations(remaining)
+    session.remaining_ai = [v for v in remaining if v.get("remediation_class") == RemediationClass.AI_CANDIDATE]
+    session.remaining_manual = [v for v in remaining if v.get("remediation_class") != RemediationClass.AI_CANDIDATE]
+    if session.report is not None:
+        counts = count_by_remediation_class(remaining)
+        session.report.remaining_ai = counts.get("ai-candidate", 0)
+        session.report.remaining_manual = counts.get("manual-review", 0)
+        del session.report.remaining_violations[:]
+        session.report.remaining_violations.extend(violation_dict_to_proto(v) for v in remaining)
+
+
 def _collect_ai_triage_candidates(session: SessionState) -> list[ViolationDict]:
     """Return open AI-candidate findings on the session graph for escalation triage.
 
@@ -743,6 +803,7 @@ async def _call_validator(
     timeout: int = 300,
     *,
     stream_large_request: bool = False,
+    fail_on_infra: bool = False,
 ) -> _ValidatorResult:
     """Call a validator over async gRPC; return violations + diagnostics.
 
@@ -753,6 +814,7 @@ async def _call_validator(
             collection health scanning of many large collections).
         stream_large_request: Send oversized requests through the validator's
             streaming endpoint instead of a unary gRPC call.
+        fail_on_infra: Treat infrastructure findings as a failed assessment.
 
     Returns:
         _ValidatorResult with violations and optional diagnostics.
@@ -790,8 +852,16 @@ async def _call_validator(
             resp = await stub.ValidateStream(request_chunks(), timeout=timeout)
         else:
             resp = await stub.Validate(request, timeout=timeout)
+        violations = [violation_proto_to_dict(v) for v in resp.violations]
+        infra_errors = [
+            v
+            for v in violations
+            if normalize_rule_id(str(v.get("rule_id", ""))) in {RULE_MISSING_VENV, RULE_VALIDATOR_FAILURE}
+        ]
+        if fail_on_infra and infra_errors:
+            return _ValidatorResult(error=str(infra_errors[0].get("message") or "Validator infrastructure error"))
         return _ValidatorResult(
-            violations=[violation_proto_to_dict(v) for v in resp.violations],
+            violations=violations,
             diagnostics=resp.diagnostics if resp.HasField("diagnostics") else None,
             logs=list(resp.logs),
         )
@@ -1553,7 +1623,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 files_by_path.update({file.path: file for file in ansible_context_files})
                 del request.files[:]
                 request.files.extend(files_by_path.values())
-            task_coros.append(_call_validator(addr, request, stream_large_request=name == "ansible"))
+            task_coros.append(
+                _call_validator(
+                    addr,
+                    request,
+                    stream_large_request=name in {"native", "ansible"},
+                    fail_on_infra=name == "native",
+                )
+            )
 
         violations: list[ViolationDict] = []
         validator_diagnostics: list[ValidatorDiagnostics] = []
@@ -2879,6 +2956,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             dirty_node_ids=sorted(dirty_ids),
                             graph_rule_opt_in=opt_in_rules,
                         ),
+                        stream_large_request=True,
+                        fail_on_infra=True,
                     )
                 )
                 ext_names.append("native")
@@ -3119,6 +3198,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             if not patch_abs.is_absolute():
                 patch_abs = temp_dir / patch_abs
             patch_abs.write_text(patch.patched, encoding="utf-8")
+
+        if patches:
+            for patch in patches:
+                session.working_files[_working_files_key(temp_dir, patch.path)] = patch.patched.encode("utf-8")
+            await _refresh_session_file_violations(session)
 
         # 4. Remaining violations — sourced from the graph (authoritative).
         # Copy before enrichment so classification metadata does not mutate
@@ -3586,6 +3670,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 session.temp_dir,
                 temp_patches,
             )
+        if applied or temp_patches:
+            await _refresh_session_file_violations(session)
+            _sync_session_file_report(session)
         if was_tier1_gate:
             files_touched = len(temp_patches) if temp_patches else 0
             report_fixed = session.report.fixed if session.report else applied
@@ -3916,6 +4003,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     session.temp_dir,
                     patches,
                 )
+            if patches:
+                await _refresh_session_file_violations(session)
+                _sync_session_file_report(session)
             session.status = 3
             async for event in self._session_build_result(session):
                 yield event

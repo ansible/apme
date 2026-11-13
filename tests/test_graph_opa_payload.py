@@ -888,7 +888,7 @@ def test_defaults_cache_is_bounded_before_building_hierarchy(scope: str, limit: 
             if scope == "apply":
                 caller.module_options = {"apply": {"module_defaults": defaults}}
             else:
-                graph.g[caller.node_id][target.node_id][0]["role_invocation"] = {"module_defaults": defaults}
+                caller.module_options = {"module_defaults": defaults}
     independent = _defaults_node(graph, "independent", NodeType.TASK)
 
     with (

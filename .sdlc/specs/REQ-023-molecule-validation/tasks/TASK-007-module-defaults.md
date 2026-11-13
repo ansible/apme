@@ -34,6 +34,8 @@ Apply the same correction to ordinary playbook argument checks.
   and output. Keep explicit manual-review findings out of remediation routing.
 - Carry bounded assessment coverage independently of visible findings so a
   rescan does not mark unassessed arguments fixed, even when notices are filtered.
+- Refresh role invocation selectors after edits, and apply supported Ansible type
+  conversion before checking scalar and list choices.
 
 ## Test Cases
 
@@ -51,8 +53,8 @@ Apply the same correction to ordinary playbook argument checks.
 
 - [x] Focused tests via `tox -e unit -- ... --no-cov`
 - [x] `tox -e lint`
-- [x] Full `tox -e unit` with local OPA and container-only skips: 5,854 passed,
-      52 skipped, 87.06% coverage
+- [x] Full `tox -e unit` with local OPA and container-only skips: 5,891 passed,
+      52 skipped, 87.18% coverage
 
 ## Completion Checklist
 

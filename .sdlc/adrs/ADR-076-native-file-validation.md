@@ -63,8 +63,9 @@ The built-in driver schemas supplement the core schemas. Molecule scenario
 playbooks and their local imports receive inert structural checks rather than
 L057 runtime dispatch, which can evaluate lookups. Ansible's runtime classifier
 reuses the pure snapshot assessment helper to exclude resolved shared/imported
-targets outside scenario directories as well. File findings retain original source excerpts for
-suppression and survive graph-only remediation without entering its ledger.
+targets outside scenario directories as well. File findings retain original source
+excerpts for suppression and are reassessed from the applied file snapshot after
+remediation without entering the graph ledger.
 Add tests for independent file validation and preserve graph rule behavior.
 
 Scenario playbook structure checks include `module_defaults` shapes. Existing
@@ -105,3 +106,4 @@ changing service boundaries, transport fields, or the graph library dependency.
 | 2026-11-13 | Codex | Preserve same-line file findings and avoid resolving argument errors when rescans lack coverage |
 | 2026-11-13 | Codex | Bound validator requests and diagnostic excerpts, and protect scenario imports from runtime syntax dispatch |
 | 2026-11-13 | Codex | Preserve import target whitespace and report caller-dependent nested import closures as incomplete |
+| 2026-11-13 | Codex | Bound YAML composition and shared assessment, propagate incomplete exclusions, refresh invocation context, and harden validator transport and choice conversion |

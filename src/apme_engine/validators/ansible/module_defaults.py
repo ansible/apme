@@ -10,6 +10,14 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ansible.module_utils.common.validation import (
+    check_type_bool,
+    check_type_float,
+    check_type_int,
+    check_type_list,
+    check_type_str,
+)
+
 _MAX_CONTEXTS = 64
 _MAX_LAYERS = 256
 _MAX_REQUESTS = 4096
@@ -196,12 +204,14 @@ def apply_parameter_aliases(arguments: dict[str, object], spec: dict[str, object
     return normalized
 
 
-def has_invalid_choice(value: object, choices: object) -> bool:
-    """Check literal choice values, including lists and mapping-form choices.
+def has_invalid_choice(value: object, choices: object, parameter_type: object = None, elements: object = None) -> bool:
+    """Check literal choices using the declared parameter type.
 
     Args:
         value: Supplied parameter value, possibly a list or template.
         choices: Spec choices represented by a sequence or mapping keys.
+        parameter_type: Declared argument type; list arguments check each item.
+        elements: Declared type of list elements, if any.
 
     Returns:
         Whether a statically known choice is outside the allowed values.
@@ -209,8 +219,29 @@ def has_invalid_choice(value: object, choices: object) -> bool:
     if not isinstance(choices, dict | list | tuple):
         return False
     allowed = list(choices)
-    values = value if isinstance(value, list | tuple) else [value]
-    return any(not is_dynamic(item) and item not in allowed for item in values)
+    if is_dynamic(value) or value is None:
+        return False
+    converters = {"str": check_type_str, "int": check_type_int, "float": check_type_float, "bool": check_type_bool}
+    if parameter_type == "list":
+        try:
+            values = check_type_list(value)
+            if isinstance(elements, str) and elements in converters:
+                values = [converters[elements](item) for item in values]
+            elif elements is not None:
+                # Other element types may be converted by the target Ansible version.
+                return False
+        except (TypeError, ValueError):
+            return True
+    elif parameter_type is None or (isinstance(parameter_type, str) and parameter_type in converters):
+        try:
+            values = [converters[parameter_type or "str"](value)]
+        except (TypeError, ValueError):
+            return True
+    else:
+        # Do not claim a choice error when type conversion is not modeled.
+        return False
+    # Ansible can map stringified YAML booleans back to a unique choice.
+    return any(item not in allowed and item not in ("True", "False") for item in values)
 
 
 def _finding(task: dict[str, object], message: str, *, error: bool = False) -> dict[str, object]:

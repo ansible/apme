@@ -105,6 +105,66 @@ def test_argspec_list_and_mapping_choices(rule_id: str, choices: object, value: 
     assert all("not one of" in str(finding["message"]) for finding in findings)
 
 
+@pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("value", [[], ["present", "absent"], ["present"]])  # type: ignore[untyped-decorator]
+def test_scalar_choice_rejects_list_values(rule_id: str, value: object) -> None:
+    """A list of individually valid choices is invalid for a scalar parameter.
+
+    Args:
+        rule_id: Docstring or captured-spec validator.
+        value: List supplied to a scalar parameter.
+    """
+    rule = importlib.import_module(
+        "apme_engine.validators.ansible.rules." + ("L058_argspec_doc" if rule_id == "L058" else "L059_argspec_mock")
+    )
+    field = "options" if rule_id == "L058" else "argument_spec"
+    specs: dict[str, object] = {
+        "example.test.module": {field: {"state": {"type": "str", "choices": ["present", "absent"]}}}
+    }
+    task: dict[str, object] = {"module": "example.test.module", "module_options": {"state": value}, "key": "task"}
+    findings = rule._check_tasks_against_specs(specs, [task])
+    assert len(findings) == 1
+    assert "not one of" in str(findings[0]["message"])
+
+
+@pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("value", [[1, 2], "1,2"])  # type: ignore[untyped-decorator]
+def test_choice_checks_apply_ansible_list_conversion(rule_id: str, value: object) -> None:
+    """Ansible converts comma-separated lists and string elements before choices.
+
+    Args:
+        rule_id: Docstring or captured-spec validator.
+        value: Value accepted after Ansible's list and element conversion.
+    """
+    rule = importlib.import_module(
+        "apme_engine.validators.ansible.rules." + ("L058_argspec_doc" if rule_id == "L058" else "L059_argspec_mock")
+    )
+    field = "options" if rule_id == "L058" else "argument_spec"
+    definition = {"type": "list", "elements": "str", "choices": ["1", "2"]}
+    specs = {"example.test.module": {field: {"items": definition}}}
+    task = {"module": "example.test.module", "module_options": {"items": value}, "key": "task"}
+    assert rule._check_tasks_against_specs(specs, [task]) == []
+
+
+@pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("value,has_error", [("2", False), ("3", True)])  # type: ignore[untyped-decorator]
+def test_choice_checks_apply_scalar_conversion(rule_id: str, value: str, has_error: bool) -> None:
+    """Integer choice checks use the converted numeric value.
+
+    Args:
+        rule_id: Docstring or captured-spec validator.
+        value: String convertible to an integer.
+        has_error: Whether the converted value is outside the choices.
+    """
+    rule = importlib.import_module(
+        "apme_engine.validators.ansible.rules." + ("L058_argspec_doc" if rule_id == "L058" else "L059_argspec_mock")
+    )
+    field = "options" if rule_id == "L058" else "argument_spec"
+    specs = {"example.test.module": {field: {"level": {"type": "int", "choices": [1, 2]}}}}
+    task = {"module": "example.test.module", "module_options": {"level": value}, "key": "task"}
+    assert bool(rule._check_tasks_against_specs(specs, [task])) is has_error
+
+
 def _write_collection(site: Path, namespace: str, name: str, runtime: str) -> None:
     """Install inert module/action candidates and runtime metadata in a test venv.
 

@@ -214,7 +214,7 @@ def _check_tasks_against_specs(
             if isinstance(pdef, dict) and pname in user_keys and pdef.get("choices"):
                 val = module_options[pname]
                 choices = pdef["choices"]
-                if has_invalid_choice(val, choices):
+                if has_invalid_choice(val, choices, pdef.get("type"), pdef.get("elements")):
                     violations.append(
                         {
                             "module": module,
