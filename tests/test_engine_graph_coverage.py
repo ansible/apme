@@ -1195,7 +1195,7 @@ class TestCouldBe:
         assert could_be_taskfile(body="", data=None) is False
         assert could_be_taskfile(body="x", data=None) is False
         assert could_be_taskfile(body="x", data="s") is False
-        assert could_be_taskfile(body=TASKFILE_YAML, data=[{"name": "x"}]) is True
+        assert could_be_taskfile(body=TASKFILE_YAML, data=[{"name": "x"}]) is False
         assert could_be_taskfile(body=TASKFILE_YAML, data=[{"ansible.builtin.debug": {}}]) is True
         assert could_be_taskfile(body=PLAYBOOK_YAML, data=[{"import_playbook": "x.yml"}]) is False
         assert could_be_taskfile(body="x", data=["s"]) is False

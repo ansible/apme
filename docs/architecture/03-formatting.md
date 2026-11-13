@@ -63,11 +63,18 @@ Inside `_session_process()`, the format phase runs as Phase 1:
 
 - Consistent indentation (2 spaces)
 - Key ordering within tasks and plays
+- Block-style task/play containers so graph nodes have separate source lines
 - Jinja2 spacing normalization
 - Trailing whitespace and newline cleanup
 - Quote style consistency
 
 The formatter uses `ruamel.yaml` for comment-preserving round-trips.
+
+Formatting preserves the casing of every `name` value, including play and task
+labels. Capitalization is handled by the L025 rule and deterministic remediation
+for identified plays, tasks, handlers, and task blocks. Thus `apme format` preserves
+name casing, while `apme remediate` corrects it when L025 is enabled. Metadata and
+variable values keep their original casing regardless of filename.
 
 ## Format Diffs in the Pipeline
 

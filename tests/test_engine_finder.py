@@ -147,3 +147,42 @@ class TestFindModuleNameBlockKeywords:
         """Always is a task keyword, not a module name."""
         task: YAMLDict = {"always": [{"ansible.builtin.debug": {"msg": "hi"}}]}
         assert find_module_name(task) == ""
+
+
+class TestTaskfileClassification:
+    """Distinguish role requirements and named data from task sources."""
+
+    def test_role_requirements_are_not_tasks(self) -> None:
+        """Both requirements extensions support identifiers, includes, and pins."""
+        from apme_engine.engine.finder import could_be_taskfile, label_yml_file
+
+        content = (
+            "- name: web_role\n  src: acme.web\n  version: 1.0.0\n"
+            "- src: https://example.org/role.git\n  scm: git\n"
+            "- include: more.yml\n- acme.common\n"
+        )
+        for filename in ("roles/requirements.yml", "meta/requirements.yaml"):
+            assert not could_be_taskfile(body=content, fpath=filename)
+            assert label_yml_file(yml_path=filename, yml_body=content)[0] == "others"
+
+    def test_name_alone_is_not_task_evidence(self) -> None:
+        """Arbitrarily named list data is not an Ansible task file."""
+        from apme_engine.engine.finder import label_yml_file
+
+        assert label_yml_file(yml_path="data.yml", yml_body="- name: production\n")[0] == "others"
+
+    def test_known_task_sources_remain_discoverable(self) -> None:
+        """Blocks, explicit actions, custom modules and malformed known tasks survive."""
+        from apme_engine.engine.finder import could_be_taskfile
+
+        for content in (
+            "- name: block label\n  block: []\n",
+            "- name: action label\n  action: debug msg=hello\n",
+            "- name: local label\n  local_action: debug msg=hello\n",
+            "- name: legacy include\n  include: child.yml\n",
+            "- name: custom label\n  custom_module: value\n",
+            "- name: debug label\n  ansible.builtin.debug:\n    msg: hello\n",
+        ):
+            assert could_be_taskfile(body=content, fpath="tasks/requirements.yml")
+        assert could_be_taskfile(body="- name: missing action\n", fpath="roles/web/tasks/main.yml")
+        assert could_be_taskfile(body="- name: missing action\n", fpath="roles/web/handlers/main.yml")

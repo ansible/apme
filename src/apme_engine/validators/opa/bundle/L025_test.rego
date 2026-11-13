@@ -58,3 +58,15 @@ test_L025_fires_trailing_pipe_by_falling_back_to_full_name if {
 	v := rules.name_casing(tree, node)
 	v.rule_id == "L025"
 }
+
+# Block wrappers carry task labels too.
+test_L025_fires_when_block_name_lowercase if {
+	tree := {"nodes": [{"type": "blockcall", "name": "configure service", "line": [1], "key": "k", "file": "f.yml"}]}
+	v := rules.name_casing(tree, tree.nodes[0])
+	v.rule_id == "L025"
+}
+
+test_L025_ignores_metadata_node_name if {
+	tree := {"nodes": [{"type": "collection", "name": "my_collection", "line": [1], "key": "k", "file": "galaxy.yml"}]}
+	not rules.name_casing(tree, tree.nodes[0])
+}

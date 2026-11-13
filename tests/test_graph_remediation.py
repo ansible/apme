@@ -1303,3 +1303,26 @@ class TestAnsibleNodeLookup:
 
         assert build_node_lookup(b"") == {}
         assert build_node_lookup(b"{}") == {}
+
+
+def test_splicing_retains_early_fixes_after_progression_rollover() -> None:
+    """Bounded snapshots retain the source baseline and all approved edits."""
+    original = "- name: original\n  debug:\n    msg: hello\n"
+    graph = ContentGraph()
+    node = _make_node(yaml_lines=original, file_path="tasks.yml", line_start=1, line_end=3)
+    graph.add_node(node)
+    baseline = node.record_state(0, "scanned")
+    node.update_from_yaml(original.replace("original", "Original"))
+    node.record_state(1, "transformed", source="deterministic")
+    for pass_number in range(2, node.MAX_PROGRESSION + 3):
+        node.record_state(pass_number, "scanned")
+    node.update_from_yaml(node.yaml_lines.replace("debug:", "ansible.builtin.debug:"))
+    node.record_state(node.MAX_PROGRESSION + 3, "transformed", source="deterministic")
+    graph.approve_pending()
+
+    assert len(node.progression) == node.MAX_PROGRESSION
+    assert node.progression[0].id == baseline.id
+    assert node.progression[0].yaml_lines == original
+    patches = splice_modifications(graph, {"tasks.yml": original})
+    assert len(patches) == 1
+    assert patches[0].patched == original.replace("original", "Original").replace("debug:", "ansible.builtin.debug:")

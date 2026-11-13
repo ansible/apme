@@ -872,10 +872,10 @@ def splice_modifications(
 ) -> list[FilePatch]:
     """Splice modified ``yaml_lines`` back into original files.
 
-    Groups modified nodes by ``file_path``, sorts by ``line_start``
-    descending (bottom-up) so that splicing one node does not shift
-    line numbers for nodes above it, and produces a unified diff per
-    file.
+    Compares each modified fragment with its original progression state and
+    groups the changed line spans by ``file_path``. Applies spans bottom-up
+    so that edits do not shift source offsets. Unchanged child bodies are
+    preserved when a parent play header or block is also modified.
 
     Args:
         graph: ContentGraph after convergence (nodes may have updated
@@ -916,9 +916,16 @@ def splice_modifications(
 
         node_rule_ids = [rec.key[1] for rec in node.violation_ledger.values()]
 
-        modified_by_file[node.file_path].append(
-            (node.line_start, node.line_end, effective.yaml_lines, node_rule_ids),
-        )
+        before = node.progression[0].yaml_lines.splitlines(keepends=True)
+        after = effective.yaml_lines.splitlines(keepends=True)
+        for tag, start, end, new_start, new_end in difflib.SequenceMatcher(
+            None, before, after, autojunk=False
+        ).get_opcodes():
+            if tag == "equal":
+                continue
+            modified_by_file[node.file_path].append(
+                (node.line_start + start, node.line_start + end - 1, "".join(after[new_start:new_end]), node_rule_ids),
+            )
 
     patches: list[FilePatch] = []
     for file_path, edits in modified_by_file.items():
