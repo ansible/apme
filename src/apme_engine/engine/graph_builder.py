@@ -80,6 +80,7 @@ class GraphBuilder:
         self._graph = ContentGraph()
         self._visited: set[str] = set()
         self._object_by_key: dict[str, object] = {}
+        self._pending_role_dependencies: list[tuple[str, YAMLDict, int]] = []
 
         self.extra_requirements: list[dict[str, object]] = []
         self.resolve_failures: dict[str, dict[str, int]] = {
@@ -131,6 +132,11 @@ class GraphBuilder:
         self._build_from_loaded(root_loaded, NodeScope.OWNED)
         self._build_from_loaded(ext_loaded, NodeScope.REFERENCED)
 
+        for parent_id, options, position in self._pending_role_dependencies:
+            name = options.get("role", options.get("name", ""))
+            target_id = self._resolve_role_nid_by_name(name) if isinstance(name, str) else None
+            if target_id:
+                self._add_role_invocation_edge(parent_id, target_id, EdgeType.DEPENDENCY, options, position=position)
         self._wire_notify_listen()
         self._wire_data_flow()
 
@@ -425,7 +431,10 @@ class GraphBuilder:
         if line_start == 0 and file_content:
             line_start, line_end = _find_play_lines(file_content, play_index)
 
-        play_options = _safe_dict(getattr(play, "options", {}))
+        play_options = dict(_safe_dict(getattr(play, "options", {})))
+        module_defaults = getattr(play, "module_defaults", {})
+        if module_defaults:
+            play_options["module_defaults"] = module_defaults
 
         when_raw = play_options.get("when")
         when_expr: str | list[str] | None
@@ -503,7 +512,9 @@ class GraphBuilder:
             if isinstance(rip_or_key, RoleInPlay):
                 role_nid = self._resolve_role_nid(rip_or_key)
                 if role_nid:
-                    self._graph.add_edge(nid, role_nid, EdgeType.DEPENDENCY, position=position)
+                    self._add_role_invocation_edge(
+                        nid, role_nid, EdgeType.DEPENDENCY, _safe_dict(rip_or_key.options), position=position
+                    )
                     position += 1
 
         build_task_list("tasks")
@@ -672,10 +683,11 @@ class GraphBuilder:
                 edge_type = EdgeType.IMPORT if is_import else EdgeType.INCLUDE
                 role_nid = self._resolve_role_nid_by_name(executable)
                 if role_nid:
-                    self._graph.add_edge(
+                    self._add_role_invocation_edge(
                         nid,
                         role_nid,
                         edge_type,
+                        node.effective_module_options,
                         dynamic=is_dynamic,
                         conditional=node.when_expr is not None,
                     )
@@ -843,7 +855,7 @@ class GraphBuilder:
             if tf_obj is not None:
                 tf_nid = self._build_taskfile(tf_obj, parent_nid=nid, scope=scope)
                 if tf_nid:
-                    self._graph.add_edge(nid, tf_nid, EdgeType.CONTAINS, position=position)
+                    self._add_role_taskfile_edge(nid, tf_nid, "tasks", role_path, position)
                     position += 1
 
         # Handlers
@@ -857,7 +869,7 @@ class GraphBuilder:
             if isinstance(handler, TaskFile):
                 h_nid = self._build_taskfile(handler, parent_nid=nid, scope=scope, is_handler_file=True)
                 if h_nid:
-                    self._graph.add_edge(nid, h_nid, EdgeType.CONTAINS, position=position)
+                    self._add_role_taskfile_edge(nid, h_nid, "handlers", role_path, position)
                     position += 1
             elif isinstance(handler, Task):
                 h_nid = self._build_handler(handler, nid, defined_in, 0, h_idx, scope)
@@ -878,15 +890,67 @@ class GraphBuilder:
             position += 1
 
         # Role dependencies
-        for dep in getattr(role, "dependency", []) or []:
-            if isinstance(dep, dict):
-                dep_name = dep.get("role", "") or dep.get("name", "")
-                if isinstance(dep_name, str) and dep_name:
-                    dep_nid = self._resolve_role_nid_by_name(dep_name)
-                    if dep_nid:
-                        self._graph.add_edge(nid, dep_nid, EdgeType.DEPENDENCY)
+        dependencies = getattr(role, "dependency", {})
+        role_dependencies = dependencies.get("roles", []) if isinstance(dependencies, dict) else dependencies
+        if isinstance(role_dependencies, list):
+            for index, dependency in enumerate(role_dependencies):
+                options = {"role": dependency} if isinstance(dependency, str) else dependency
+                if isinstance(options, dict):
+                    # Role dependencies run before the body. Reserve negative
+                    # positions for them without shifting task/handler inventory
+                    # positions or the static role positions on a play.
+                    self._pending_role_dependencies.append((nid, _safe_dict(options), index - len(role_dependencies)))
 
         return nid
+
+    def _add_role_invocation_edge(
+        self,
+        source: str,
+        target: str,
+        edge_type: EdgeType,
+        options: YAMLDict,
+        *,
+        position: int = 0,
+        dynamic: bool = False,
+        conditional: bool = False,
+    ) -> None:
+        """Retain role defaults and entry selectors on each individual call edge.
+
+        Args:
+            source: Calling play, task, or role.
+            target: Shared role definition node.
+            edge_type: Role dependency, import, or include relationship.
+            options: Raw role invocation options.
+            position: Call position among siblings.
+            dynamic: Whether role resolution depends on templates.
+            conditional: Whether the invocation has a condition.
+        """
+        key = self._graph.g.new_edge_key(source, target)
+        self._graph.add_edge(source, target, edge_type, position=position, dynamic=dynamic, conditional=conditional)
+        names = (
+            ("module_defaults",)
+            if edge_type == EdgeType.DEPENDENCY
+            else ("module_defaults", "tasks_from", "handlers_from")
+        )
+        self._graph.g[source][target][key]["role_invocation"] = {
+            name: options[name] for name in names if name in options
+        }
+
+    def _add_role_taskfile_edge(self, role: str, taskfile: str, section: str, role_path: str, position: int) -> None:
+        """Distinguish role file inventory from the entry point selected by a call.
+
+        Args:
+            role: Role definition node ID.
+            taskfile: Inventoried task or handler file node ID.
+            section: Role tasks or handlers directory.
+            role_path: Role source directory.
+            position: File position in the inventory.
+        """
+        key = self._graph.g.new_edge_key(role, taskfile)
+        self._graph.add_edge(role, taskfile, EdgeType.CONTAINS, position=position)
+        self._graph.g[role][taskfile][key].update(
+            role_section=section, role_file=os.path.relpath(taskfile, os.path.join(role_path, section))
+        )
 
     # -- TaskFile -----------------------------------------------------------
 

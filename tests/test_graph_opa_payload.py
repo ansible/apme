@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from unittest.mock import patch
+
+import pytest
+
 from apme_engine.engine.graph_opa_payload import (
+    OpaPayloadSerializationError,
     build_hierarchy_from_graph,
     content_node_to_opa_dict,
 )
@@ -13,6 +19,7 @@ from apme_engine.graph.content_graph import (
     NodeIdentity,
     NodeType,
 )
+from apme_engine.graph.types import YAMLDict, YAMLValue
 
 
 def _make_minimal_graph() -> ContentGraph:
@@ -434,3 +441,1055 @@ class TestBuildHierarchyFromGraph:
         cs = payload["collection_set"]
         assert isinstance(cs, list)
         assert "community.general" in cs
+
+
+def _defaults_node(graph: ContentGraph, name: str, node_type: NodeType, defaults: YAMLValue = None) -> ContentNode:
+    """Add a scope node for defaults transport tests.
+
+    Args:
+        graph: Graph to extend.
+        name: Stable node ID.
+        node_type: Scope or task type.
+        defaults: Raw local defaults layer, if supplied.
+
+    Returns:
+        The added node.
+    """
+    node = ContentNode(
+        identity=NodeIdentity(path=name, node_type=node_type),
+        module="ansible.builtin.file" if node_type in {NodeType.TASK, NodeType.HANDLER} else "",
+        options={"module_defaults": defaults} if defaults is not None else {},
+    )
+    graph.add_node(node)
+    return node
+
+
+def test_defaults_contexts_preserve_order_resets_and_authored_arguments() -> None:
+    """Transport raw play, nested block, and task layers without merging args."""
+    graph = ContentGraph()
+    layers: list[YAMLValue] = [
+        {"ansible.builtin.file": {"owner": "root", "mode": "0755"}},
+        [{"group/example.testing.files": {"mode": "0644"}}, {"ansible.builtin.file": {"group": "{{ group }}"}}],
+        {"ansible.builtin.file": {}},
+        {},
+    ]
+    scopes = [
+        _defaults_node(graph, "play", NodeType.PLAY, layers[0]),
+        _defaults_node(graph, "outer", NodeType.BLOCK, layers[1]),
+        _defaults_node(graph, "inner", NodeType.BLOCK, layers[2]),
+        _defaults_node(graph, "task", NodeType.TASK, layers[3]),
+    ]
+    for parent, child in zip(scopes, scopes[1:], strict=False):
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+    task = scopes[-1]
+    task.module_options = {"path": "/tmp/example"}
+    before_options = dict(task.options)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [layers]
+    assert "module_defaults_incomplete" not in payload
+    assert payload["module_options"] == {"path": "/tmp/example"}
+    assert task.module_options == {"path": "/tmp/example"}
+    assert task.options == before_options
+    restored = ContentGraph.from_dict(graph.to_dict(slim=True))
+    restored_task = restored.get_node(task.node_id)
+    assert restored_task is not None
+    assert content_node_to_opa_dict(restored_task, restored) == payload
+
+
+@pytest.mark.parametrize("edge_type", [EdgeType.INCLUDE, EdgeType.IMPORT])  # type: ignore[untyped-decorator]
+def test_defaults_contexts_keep_shared_file_invocations_separate(edge_type: EdgeType) -> None:
+    """Two calls in one play retain alternatives, including a no-defaults path.
+
+    Args:
+        edge_type: Static import or dynamic include relationship.
+    """
+    graph = ContentGraph()
+    play = _defaults_node(graph, "play", NodeType.PLAY)
+    shared = _defaults_node(graph, "shared.yml", NodeType.TASKFILE)
+    task = _defaults_node(graph, "shared.yml/task", NodeType.TASK)
+    first = _defaults_node(graph, "first", NodeType.TASK, {"ansible.builtin.file": {"owner": "first"}})
+    second = _defaults_node(graph, "second", NodeType.TASK)
+    for caller in (first, second):
+        graph.add_edge(play.node_id, caller.node_id, EdgeType.CONTAINS)
+        graph.add_edge(caller.node_id, shared.node_id, edge_type)
+    graph.add_edge(shared.node_id, task.node_id, EdgeType.CONTAINS)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_contexts"] == [
+        [{"ansible.builtin.file": {"owner": "first"}}],
+        [],
+    ]
+
+
+@pytest.mark.parametrize("module", ["include_tasks", "ansible.builtin.include_role", "ansible.legacy.include_tasks"])  # type: ignore[untyped-decorator]
+def test_include_apply_defaults_form_a_descendant_only_block_layer(module: str) -> None:
+    """Applied defaults sit after the caller and before the included local scopes.
+
+    Args:
+        module: Include module spelling whose apply mapping is serialized.
+    """
+    graph = ContentGraph()
+    play_defaults: YAMLDict = {"file": {"owner": "root"}}
+    include_defaults: YAMLDict = {"file": {"group": "caller"}}
+    applied: YAMLValue = [{"group/example.testing.files": {"mode": "0644"}}, {"file": {}}]
+    task_defaults: YAMLDict = {"file": {"owner": "local"}}
+    play = _defaults_node(graph, "play", NodeType.PLAY, play_defaults)
+    caller = _defaults_node(graph, "caller", NodeType.TASK, include_defaults)
+    caller.module = module
+    caller.options["args"] = {"apply": {"module_defaults": applied}}
+    target_type = NodeType.ROLE if module.endswith("include_role") else NodeType.TASKFILE
+    target = _defaults_node(graph, "target", target_type)
+    task = _defaults_node(graph, "task", NodeType.TASK, task_defaults)
+    graph.add_edge(play.node_id, caller.node_id, EdgeType.CONTAINS)
+    graph.add_edge(caller.node_id, target.node_id, EdgeType.INCLUDE)
+    graph.add_edge(target.node_id, task.node_id, EdgeType.CONTAINS)
+    assert content_node_to_opa_dict(caller, graph)["module_defaults_contexts"] == [[play_defaults, include_defaults]]
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [[play_defaults, include_defaults, applied, task_defaults]]
+    assert "module_defaults_incomplete" not in payload
+    assert caller.options["args"] == {"apply": {"module_defaults": applied}}
+
+
+def test_shared_include_apply_defaults_do_not_leak_between_invocations() -> None:
+    """The same task file called twice keeps distinct applied block defaults."""
+    graph = ContentGraph()
+    target = _defaults_node(graph, "target", NodeType.TASKFILE)
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    graph.add_edge(target.node_id, task.node_id, EdgeType.CONTAINS)
+    for name in ("first", "second"):
+        caller = _defaults_node(graph, name, NodeType.TASK)
+        caller.module = "ansible.builtin.include_tasks"
+        caller.module_options = {"file": "target", "apply": {"module_defaults": {"file": {"owner": name}}}}
+        graph.add_edge(caller.node_id, target.node_id, EdgeType.INCLUDE)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_contexts"] == [
+        [{"file": {"owner": "first"}}],
+        [{"file": {"owner": "second"}}],
+    ]
+
+
+@pytest.mark.parametrize("apply", ["{{ applied_attributes }}", None])  # type: ignore[untyped-decorator]
+def test_unavailable_apply_marks_descendants_incomplete(apply: YAMLValue) -> None:
+    """Unknown apply data cannot silently produce false missing-argument findings.
+
+    Args:
+        apply: Apply mapping that cannot be inspected statically.
+    """
+    graph = ContentGraph()
+    caller = _defaults_node(graph, "caller", NodeType.TASK)
+    caller.module = "ansible.builtin.include_role"
+    caller.module_options = {"apply": apply}
+    role = _defaults_node(graph, "role", NodeType.ROLE)
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    graph.add_edge(caller.node_id, role.node_id, EdgeType.INCLUDE)
+    graph.add_edge(role.node_id, task.node_id, EdgeType.CONTAINS)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_incomplete"] is True
+    assert "module_defaults_incomplete" not in content_node_to_opa_dict(caller, graph)
+
+
+def test_include_templated_args_mark_unknown_applied_defaults_incomplete() -> None:
+    """Templated include args could supply apply and require explicit coverage."""
+    graph = ContentGraph()
+    caller = _defaults_node(graph, "caller", NodeType.TASK)
+    caller.module = "include_tasks"
+    caller.options["args"] = "{{ include_arguments }}"
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    graph.add_edge(caller.node_id, task.node_id, EdgeType.INCLUDE)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_incomplete"] is True
+
+
+@pytest.mark.parametrize("edge_type", [EdgeType.DEPENDENCY, EdgeType.INCLUDE, EdgeType.IMPORT])  # type: ignore[untyped-decorator]
+def test_defaults_contexts_follow_roles_across_plays(edge_type: EdgeType) -> None:
+    """Role and dependent-role tasks keep each play's inherited defaults.
+
+    Args:
+        edge_type: Static role, included role, or imported role relationship.
+    """
+    graph = ContentGraph()
+    role = _defaults_node(graph, "role", NodeType.ROLE)
+    dependency = _defaults_node(graph, "dependency", NodeType.ROLE)
+    handler = _defaults_node(graph, "handler", NodeType.HANDLER)
+    graph.add_edge(role.node_id, dependency.node_id, EdgeType.DEPENDENCY)
+    graph.add_edge(dependency.node_id, handler.node_id, EdgeType.CONTAINS)
+    for name in ("first", "second"):
+        play = _defaults_node(graph, name, NodeType.PLAY, {"ansible.builtin.file": {"owner": name}})
+        if edge_type == EdgeType.DEPENDENCY:
+            graph.add_edge(play.node_id, role.node_id, edge_type)
+        else:
+            caller = _defaults_node(graph, name + "/caller", NodeType.TASK)
+            graph.add_edge(play.node_id, caller.node_id, EdgeType.CONTAINS)
+            graph.add_edge(caller.node_id, role.node_id, edge_type)
+    assert content_node_to_opa_dict(handler, graph)["module_defaults_contexts"] == [
+        [{"ansible.builtin.file": {"owner": "first"}}],
+        [{"ansible.builtin.file": {"owner": "second"}}],
+    ]
+
+
+def test_defaults_contexts_ignore_nonpositional_edges_and_duplicate_section_edges() -> None:
+    """Notifications and data flow cannot inject layers or create false cycles."""
+    graph = ContentGraph()
+    block = _defaults_node(graph, "block", NodeType.BLOCK, {"file": {"owner": "block"}})
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    unrelated = _defaults_node(graph, "unrelated", NodeType.TASK, {"file": {"owner": "unrelated"}})
+    graph.add_edge(block.node_id, task.node_id, EdgeType.CONTAINS)
+    graph.add_edge(block.node_id, task.node_id, EdgeType.RESCUE)
+    graph.add_edge(block.node_id, task.node_id, EdgeType.ALWAYS)
+    for edge_type in (EdgeType.NOTIFY, EdgeType.DATA_FLOW, EdgeType.INVOKES, EdgeType.DEPENDENCY):
+        graph.add_edge(unrelated.node_id, task.node_id, edge_type)
+        graph.add_edge(task.node_id, unrelated.node_id, edge_type)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [[{"file": {"owner": "block"}}]]
+    assert "module_defaults_incomplete" not in payload
+
+
+@pytest.mark.parametrize("count", [64, 65])  # type: ignore[untyped-decorator]
+def test_defaults_context_cap_propagates_incompleteness(count: int) -> None:
+    """Only distinct contexts consume the budget and truncation reaches children.
+
+    Args:
+        count: Number of distinct inherited defaults alternatives.
+    """
+    graph = ContentGraph()
+    shared = _defaults_node(graph, "shared", NodeType.TASKFILE)
+    task = _defaults_node(graph, "task", NodeType.TASK, {"file": {}})
+    graph.add_edge(shared.node_id, task.node_id, EdgeType.CONTAINS)
+    for index in range(count):
+        parent = _defaults_node(graph, f"parent-{index:02}", NodeType.PLAY, {"file": {"owner": index}})
+        graph.add_edge(parent.node_id, shared.node_id, EdgeType.INCLUDE)
+    # Duplicate positional paths do not use additional context capacity.
+    graph.add_edge("parent-00", shared.node_id, EdgeType.IMPORT)
+    payload = content_node_to_opa_dict(task, graph)
+    contexts = payload["module_defaults_contexts"]
+    assert isinstance(contexts, list) and len(contexts) == 64
+    assert payload.get("module_defaults_incomplete", False) is (count > 64)
+    assert all(isinstance(context, list) and context[-1] == {"file": {}} for context in contexts)
+
+
+def test_defaults_context_identity_retains_group_mapping_order() -> None:
+    """Equal mappings with different group order remain distinct raw contexts."""
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    groups: YAMLDict = {
+        "group/example.testing.first": {"mode": "0644"},
+        "group/example.testing.second": {"mode": "0755"},
+    }
+    for name, defaults in (("first", groups), ("second", dict(reversed(list(groups.items()))))):
+        parent = _defaults_node(graph, name, NodeType.PLAY, defaults)
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    contexts = content_node_to_opa_dict(task, graph)["module_defaults_contexts"]
+    assert isinstance(contexts, list) and len(contexts) == 2
+    for context, expected in zip(contexts, (list(groups), list(reversed(groups))), strict=True):
+        assert isinstance(context, list) and isinstance(context[0], dict)
+        assert list(context[0]) == expected
+
+
+def test_defaults_contexts_deduplicate_equivalent_invocations_before_capping() -> None:
+    """Many calls with identical raw layers stay complete and use one context."""
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    for index in range(100):
+        parent = _defaults_node(graph, f"parent-{index:03}", NodeType.PLAY, {"file": {"owner": "same"}})
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [[{"file": {"owner": "same"}}]]
+    assert "module_defaults_incomplete" not in payload
+
+
+def test_defaults_context_cycles_are_incomplete_and_standalone_keeps_local_layer() -> None:
+    """Cycles cannot fabricate complete ancestry; standalone tasks retain local data."""
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK, [{"file": {"mode": "0644"}}, {"file": {}}])
+    parent = _defaults_node(graph, "parent", NodeType.BLOCK)
+    graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    graph.add_edge(task.node_id, parent.node_id, EdgeType.INCLUDE)
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == []
+    assert payload["module_defaults_incomplete"] is True
+    assert "module_defaults_inactive" not in payload
+    assert content_node_to_opa_dict(task)["module_defaults_contexts"] == [[task.options["module_defaults"]]]
+
+
+@pytest.mark.parametrize("depth", [256, 257])  # type: ignore[untyped-decorator]
+def test_defaults_layer_depth_is_bounded_before_path_copying(depth: int) -> None:
+    """Deep positional paths cannot accumulate unbounded layer tuples.
+
+    Args:
+        depth: Number of raw defaults layers along the positional path.
+    """
+    graph = ContentGraph()
+    parent = None
+    for index in range(depth):
+        block = _defaults_node(graph, f"block-{index}", NodeType.BLOCK, {"file": {"owner": "root"}})
+        if parent is not None:
+            graph.add_edge(parent.node_id, block.node_id, EdgeType.CONTAINS)
+        parent = block
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    assert parent is not None
+    graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    payload = content_node_to_opa_dict(task, graph)
+    if depth == 256:
+        contexts = payload["module_defaults_contexts"]
+        assert isinstance(contexts, list) and isinstance(contexts[0], list) and len(contexts[0]) == depth
+        assert "module_defaults_incomplete" not in payload
+    else:
+        assert payload["module_defaults_incomplete"] is True
+        assert payload["module_defaults_contexts"] == []
+        assert "module_defaults_inactive" not in payload
+
+
+@pytest.mark.parametrize("scope", ["play", "task", "apply"])  # type: ignore[untyped-decorator]
+def test_deep_raw_defaults_become_incomplete_without_crashing(scope: str) -> None:
+    """Recursive conversion failures cannot abort hierarchy argument context.
+
+    Args:
+        scope: Location containing an excessively deep raw defaults value.
+    """
+    graph = ContentGraph()
+    raw: YAMLValue = {}
+    for _index in range(2000):
+        raw = {"nested": raw}
+    task = _defaults_node(graph, "task", NodeType.TASK, raw if scope == "task" else None)
+    if scope == "play":
+        parent = _defaults_node(graph, "play", NodeType.PLAY, raw)
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    elif scope == "apply":
+        parent = _defaults_node(graph, "caller", NodeType.TASK)
+        parent.module = "include_tasks"
+        parent.module_options = {"apply": {"module_defaults": raw}}
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.INCLUDE)
+    assert content_node_to_opa_dict(task, graph)["module_defaults_incomplete"] is True
+    if scope == "task":
+        assert content_node_to_opa_dict(task)["module_defaults_incomplete"] is True
+
+
+@pytest.mark.parametrize("scope", ["task", "play", "apply", "role"])  # type: ignore[untyped-decorator]
+def test_defaults_alias_expansion_is_bounded(scope: str) -> None:
+    """Shared aliases have a small source but exponentially large JSON output.
+
+    Args:
+        scope: Defaults declaration position in the execution graph.
+    """
+    value: YAMLValue = "leaf"
+    for _ in range(24):
+        value = [value, value]
+    defaults: YAMLDict = {"file": {"owner": value}}
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK, defaults if scope == "task" else None)
+    if scope == "play":
+        parent = _defaults_node(graph, "play", NodeType.PLAY, defaults)
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.CONTAINS)
+    elif scope == "apply":
+        parent = _defaults_node(graph, "include", NodeType.TASK)
+        parent.module = "include_tasks"
+        parent.module_options = {"apply": {"module_defaults": defaults}}
+        graph.add_edge(parent.node_id, task.node_id, EdgeType.INCLUDE)
+        with pytest.raises(OpaPayloadSerializationError, match="module_options on include"):
+            content_node_to_opa_dict(parent, graph)
+    elif scope == "role":
+        parent = _defaults_node(graph, "play", NodeType.PLAY)
+        role = _defaults_node(graph, "role", NodeType.ROLE)
+        graph.add_edge(parent.node_id, role.node_id, EdgeType.DEPENDENCY)
+        graph.g[parent.node_id][role.node_id][0]["role_invocation"] = {"module_defaults": defaults}
+        graph.add_edge(role.node_id, task.node_id, EdgeType.CONTAINS)
+    result = content_node_to_opa_dict(task, graph)
+    assert result["module_defaults_incomplete"] is True
+    if scope == "task":
+        assert content_node_to_opa_dict(task)["module_defaults_incomplete"] is True
+
+
+def test_inactive_include_cannot_contaminate_active_shared_task() -> None:
+    """An unused role file cannot make another invocation's apply context unknown."""
+    graph = ContentGraph()
+    role = _defaults_node(graph, "role", NodeType.ROLE)
+    main = _defaults_node(graph, "main.yml", NodeType.TASKFILE)
+    unused = _defaults_node(graph, "unused.yml", NodeType.TASKFILE)
+    for node, name in ((main, "main.yml"), (unused, "unused.yml")):
+        graph.add_edge(role.node_id, node.node_id, EdgeType.CONTAINS)
+        graph.g[role.node_id][node.node_id][0].update(role_section="tasks", role_file=name)
+    inactive = _defaults_node(graph, "inactive", NodeType.TASK)
+    inactive.module = "include_tasks"
+    inactive.module_options = {"apply": "{{ unknown }}"}
+    graph.add_edge(unused.node_id, inactive.node_id, EdgeType.CONTAINS)
+    active = _defaults_node(graph, "active", NodeType.TASK, {"file": {"owner": "root"}})
+    active.module = "include_tasks"
+    shared = _defaults_node(graph, "shared", NodeType.TASKFILE)
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    graph.add_edge(inactive.node_id, shared.node_id, EdgeType.INCLUDE)
+    graph.add_edge(active.node_id, shared.node_id, EdgeType.INCLUDE)
+    graph.add_edge(shared.node_id, task.node_id, EdgeType.CONTAINS)
+    result = content_node_to_opa_dict(task, graph)
+    assert result["module_defaults_contexts"] == [[{"file": {"owner": "root"}}]]
+    assert "module_defaults_incomplete" not in result
+
+
+def test_repeated_large_scalar_aliases_are_bounded() -> None:
+    """Repeated long strings also expand the JSON despite a low node count."""
+    graph = ContentGraph()
+    value = "x" * 100_000
+    task = _defaults_node(graph, "task", NodeType.TASK, {"file": {"owner": [value] * 100}})
+    assert content_node_to_opa_dict(task, graph)["module_defaults_incomplete"] is True
+
+
+def test_oversized_arguments_fail_before_expanding_risk_annotations() -> None:
+    """A risk source cutoff cannot weaken policy input or reach risk inference."""
+    value: YAMLValue = "leaf"
+    for _ in range(24):
+        value = [value, value]
+    task = ContentNode(
+        identity=NodeIdentity(path="task", node_type=NodeType.TASK),
+        module="ansible.builtin.get_url",
+        module_options={"url": value, "dest": "/tmp/file"},
+    )
+    with (
+        patch("apme_engine.engine.graph_opa_payload._inbound_risk_annotation", side_effect=AssertionError),
+        pytest.raises(OpaPayloadSerializationError, match="OPA policy assessment incomplete.*module_options on task"),
+    ):
+        content_node_to_opa_dict(task)
+
+
+def test_aggregate_defaults_contexts_are_bounded() -> None:
+    """Many individually valid invocation layers cannot create an oversized payload."""
+    graph = ContentGraph()
+    task = _defaults_node(graph, "task", NodeType.TASK)
+    for index in range(12):
+        caller = _defaults_node(
+            graph, f"caller-{index:02}", NodeType.PLAY, {"file": {"owner": "x" * 800_000 + str(index)}}
+        )
+        graph.add_edge(caller.node_id, task.node_id, EdgeType.CONTAINS)
+    result = content_node_to_opa_dict(task, graph)
+    assert result["module_defaults_contexts"] == []
+    assert result["module_defaults_incomplete"] is True
+
+
+@pytest.mark.parametrize("scope", ["task", "apply", "role"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("limit", ["nodes", "bytes"])  # type: ignore[untyped-decorator]
+def test_defaults_cache_is_bounded_before_building_hierarchy(scope: str, limit: str) -> None:
+    """Individually safe alias layers cannot accumulate an unbounded cache.
+
+    Args:
+        scope: Local task defaults, include apply data, or role call metadata.
+        limit: Aggregate allocation allowance exhausted by several valid layers.
+    """
+    from apme_engine.engine import graph_opa_payload
+
+    value: YAMLValue = "x" * 900 if limit == "bytes" else "leaf"
+    if limit == "nodes":
+        for _ in range(6):
+            value = [value, value]
+    defaults: YAMLDict = {"file": {"owner": value}}
+    graph = ContentGraph()
+    tasks: list[ContentNode] = []
+    for index in range(4):
+        task = _defaults_node(graph, f"task-{index}", NodeType.TASK, defaults if scope == "task" else None)
+        tasks.append(task)
+        if scope != "task":
+            caller = _defaults_node(graph, f"caller-{index}", NodeType.TASK)
+            caller.module = "include_tasks" if scope == "apply" else "include_role"
+            target = _defaults_node(graph, f"target-{index}", NodeType.TASKFILE if scope == "apply" else NodeType.ROLE)
+            graph.add_edge(caller.node_id, target.node_id, EdgeType.INCLUDE)
+            graph.add_edge(target.node_id, task.node_id, EdgeType.CONTAINS)
+            if scope == "apply":
+                caller.module_options = {"apply": {"module_defaults": defaults}}
+            else:
+                caller.module_options = {"module_defaults": defaults}
+    independent = _defaults_node(graph, "independent", NodeType.TASK)
+
+    with (
+        patch.object(graph_opa_payload, "_DEFAULTS_CACHE_NODE_LIMIT", 300 if limit == "nodes" else 200_000),
+        patch.object(
+            graph_opa_payload, "_HIERARCHY_DEFAULTS_BYTE_LIMIT", 2048 if limit == "bytes" else 32 * 1024 * 1024
+        ),
+    ):
+        # Inspect the cache before any hierarchy output budget can conceal growth.
+        contexts = graph_opa_payload._build_module_defaults_contexts(graph)
+    for task in tasks[:2]:
+        assert not contexts[task.node_id].incomplete
+        assert list(contexts[task.node_id].paths.values()) == [(defaults,)]
+    for task in tasks[2:]:
+        assert contexts[task.node_id].incomplete
+        payload = content_node_to_opa_dict(task, graph, _module_defaults_contexts=contexts)
+        assert payload["module_defaults_incomplete"] is True
+        assert "module_defaults_inactive" not in payload
+    independent_payload = content_node_to_opa_dict(independent, graph, _module_defaults_contexts=contexts)
+    assert independent_payload["module_defaults_contexts"] == [[]]
+    assert "module_defaults_incomplete" not in independent_payload
+
+
+def test_hierarchy_budget_bounds_repeated_defaults_across_tasks() -> None:
+    """A shared defaults layer cannot expand without bound across many tasks."""
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    root = _defaults_node(graph, "site.yml", NodeType.PLAYBOOK)
+    play = _defaults_node(graph, "site.yml/play", NodeType.PLAY, {"file": {"owner": "x" * 400}})
+    graph.add_edge(root.node_id, play.node_id, EdgeType.CONTAINS)
+    tasks = []
+    for index in range(5):
+        task = _defaults_node(graph, f"site.yml/task-{index}", NodeType.TASK)
+        graph.add_edge(play.node_id, task.node_id, EdgeType.CONTAINS)
+        tasks.append(task)
+    with patch.object(graph_opa_payload, "_HIERARCHY_DEFAULTS_BYTE_LIMIT", 1024):
+        batch = graph_opa_payload.content_nodes_to_opa_dicts(tasks, graph)
+        hierarchy = build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+    trees = hierarchy["hierarchy"]
+    assert isinstance(trees, list) and isinstance(trees[0], dict)
+    tree_nodes = trees[0]["nodes"]
+    assert isinstance(tree_nodes, list)
+    for nodes in (batch, tree_nodes):
+        serialized = [node for node in nodes if isinstance(node, dict) and node["type"] == "taskcall"]
+        assert len(serialized) == 5
+        assert any(node.get("module_defaults_incomplete") for node in serialized)
+        assert any(not node.get("module_defaults_incomplete") for node in serialized)
+
+
+@pytest.mark.parametrize("mode", ["batch", "hierarchy"])  # type: ignore[untyped-decorator]
+def test_zero_defaults_budget_preserves_empty_and_inactive_contexts(mode: str) -> None:
+    """Empty execution context and inactive inventory need no defaults allowance.
+
+    Args:
+        mode: Incremental node batch or full hierarchy serialization.
+    """
+    from pathlib import Path
+
+    from apme_engine.engine import graph_opa_payload
+    from apme_engine.validators.ansible.module_defaults import resolve_module_defaults
+
+    graph = ContentGraph()
+    role = _defaults_node(graph, "role", NodeType.ROLE)
+    tasks = []
+    for name in ("main.yml", "unused.yml"):
+        taskfile = _defaults_node(graph, name, NodeType.TASKFILE)
+        graph.add_edge(role.node_id, taskfile.node_id, EdgeType.CONTAINS)
+        graph.g[role.node_id][taskfile.node_id][0].update(role_section="tasks", role_file=name)
+        task = _defaults_node(graph, f"{name}/task", NodeType.TASK)
+        task.module_options = {"path": "/tmp/example"}
+        graph.add_edge(taskfile.node_id, task.node_id, EdgeType.CONTAINS)
+        tasks.append(task)
+    cycle = _defaults_node(graph, "cycle", NodeType.BLOCK)
+    cyclic_task = _defaults_node(graph, "cyclic-task", NodeType.TASK)
+    graph.add_edge(role.node_id, cycle.node_id, EdgeType.CONTAINS)
+    graph.add_edge(cycle.node_id, cyclic_task.node_id, EdgeType.CONTAINS)
+    graph.add_edge(cyclic_task.node_id, cycle.node_id, EdgeType.CONTAINS)
+    tasks.append(cyclic_task)
+
+    with patch.object(graph_opa_payload, "_HIERARCHY_DEFAULTS_BYTE_LIMIT", 0):
+        if mode == "batch":
+            payloads = graph_opa_payload.content_nodes_to_opa_dicts(tasks, graph)
+        else:
+            hierarchy = build_hierarchy_from_graph(graph, scan_type="role", scan_name="example")
+            trees = hierarchy["hierarchy"]
+            assert isinstance(trees, list) and isinstance(trees[0], dict)
+            nodes = trees[0]["nodes"]
+            assert isinstance(nodes, list)
+            payloads = [node for node in nodes if isinstance(node, dict) and node["type"] == "taskcall"]
+    by_key = {node["key"]: node for node in payloads}
+    active, inactive = (by_key[task.node_id] for task in tasks[:2])
+    assert active["module_defaults_contexts"] == [[]]
+    assert "module_defaults_incomplete" not in active
+    assert "args_serialization_incomplete" not in active
+    assert active["module_options"] == {"path": "/tmp/example"}
+    assert inactive["module_defaults_contexts"] == []
+    assert inactive["module_defaults_inactive"] is True
+    assert "module_defaults_incomplete" not in inactive
+    incomplete = by_key[cyclic_task.node_id]
+    assert incomplete["module_defaults_incomplete"] is True
+    assert "module_defaults_inactive" not in incomplete
+    with patch("apme_engine.validators.ansible.module_defaults._resolve", side_effect=AssertionError):
+        result = resolve_module_defaults([dict(active), dict(inactive), dict(incomplete)], Path("/unused-runtime"))
+    assert result.tasks == [active]
+    assert len(result.violations) == 1
+    assert "context is incomplete" in str(result.violations[0]["message"])
+
+
+@pytest.mark.parametrize("mode", ["batch", "hierarchy"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("limit", ["nodes", "bytes"])  # type: ignore[untyped-decorator]
+def test_shared_include_arguments_use_batch_work_budget(mode: str, limit: str) -> None:
+    """Repeated apply defaults cannot bypass the aggregate conversion allowance.
+
+    Args:
+        mode: Incremental batch or two hierarchy roots sharing tasks.
+        limit: The work allowance exhausted by repeated argument conversion.
+    """
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    roots = [_defaults_node(graph, name, NodeType.PLAYBOOK) for name in ("first.yml", "second.yml")]
+    target = _defaults_node(graph, "inner.yml", NodeType.TASKFILE)
+    arguments: YAMLDict = {"file": "inner.yml", "apply": {"module_defaults": {"file": {"owner": "x" * 400}}}}
+    tasks = []
+    for index in range(100):
+        task = _defaults_node(graph, f"task-{index:03}", NodeType.TASK)
+        task.module = "ansible.builtin.include_tasks"
+        task.module_options = arguments
+        graph.add_edge(task.node_id, target.node_id, EdgeType.INCLUDE)
+        for root in roots:
+            graph.add_edge(root.node_id, task.node_id, EdgeType.CONTAINS, position=index)
+        tasks.append(task)
+    empty = _defaults_node(graph, "z-empty", NodeType.TASK)
+    for root in roots:
+        graph.add_edge(root.node_id, empty.node_id, EdgeType.CONTAINS, position=101)
+    tasks.append(empty)
+    original = graph_opa_payload.json_safe
+    allowances = []
+    before = []
+
+    def convert(value: YAMLValue, *, _budget: list[int] | None = None) -> YAMLValue:
+        """Observe each argument conversion's remaining shared work allowance.
+
+        Args:
+            value: Authored arguments or defaults context sent to the converter.
+            _budget: Shared conversion work allowance.
+
+        Returns:
+            The real converter's result.
+        """
+        if isinstance(value, dict) and "apply" in value:
+            assert _budget is not None
+            allowances.append(_budget)
+            before.append(tuple(_budget))
+        return original(value, _budget=_budget)
+
+    node_limit = 30 if limit == "nodes" else 200_000
+    byte_limit = 2048 if limit == "bytes" else 32 * 1024 * 1024
+    with (
+        patch.object(graph_opa_payload, "_HIERARCHY_DEFAULTS_BYTE_LIMIT", 0),
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_NODE_LIMIT", node_limit),
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_BYTE_LIMIT", byte_limit),
+        patch.object(graph_opa_payload, "json_safe", side_effect=convert),
+        pytest.raises(OpaPayloadSerializationError, match="module_options on task-"),
+    ):
+        if mode == "batch":
+            graph_opa_payload.content_nodes_to_opa_dicts(tasks, graph)
+        else:
+            build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+    assert 1 < len(allowances) <= 6
+    assert all(allowance is allowances[0] for allowance in allowances)
+    assert before[0] == (node_limit, byte_limit)
+    assert before[-1][0 if limit == "nodes" else 1] < before[0][0 if limit == "nodes" else 1]
+    assert all(0 <= allowance[0] <= node_limit and 0 <= allowance[1] <= byte_limit for allowance in before)
+    assert all(task.module_options is arguments for task in tasks[:-1])
+    assert arguments == {"file": "inner.yml", "apply": {"module_defaults": {"file": {"owner": "x" * 400}}}}
+
+
+@pytest.mark.parametrize("mode", ["batch", "hierarchy"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("limit", ["nodes", "bytes"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "scope",
+    ["local_action", "vars", "loop", "environment", "with_items", "play-vars", "play-environment", "play-become"],
+)
+def test_policy_options_share_aggregate_work_budget(mode: str, limit: str, scope: str) -> None:
+    """Repeated aliases in options must fail assessment before unbounded copying.
+
+    Args:
+        mode: Incremental batch or full hierarchy serialization.
+        limit: Node or byte allowance exhausted by repeated option conversions.
+        scope: Task or play policy field retaining the shared alias.
+    """
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    root = _defaults_node(graph, "site.yml", NodeType.PLAYBOOK)
+    shared: YAMLDict = {"aliased": ["private-source-value" * 10] * 4}
+    nodes = []
+    for index in range(100):
+        node = _defaults_node(graph, f"node-{index:03}", NodeType.PLAY if scope.startswith("play-") else NodeType.TASK)
+        if scope == "play-vars":
+            node.variables = shared
+        elif scope == "play-become":
+            node.become = {"become_user": shared}
+        else:
+            node.options = {scope.removeprefix("play-"): shared}
+        graph.add_edge(root.node_id, node.node_id, EdgeType.CONTAINS, position=index)
+        nodes.append(node)
+    original = graph_opa_payload.json_safe
+    allowances: list[list[int]] = []
+    copied = 0
+
+    def convert(value: YAMLValue, *, _budget: list[int] | None = None) -> YAMLValue:
+        """Observe conversion of the aliased field across distinct nodes.
+
+        Args:
+            value: Policy field or defaults context being copied.
+            _budget: Shared conversion allowance.
+
+        Returns:
+            The bounded converter's result.
+        """
+        nonlocal copied
+        if value is shared:
+            assert _budget is not None
+            allowances.append(_budget)
+            result = original(value, _budget=_budget)
+            copied += 1
+            return result
+        return original(value, _budget=_budget)
+
+    field_name = "become_user" if scope == "play-become" else scope.removeprefix("play-")
+    with (
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_NODE_LIMIT", 20 if limit == "nodes" else 200_000),
+        patch.object(
+            graph_opa_payload, "_HIERARCHY_ARGUMENT_BYTE_LIMIT", 2048 if limit == "bytes" else 32 * 1024 * 1024
+        ),
+        patch.object(graph_opa_payload, "json_safe", side_effect=convert),
+        pytest.raises(OpaPayloadSerializationError, match=rf"options\.{field_name} on node-") as error,
+    ):
+        if mode == "batch":
+            graph_opa_payload.content_nodes_to_opa_dicts(nodes, graph)
+        else:
+            build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+    assert 0 < copied < 5
+    assert len(allowances) == copied + 1
+    assert all(allowance is allowances[0] for allowance in allowances)
+    assert "private-source-value" not in str(error.value)
+    assert shared == {"aliased": ["private-source-value" * 10] * 4}
+
+
+@pytest.mark.parametrize("mode", ["batch", "hierarchy"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("limit", ["nodes", "bytes"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "detail", ["plain", "command", "pkg", "version", "src", "dest", "path", "exec_files"]
+)
+def test_annotations_and_locations_share_aggregate_work_budget(mode: str, limit: str, detail: str) -> None:
+    """Annotation helpers cannot reset the shared policy conversion allowance.
+
+    Args:
+        mode: Incremental batch or full hierarchy serialization.
+        limit: Node or byte allowance exhausted by repeated annotation conversion.
+        detail: Annotation value converted through a nested helper.
+    """
+    from apme_engine.engine import graph_opa_payload
+    from apme_engine.engine.models import Annotation, Arguments, Location, RiskAnnotation
+
+    graph = ContentGraph()
+    root = _defaults_node(graph, "site.yml", NodeType.PLAYBOOK)
+    raw = "private-source-value" * 20
+    annotation: Annotation
+    if detail == "plain":
+        annotation = Annotation(key=raw)
+    else:
+        risk = RiskAnnotation(risk_type="cmd_exec")
+        if detail == "command":
+            risk.command = Arguments(raw=[raw] * 4)
+        elif detail in {"src", "dest", "path", "exec_files"}:
+            location = Location(type="file", value=raw)
+            setattr(risk, detail, [location] * 4 if detail == "exec_files" else location)
+        else:
+            setattr(risk, detail, [raw] * 4)
+        annotation = risk
+    nodes = []
+    for index in range(100):
+        node = _defaults_node(graph, f"task-{index:03}", NodeType.TASK)
+        node.annotations = [annotation]
+        graph.add_edge(root.node_id, node.node_id, EdgeType.CONTAINS, position=index)
+        nodes.append(node)
+    original = graph_opa_payload.json_safe
+    allowances: list[list[int]] = []
+
+    def convert(value: YAMLValue, *, _budget: list[int] | None = None) -> YAMLValue:
+        """Track work charged by annotation and location helper calls.
+
+        Args:
+            value: Policy field or defaults context being copied.
+            _budget: Shared conversion allowance.
+
+        Returns:
+            The bounded converter's result.
+        """
+        if not isinstance(value, list):
+            assert _budget is not None
+        if _budget is not None:
+            allowances.append(_budget)
+        return original(value, _budget=_budget)
+
+    with (
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_NODE_LIMIT", 30 if limit == "nodes" else 200_000),
+        patch.object(
+            graph_opa_payload, "_HIERARCHY_ARGUMENT_BYTE_LIMIT", 2048 if limit == "bytes" else 32 * 1024 * 1024
+        ),
+        patch.object(graph_opa_payload, "json_safe", side_effect=convert),
+        pytest.raises(OpaPayloadSerializationError, match="annotations on task-") as error,
+    ):
+        if mode == "batch":
+            graph_opa_payload.content_nodes_to_opa_dicts(nodes, graph)
+        else:
+            build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+    assert 1 < len(allowances) < 50
+    assert all(allowance is allowances[0] for allowance in allowances)
+    assert "private-source-value" not in str(error.value)
+    assert all(node.annotations[0] is annotation for node in nodes)
+
+
+def test_policy_work_budget_is_shared_across_fields_nodes_and_hierarchy_roots() -> None:
+    """Neither a different field nor another hierarchy root resets the allowance."""
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    task = _defaults_node(graph, "shared-task", NodeType.TASK)
+    task.module_options = {"path": "x" * 100}
+    task.options = {"environment": {"VALUE": "x" * 100}}
+    play = _defaults_node(graph, "shared-play", NodeType.PLAY)
+    play.variables = {"value": "x" * 100}
+    graph.add_edge(play.node_id, task.node_id, EdgeType.CONTAINS)
+    for name in ("first.yml", "second.yml"):
+        root = _defaults_node(graph, name, NodeType.PLAYBOOK)
+        graph.add_edge(root.node_id, play.node_id, EdgeType.CONTAINS)
+    original = graph_opa_payload.content_node_to_opa_dict
+    visited: list[str] = []
+
+    def serialize(node: ContentNode, **kwargs: object) -> YAMLDict:
+        """Record root traversal while preserving the real serializer.
+
+        Args:
+            node: The current hierarchy node.
+            **kwargs: Private context and allowance arguments.
+
+        Returns:
+            Serialized node if it fits the shared work allowance.
+        """
+        visited.append(node.node_id)
+        return original(node, **kwargs)  # type: ignore[arg-type]
+
+    with (
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_BYTE_LIMIT", 500),
+        patch.object(graph_opa_payload, "content_node_to_opa_dict", side_effect=serialize),
+        pytest.raises(OpaPayloadSerializationError, match="shared-task"),
+    ):
+        build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+    assert visited.count("shared-task") == 2
+    assert visited.index("second.yml") > visited.index("shared-task")
+
+
+def test_inferred_annotation_conversion_cannot_bypass_remaining_work_budget() -> None:
+    """The inferred copy is charged in addition to its authored arguments."""
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    task = _defaults_node(graph, "download", NodeType.TASK)
+    task.module = "ansible.builtin.get_url"
+    task.module_options = {"url": "https://example.test/" + "x" * 300, "dest": "/tmp/example"}
+    with (
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_BYTE_LIMIT", 500),
+        pytest.raises(OpaPayloadSerializationError, match="annotations.inbound_transfer on download"),
+    ):
+        graph_opa_payload.content_nodes_to_opa_dicts([task], graph)
+
+
+def test_empty_policy_input_needs_no_conversion_work_budget() -> None:
+    """A task with no arguments, options, or annotations remains assessable."""
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    task = _defaults_node(graph, "empty-task", NodeType.TASK)
+    with (
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_NODE_LIMIT", 0),
+        patch.object(graph_opa_payload, "_HIERARCHY_ARGUMENT_BYTE_LIMIT", 0),
+        patch.object(graph_opa_payload, "_HIERARCHY_DEFAULTS_BYTE_LIMIT", 0),
+    ):
+        assert graph_opa_payload.content_nodes_to_opa_dicts([task], graph) == [content_node_to_opa_dict(task, graph)]
+
+
+@pytest.mark.parametrize("mode", ["batch", "hierarchy"])  # type: ignore[untyped-decorator]
+def test_exhausted_defaults_budget_skips_copies_and_caches_shared_sizes(mode: str) -> None:
+    """Rejected inherited contexts cannot repeatedly copy a large shared layer.
+
+    Args:
+        mode: Incremental node batch or a hierarchy with two shared roots.
+    """
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    play = _defaults_node(graph, "play", NodeType.PLAY, {"file": {"owner": "x" * 400}})
+    for name in ("first.yml", "second.yml"):
+        root = _defaults_node(graph, name, NodeType.PLAYBOOK)
+        graph.add_edge(root.node_id, play.node_id, EdgeType.CONTAINS)
+    tasks = []
+    for index in range(100):
+        task = _defaults_node(graph, f"task-{index:03}", NodeType.TASK)
+        task.module_options = {"path": "/tmp/example"}
+        graph.add_edge(play.node_id, task.node_id, EdgeType.CONTAINS, position=index)
+        tasks.append(task)
+    small = _defaults_node(graph, "small", NodeType.TASK, {"file": {"owner": "small"}})
+    for name in ("first.yml", "second.yml"):
+        graph.add_edge(name, small.node_id, EdgeType.CONTAINS, position=101)
+    tasks.append(small)
+    # Capture only context-copy attempts, excluding raw cache construction and
+    # unrelated authored arguments serialized by the same json_safe helper.
+    context_copies = 0
+    original = graph_opa_payload.json_safe
+
+    def convert(value: YAMLValue, *, _budget: list[int] | None = None) -> YAMLValue:
+        """Count task-context copying without changing JSON conversion.
+
+        Args:
+            value: Value passed to the real converter.
+            _budget: Optional cache construction allowance.
+
+        Returns:
+            The original converter's result.
+        """
+        nonlocal context_copies
+        if isinstance(value, list) and value and isinstance(value[0], list):
+            context_copies += 1
+        return original(value, _budget=_budget)
+
+    with (
+        patch.object(graph_opa_payload, "_HIERARCHY_DEFAULTS_BYTE_LIMIT", 1024),
+        patch.object(graph_opa_payload, "json_safe", side_effect=convert),
+        patch.object(
+            graph_opa_payload, "_measure_defaults_layer", wraps=graph_opa_payload._measure_defaults_layer
+        ) as measure,
+    ):
+        if mode == "batch":
+            payloads = graph_opa_payload.content_nodes_to_opa_dicts(tasks, graph)
+        else:
+            hierarchy = build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+            trees = hierarchy["hierarchy"]
+            assert isinstance(trees, list)
+            payloads = []
+            for tree in trees:
+                assert isinstance(tree, dict) and isinstance(tree["nodes"], list)
+                payloads.extend(node for node in tree["nodes"] if isinstance(node, dict) and node["type"] == "taskcall")
+    retained = [node for node in payloads if not node.get("module_defaults_incomplete")]
+    rejected = [node for node in payloads if node.get("module_defaults_incomplete")]
+    assert len(rejected) >= 98
+    assert context_copies == len(retained)
+    assert measure.call_count == 2  # shared large layer and independent small layer
+    assert sum(len(json.dumps(node["module_defaults_contexts"])) for node in retained) <= 1024
+    assert any(node["key"] == small.node_id for node in retained)
+    assert all(node["module_defaults_contexts"] == [] for node in rejected)
+    assert all(node["module_options"] == {"path": "/tmp/example"} for node in rejected)
+
+
+@pytest.mark.parametrize("difference", [0, -1])  # type: ignore[untyped-decorator]
+def test_defaults_preflight_matches_serialized_unicode_budget(difference: int) -> None:
+    """JSON escapes and separators are accounted for before conversion.
+
+    Args:
+        difference: Exact-fit allowance or one byte less than the serialized size.
+    """
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    layer: YAMLDict = {"file": {"é🐍": ['quote"\\\n', True, None, 3.25], "mode": "0644"}}
+    task = _defaults_node(graph, "task", NodeType.TASK, layer)
+    contexts = graph_opa_payload._build_module_defaults_contexts(graph)
+    size = len(json.dumps([[layer]]))
+    remaining = [size + difference]
+    budget = graph_opa_payload._DefaultsPayloadBudget(remaining)
+    original = graph_opa_payload.json_safe
+    copies = 0
+
+    def convert(value: YAMLValue, *, _budget: list[int] | None = None) -> YAMLValue:
+        """Reject unexpected context allocation when the output cannot fit.
+
+        Args:
+            value: Value supplied for conversion.
+            _budget: Optional construction budget.
+
+        Returns:
+            JSON-compatible converted value.
+        """
+        nonlocal copies
+        if isinstance(value, list):
+            copies += 1
+            assert difference == 0, "A rejected context must not be copied"
+        return original(value, _budget=_budget)
+
+    with patch.object(graph_opa_payload, "json_safe", side_effect=convert):
+        payload = content_node_to_opa_dict(
+            task, graph, _module_defaults_contexts=contexts, _defaults_payload_budget=budget
+        )
+    graph_opa_payload._limit_defaults_payload(payload, remaining)
+    if difference == 0:
+        assert payload["module_defaults_contexts"] == [[layer]]
+        assert "module_defaults_incomplete" not in payload
+        assert remaining == [0]
+        assert copies == 1
+    else:
+        assert payload["module_defaults_contexts"] == []
+        assert payload["module_defaults_incomplete"] is True
+        assert remaining == [size - 1]
+        assert copies == 0
+
+
+def test_overexpanded_context_sizes_are_cached_without_conversion() -> None:
+    """A shared context exceeding per-task limits is measured only once."""
+    from apme_engine.engine import graph_opa_payload
+
+    graph = ContentGraph()
+    layer: YAMLDict = {"file": {"owner": ["root"] * 10}}
+    play = _defaults_node(graph, "play", NodeType.PLAY, layer)
+    block = _defaults_node(graph, "block", NodeType.BLOCK, layer)
+    graph.add_edge(play.node_id, block.node_id, EdgeType.CONTAINS)
+    tasks = []
+    for index in range(20):
+        task = _defaults_node(graph, f"task-{index:02}", NodeType.TASK)
+        graph.add_edge(block.node_id, task.node_id, EdgeType.CONTAINS)
+        tasks.append(task)
+    contexts = graph_opa_payload._build_module_defaults_contexts(graph)
+    with (
+        patch.object(graph_opa_payload, "_JSON_SAFE_NODE_LIMIT", 20),
+        patch.object(graph_opa_payload, "_build_module_defaults_contexts", return_value=contexts),
+        patch.object(
+            graph_opa_payload, "_measure_defaults_layer", wraps=graph_opa_payload._measure_defaults_layer
+        ) as measure,
+        patch.object(graph_opa_payload, "json_safe", wraps=graph_opa_payload.json_safe) as convert,
+    ):
+        payloads = graph_opa_payload.content_nodes_to_opa_dicts(tasks, graph)
+    assert measure.call_count == 1
+    assert all(not isinstance(call.args[0], list) for call in convert.call_args_list)
+    assert all(node["module_defaults_incomplete"] is True for node in payloads)
+    assert all(node["module_defaults_contexts"] == [] for node in payloads)
+
+
+def test_incomplete_context_takes_precedence_over_inactive_inventory() -> None:
+    """Conflicting markers must report incomplete coverage instead of skipping it."""
+    from pathlib import Path
+
+    from apme_engine.validators.ansible.module_defaults import resolve_module_defaults
+
+    task: dict[str, object] = {
+        "module": "file",
+        "module_options": {},
+        "module_defaults_contexts": [],
+        "module_defaults_incomplete": True,
+        "module_defaults_inactive": True,
+    }
+    with patch("apme_engine.validators.ansible.module_defaults._resolve", side_effect=AssertionError):
+        result = resolve_module_defaults([task], Path("/unused-runtime"))
+    assert result.tasks == []
+    assert len(result.violations) == 1
+    assert "incomplete" in str(result.violations[0]["message"])
+
+
+def test_full_hierarchy_reuses_one_defaults_context_cache() -> None:
+    """All roots share one positional DP pass and agree with standalone graph calls."""
+    from apme_engine.engine import graph_opa_payload
+
+    graph = _make_minimal_graph()
+    second_root = _defaults_node(graph, "other.yml", NodeType.PLAYBOOK)
+    task = graph.get_node("site.yml/plays[0]/tasks[0]")
+    assert task is not None
+    graph.add_edge(second_root.node_id, task.node_id, EdgeType.IMPORT)
+    expected = content_node_to_opa_dict(task, graph)
+    with (
+        patch.object(
+            graph_opa_payload,
+            "_build_module_defaults_contexts",
+            wraps=graph_opa_payload._build_module_defaults_contexts,
+        ) as build,
+        patch.object(graph, "positional_ancestors", side_effect=AssertionError("No repeated ancestry walks")),
+    ):
+        payload = build_hierarchy_from_graph(graph, scan_type="project", scan_name="example")
+    assert build.call_count == 1
+    with patch.object(
+        graph_opa_payload,
+        "_build_module_defaults_contexts",
+        wraps=graph_opa_payload._build_module_defaults_contexts,
+    ) as batch_build:
+        batch = graph_opa_payload.content_nodes_to_opa_dicts([task, second_root], graph)
+    assert batch_build.call_count == 1
+    assert batch[0] == expected
+    hierarchy = payload["hierarchy"]
+    assert isinstance(hierarchy, list) and len(hierarchy) == 2
+    for tree in hierarchy:
+        assert isinstance(tree, dict) and isinstance(tree["nodes"], list)
+        tasks = [node for node in tree["nodes"] if isinstance(node, dict) and node.get("key") == task.node_id]
+        assert tasks == [expected]

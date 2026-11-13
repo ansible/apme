@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _APME_ENGINE_ROOT = Path(__file__).resolve().parent
 _GRAPH_RULES_DIR = _APME_ENGINE_ROOT / "graph" / "rules"
+_FILE_RULES_DIR = _APME_ENGINE_ROOT / "validators" / "native" / "rules"
 _OPA_BUNDLE_DIR = _APME_ENGINE_ROOT / "validators" / "opa" / "bundle"
 _ANSIBLE_RULES_DIR = _APME_ENGINE_ROOT / "validators" / "ansible" / "rules"
 
@@ -129,6 +130,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
             DISABLED_BY_DEFAULT_GRAPH_RULE_IDS,
             load_graph_rules,
         )
+        from apme_engine.molecule import MOLECULE_RULES
 
         rules_dir = str(_GRAPH_RULES_DIR)
         graph_rules, _ = load_graph_rules(
@@ -175,6 +177,18 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
                             ansible_core_version=fm_def.ansible_core_version,
                         )
                     )
+        defs.extend(
+            reporting_pb2.RuleDefinition(
+                rule_id=rule.rule_id,
+                default_severity=severity_to_proto(get_severity(rule.rule_id)),
+                category="lint",
+                source="native",
+                description=rule.description,
+                scope=_SCOPE_TO_PROTO[rule.scope],
+                enabled=True,
+            )
+            for rule in MOLECULE_RULES
+        )
         logger.info("Collected %d native rules", len(defs))
         return defs
     except Exception:
@@ -186,7 +200,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
             _GRAPH_RULES_DIR,
             "native",
             exclude_status="delegated",
-        )
+        ) + _collect_from_frontmatter(_FILE_RULES_DIR, "native")
 
 
 def _collect_from_frontmatter(
@@ -392,7 +406,7 @@ def _index_rule_doc_files() -> dict[str, Path]:
         are walked in native -> opa -> ansible order).
     """
     index: dict[str, Path] = {}
-    for rule_dir in (_GRAPH_RULES_DIR, _OPA_BUNDLE_DIR, _ANSIBLE_RULES_DIR):
+    for rule_dir in (_GRAPH_RULES_DIR, _FILE_RULES_DIR, _OPA_BUNDLE_DIR, _ANSIBLE_RULES_DIR):
         if not rule_dir.is_dir():
             continue
         for md_path in sorted(rule_dir.glob("*.md")):

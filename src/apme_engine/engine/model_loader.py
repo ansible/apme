@@ -875,6 +875,9 @@ def load_play(
                 continue
             vars_files = [str(x) for x in v]
         elif k == "module_defaults":
+            # Retain the raw declaration for graph validation, including Ansible's
+            # ordered-list form and malformed shapes that need diagnostics.
+            play_options[k] = v
             if not isinstance(v, dict):
                 continue
             module_defaults = cast(dict[str, object], v)
@@ -1105,6 +1108,7 @@ def load_playbooks(
         test_patterns = [
             os.path.join(path, "tests/**/*.ya?ml"),
             os.path.join(path, "molecule/**/*.ya?ml"),
+            os.path.join(path, "extensions/molecule/**/*.ya?ml"),
         ]
         test_results = safe_glob(test_patterns, recursive=True)
         # Merge and deduplicate

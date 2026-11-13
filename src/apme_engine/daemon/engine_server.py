@@ -11,17 +11,19 @@ import asyncio
 import configparser
 import contextlib
 import contextvars
+import datetime
 import difflib
 import json
 import logging
 import os
 import posixpath
+import re
 import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import TypeVar, cast
 
 import grpc
@@ -91,10 +93,11 @@ from apme_engine.daemon.session import (
     SessionStore,
     limit_venv_builds,
 )
+from apme_engine.daemon.validator_errors import RULE_MISSING_VENV, RULE_VALIDATOR_FAILURE
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
-from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
+from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs, parse_noqa
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.rule_ids import normalize_rule_id
@@ -106,6 +109,7 @@ from apme_engine.venv_manager.session import (
     list_installed_collections,
     list_installed_packages,
 )
+from apme_engine.violation_identity import diagnostic_discriminator
 
 logger = logging.getLogger("apme.engine")
 
@@ -129,6 +133,177 @@ _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ENGINE_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
 _GRPC_STREAM_CHUNK_BYTES = 8 * 1024 * 1024
 _MAX_STREAMED_VALIDATE_REQUEST_BYTES = 512 * 1024 * 1024
+
+# These budgets apply to the expanded wire representation, not graph node count.
+# A normal graph can contain tens of thousands of nodes, each with many fields.
+_TRANSPORT_JSON_MAX_BYTES = _GRPC_MAX_MSG
+_TRANSPORT_JSON_MAX_VALUES = 5_000_000
+_TRANSPORT_JSON_MAX_DEPTH = 256
+
+
+class GraphTransportError(ValueError):
+    """Graph content cannot be transported safely; validation is incomplete."""
+
+
+def _bounded_transport_json(value: object) -> bytes:
+    """Convert and bound an expanded JSON document before encoding it.
+
+    Memoized subtree costs charge every alias occurrence while avoiding alias
+    expansion during conversion. Shared containers retain their ordered values;
+    cycles, excessive depth, and oversized output abort without truncation.
+    Unsafe or unsupported content raises ``GraphTransportError``.
+
+    Args:
+        value: Graph or hierarchy data containing inert YAML values.
+
+    Returns:
+        Compact ASCII JSON bytes preserving accepted document values.
+
+    """
+    memo: dict[int, tuple[object, int, int, int]] = {}
+    active: set[int] = set()
+
+    def check(values: int, size: int, depth: int) -> None:
+        """Reject unsafe costs before allocating the expanded document.
+
+        Args:
+            values: Expanded value and key occurrences.
+            size: Expanded JSON bytes.
+            depth: Container nesting depth.
+
+        Raises:
+            GraphTransportError: If any transport budget is exceeded.
+        """
+        if values > _TRANSPORT_JSON_MAX_VALUES or size > _TRANSPORT_JSON_MAX_BYTES:
+            raise GraphTransportError("Graph transport exceeds assessment limits; validation is incomplete")
+        if depth > _TRANSPORT_JSON_MAX_DEPTH:
+            raise GraphTransportError("Graph transport is excessively nested; validation is incomplete")
+
+    def string_size(text: str) -> int:
+        """Count escaped ASCII JSON bytes using bounded temporary chunks.
+
+        Args:
+            text: Literal string or normalized scalar key.
+
+        Returns:
+            Exact JSON string size including quotes.
+        """
+        check(1, len(text) + 2, 0)
+        size = 2
+        for offset in range(0, len(text), 4096):
+            size += len(json.encoder.encode_basestring_ascii(text[offset : offset + 4096])) - 2
+            check(1, size, 0)
+        return size
+
+    def convert(current: object, nesting: int = 0) -> tuple[object, int, int, int]:
+        """Normalize one subtree and calculate its expanded transport costs.
+
+        Args:
+            current: Source subtree, whose container identity may be shared.
+            nesting: Parent container count.
+
+        Returns:
+            Normalized value, occurrence count, JSON bytes, and subtree depth.
+
+        Raises:
+            GraphTransportError: If source content cannot be represented safely.
+        """
+        check(1, 0, nesting)
+        identity = id(current)
+        if identity in active:
+            raise GraphTransportError("Graph transport contains cyclic content; validation is incomplete")
+        if identity in memo:
+            cached = memo[identity]
+            check(cached[1], cached[2], nesting + cached[3])
+            return cached
+        if current is None:
+            result: tuple[object, int, int, int] = (None, 1, 4, 0)
+        elif isinstance(current, bool):
+            result = (current, 1, 4 if current else 5, 0)
+        elif isinstance(current, str):
+            result = (current, 1, string_size(current), 0)
+        elif isinstance(current, int | float):
+            try:
+                number = json.dumps(current)
+            except ValueError:
+                raise GraphTransportError(
+                    "Graph transport contains an oversized number; validation is incomplete"
+                ) from None
+            result = (current, 1, len(number), 0)
+        elif isinstance(current, datetime.date | datetime.time | PurePath):
+            text = str(current)
+            result = (text, 1, string_size(text), 0)
+        elif isinstance(current, bytes):
+            # Python's bytes representation may use four characters per byte.
+            # Bound the conversion itself before creating that representation.
+            check(1, len(current) * 4 + 3, nesting)
+            text = str(current)
+            result = (text, 1, string_size(text), 0)
+        elif isinstance(current, dict | list | tuple):
+            check(len(current) + 1, 2 + max(0, len(current) - 1), nesting + 1)
+            active.add(identity)
+            count, size, height = 1, 2 + max(0, len(current) - 1), 1
+            mapping: dict[str, object] = {}
+            sequence: list[object] = []
+            items = current.items() if isinstance(current, dict) else enumerate(current)
+            for key, item in items:
+                if isinstance(current, dict):
+                    if isinstance(key, str):
+                        name = key
+                    elif key is None or isinstance(key, bool | int | float):
+                        try:
+                            name = json.dumps(key)
+                        except ValueError:
+                            raise GraphTransportError(
+                                "Graph transport contains an oversized key; validation is incomplete"
+                            ) from None
+                    else:
+                        raise GraphTransportError(
+                            "Graph transport contains an unsupported key; validation is incomplete"
+                        )
+                    if name in mapping:
+                        raise GraphTransportError(
+                            "Graph transport contains colliding mapping keys; validation is incomplete"
+                        )
+                    size += string_size(name) + 1
+                    count += 1
+                    check(count, size, nesting + height)
+                converted, child_count, child_size, child_depth = convert(item, nesting + 1)
+                count += child_count
+                size += child_size
+                height = max(height, child_depth + 1)
+                check(count, size, nesting + height)
+                if isinstance(current, dict):
+                    mapping[name] = converted
+                else:
+                    sequence.append(converted)
+            active.remove(identity)
+            result = (mapping if isinstance(current, dict) else sequence, count, size, height)
+        else:
+            raise GraphTransportError("Graph transport contains an unsupported value; validation is incomplete")
+        check(result[1], result[2], nesting + result[3])
+        memo[identity] = result
+        return result
+
+    normalized, _count, _size, _depth = convert(value)
+    return json.dumps(normalized, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+
+
+def _serialize_graph_transport(graph: ContentGraph, *, slim: bool = True) -> bytes:
+    """Serialize a complete graph without truncating authored data.
+
+    Unsafe content raises ``GraphTransportError``.
+
+    Args:
+        graph: Graph supplying the public transport representation.
+        slim: Whether to omit progression and state history.
+
+    Returns:
+        Bounded JSON bytes for validator transport or reporting.
+
+    """
+    return _bounded_transport_json(graph.to_dict(slim=slim))
+
 
 _ANSIBLE_PLUGIN_DIR_NAMES = frozenset({"action_plugins", "library", "module_utils", "modules", "plugins"})
 _ANSIBLE_COLLECTION_PART = "ansible_collections"
@@ -307,7 +482,7 @@ def _sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
 
 
 def _deduplicate_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
-    """Remove duplicate violations sharing the same (rule_id, file, line).
+    """Remove source duplicates while preserving distinct argspec diagnostics.
 
     Args:
         violations: List of violation dicts (may contain duplicates).
@@ -315,13 +490,13 @@ def _deduplicate_violations(violations: list[ViolationDict]) -> list[ViolationDi
     Returns:
         Deduplicated list preserving first occurrence order.
     """
-    seen: set[tuple[str, str, str | int | list[int] | tuple[int, ...] | bool | None]] = set()
+    seen: set[tuple[str, str, str | int | tuple[int, ...] | bool | None, str]] = set()
     out: list[ViolationDict] = []
     for v in violations:
         line: str | int | list[int] | tuple[int, ...] | bool | None = v.get("line")
         if isinstance(line, list | tuple):
             line = tuple(line)
-        dedup_key = (str(v.get("rule_id", "")), str(v.get("file", "")), line)
+        dedup_key = (str(v.get("rule_id", "")), str(v.get("file", "")), line, diagnostic_discriminator(v))
         if dedup_key not in seen:
             seen.add(dedup_key)
             out.append(v)
@@ -382,6 +557,114 @@ def _enrich_violations_from_graph(
         )
         if co_fixes:
             v["co_fixes"] = co_fixes  # type: ignore[assignment]
+
+
+_FILE_FINDING_PATH = re.compile(r"^\$(?:\.|\[|$)")
+
+
+def _is_file_finding(violation: Mapping[str, object]) -> bool:
+    """Distinguish file diagnostics from findings on graph nodes.
+
+    File diagnostics locate a position in uploaded source with a YAML path
+    (``$``, ``$.driver.name``, ``$[0]``); graph findings reference a node ID.
+    Matching the whole path shape keeps findings without a path from being
+    mistaken for graph findings and then looked up as an empty node ID.
+
+    Args:
+        violation: Finding payload from a validator.
+
+    Returns:
+        True for source-position findings rather than graph-node findings.
+    """
+    return _FILE_FINDING_PATH.match(str(violation.get("path", ""))) is not None
+
+
+def _filter_file_noqa(violations: list[ViolationDict]) -> list[ViolationDict]:
+    """Apply source-local noqa to file findings after rule enforcement.
+
+    Args:
+        violations: Findings with original source excerpts and override metadata.
+
+    Returns:
+        Findings excluding unenforced, explicitly suppressed file diagnostics.
+    """
+    return [
+        violation
+        for violation in violations
+        if not _is_file_finding(violation)
+        or violation.get("_enforced")
+        or str(violation.get("rule_id", "")).upper()
+        not in parse_noqa(str(violation.get("original_yaml", "")).split("\n", 1)[0])
+    ]
+
+
+async def _refresh_session_file_violations(session: SessionState) -> None:
+    """Reassess file findings against the session's currently applied bytes.
+
+    The complete snapshot can also raise GraphTransportError during transport.
+
+    Args:
+        session: Session with the complete applied file snapshot.
+
+    Raises:
+        RequiredValidatorDependencyError: Native is unavailable or assessment fails.
+
+    """
+    address = os.environ.get("NATIVE_GRPC_ADDRESS")
+    if not address:
+        raise RequiredValidatorDependencyError("Required validator native not configured for file rescan")
+    files = [File(path=path, content=content) for path, content in session.working_files.items()]
+    result = await _call_validator(
+        address,
+        ValidateRequest(request_id=f"{session.session_id}-file-rescan", files=files),
+        stream_large_request=True,
+        fail_on_infra=True,
+    )
+    if result.error:
+        raise RequiredValidatorDependencyError(f"Required validator native file rescan failed: {result.error}")
+    configs, _complete = _scan_rule_audit_inputs(session.scan_options)
+    findings = [v for v in result.violations if _is_file_finding(v)]
+    findings = _apply_rule_configs(findings, configs)
+    findings = _filter_file_noqa(_deduplicate_violations(_sort_violations(findings)))
+    _attach_snippets(findings, files)
+    session.file_violations = findings
+
+
+async def _finish_pending_file_reassessment(session: SessionState) -> None:
+    """Write pending patches and refresh findings before completing a session.
+
+    Args:
+        session: Session holding applied patches and the continuation to resume.
+    """
+    if session.temp_dir is not None and session.pending_file_patches:
+        await asyncio.get_running_loop().run_in_executor(
+            None, _write_patches_to_temp_dir, session.temp_dir, session.pending_file_patches
+        )
+    session.pending_file_patches = []
+    await _refresh_session_file_violations(session)
+    _sync_session_file_report(session)
+    session.pending_file_reassessment = ""
+
+
+def _sync_session_file_report(session: SessionState) -> None:
+    """Replace file findings in an existing report after applied changes.
+
+    Args:
+        session: Session with freshly reassessed file findings.
+    """
+    from apme_engine.remediation.partition import add_classification_to_violations, count_by_remediation_class
+
+    remaining = [v for v in session.remaining_ai + session.remaining_manual if not _is_file_finding(v)]
+    remaining.extend(dict(v) for v in session.file_violations)
+    add_classification_to_violations(remaining)
+    session.remaining_ai = [v for v in remaining if v.get("remediation_class") == RemediationClass.AI_CANDIDATE]
+    session.remaining_manual = [v for v in remaining if v.get("remediation_class") != RemediationClass.AI_CANDIDATE]
+    if session.report is not None:
+        counts = count_by_remediation_class(remaining)
+        session.report.remaining_ai = counts.get("ai-candidate", 0)
+        session.report.remaining_manual = counts.get("manual-review", 0)
+        del session.report.remaining_violations[:]
+        session.report.remaining_violations.extend(violation_dict_to_proto(v) for v in remaining)
 
 
 def _collect_ai_triage_candidates(session: SessionState) -> list[ViolationDict]:
@@ -555,6 +838,7 @@ async def _call_validator(
     timeout: int = 300,
     *,
     stream_large_request: bool = False,
+    fail_on_infra: bool = False,
 ) -> _ValidatorResult:
     """Call a validator over async gRPC; return violations + diagnostics.
 
@@ -565,11 +849,23 @@ async def _call_validator(
             collection health scanning of many large collections).
         stream_large_request: Send oversized requests through the validator's
             streaming endpoint instead of a unary gRPC call.
+        fail_on_infra: Treat infrastructure findings as a failed assessment.
 
     Returns:
         _ValidatorResult with violations and optional diagnostics.
+
+    Raises:
+        GraphTransportError: The complete request exceeds its supported transport.
     """
     req_id = request.request_id or ""
+    request_size = request.ByteSize()
+    request_limit = _MAX_STREAMED_VALIDATE_REQUEST_BYTES if stream_large_request else _GRPC_MAX_MSG
+    if request_size > request_limit:
+        transport = "streamed" if stream_large_request else "unary"
+        raise GraphTransportError(
+            f"Validator request to {address} is {request_size} bytes, exceeding the {transport} request limit "
+            f"({request_limit} bytes); validation is incomplete"
+        )
     channel = grpc.aio.insecure_channel(
         address,
         options=[
@@ -579,16 +875,8 @@ async def _call_validator(
     )
     stub = validate_pb2_grpc.ValidatorStub(channel)  # type: ignore[no-untyped-call]
     try:
-        request_size = request.ByteSize()
         if stream_large_request and request_size > _GRPC_MAX_MSG:
-            if request_size > _MAX_STREAMED_VALIDATE_REQUEST_BYTES:
-                return _ValidatorResult(
-                    error=(
-                        "Ansible validation context exceeds the streamed request limit "
-                        f"({_MAX_STREAMED_VALIDATE_REQUEST_BYTES} bytes)"
-                    )
-                )
-            serialized_request = request.SerializeToString()
+            serialized_request = await asyncio.get_running_loop().run_in_executor(None, request.SerializeToString)
 
             async def request_chunks() -> AsyncIterator[ValidateRequestChunk]:
                 for offset in range(0, len(serialized_request), _GRPC_STREAM_CHUNK_BYTES):
@@ -599,8 +887,16 @@ async def _call_validator(
             resp = await stub.ValidateStream(request_chunks(), timeout=timeout)
         else:
             resp = await stub.Validate(request, timeout=timeout)
+        violations = [violation_proto_to_dict(v) for v in resp.violations]
+        infra_errors = [
+            v
+            for v in violations
+            if normalize_rule_id(str(v.get("rule_id", ""))) in {RULE_MISSING_VENV, RULE_VALIDATOR_FAILURE}
+        ]
+        if fail_on_infra and infra_errors:
+            return _ValidatorResult(error=str(infra_errors[0].get("message") or "Validator infrastructure error"))
         return _ValidatorResult(
-            violations=[violation_proto_to_dict(v) for v in resp.violations],
+            violations=violations,
             diagnostics=resp.diagnostics if resp.HasField("diagnostics") else None,
             logs=list(resp.logs),
         )
@@ -609,6 +905,44 @@ async def _call_validator(
         return _ValidatorResult(error=str(e))
     finally:
         await channel.close(grace=None)
+
+
+def _validator_request(name: str, request: ValidateRequest) -> ValidateRequest:
+    """Select complete inputs consumed by one built-in validator.
+
+    Native and Gitleaks need files plus graph data; OPA only uses hierarchy
+    data. Ansible needs all three for syntax and node checks. Collection health
+    and dependency audit read the session venv. Never truncate a required input
+    to make a request fit its transport limit.
+
+    Args:
+        name: Built-in validator name.
+        request: Complete scan inputs and request metadata.
+
+    Returns:
+        A separate request retaining the validator's complete input fields.
+
+    Raises:
+        ValueError: The validator has no declared input requirements.
+    """
+    if name not in VALIDATOR_ENV_VARS:
+        raise ValueError(f"Unknown validator input requirements: {name}")
+    selected = ValidateRequest(
+        request_id=request.request_id,
+        project_root=request.project_root,
+        ansible_core_version=request.ansible_core_version,
+        collection_specs=request.collection_specs,
+        session_id=request.session_id,
+        venv_path=request.venv_path,
+        dirty_node_ids=request.dirty_node_ids,
+        graph_rule_opt_in=request.graph_rule_opt_in,
+    )
+    if name in {"native", "ansible", "gitleaks"}:
+        selected.files.extend(request.files)
+        selected.content_graph_data = request.content_graph_data
+    if name in {"opa", "ansible"}:
+        selected.hierarchy_payload = request.hierarchy_payload
+    return selected
 
 
 _REQUIREMENTS_PATHS = {"requirements.yml", "collections/requirements.yml"}
@@ -1142,6 +1476,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 could not be installed into the session venv.
             RequiredValidatorDependencyError: If a required validator
                 (native, opa, ansible) is not configured or its RPC fails.
+            GraphTransportError: A validator's complete input cannot be transported.
             ValueError: If ``rule_configs_complete`` is ``True`` and either
                 direction of the bidirectional audit fails (unknown IDs the
                 Engine cannot execute, or known IDs absent from the config).
@@ -1182,7 +1517,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         if not context_obj.hierarchy_payload:
             logger.warning("Scan: no hierarchy payload produced (req=%s)", scan_id)
-            return [], ScanDiagnostics(), sid, [], None, None, [], set(), set(), None
+            # File validators still assess configuration-only snapshots.
+            context_obj.hierarchy_payload = {"hierarchy": []}
 
         # 2. Collection discovery
         discovered, requirements_found = _discover_collection_specs(files)
@@ -1266,7 +1602,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 loop = asyncio.get_event_loop()
                 content_graph_data = await loop.run_in_executor(
                     None,
-                    lambda: json.dumps(cg.to_dict(slim=True), default=str).encode(),
+                    lambda: _serialize_graph_transport(cg),
                 )
                 logger.debug(
                     "ContentGraph serialized: %d bytes (req=%s)",
@@ -1274,11 +1610,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     scan_id,
                 )
 
+        hierarchy_data = await asyncio.get_event_loop().run_in_executor(
+            None, _bounded_transport_json, context_obj.hierarchy_payload
+        )
         validate_request = ValidateRequest(
             request_id=scan_id,
             project_root="",
             files=files,
-            hierarchy_payload=json.dumps(context_obj.hierarchy_payload, default=str).encode(),
+            hierarchy_payload=hierarchy_data,
             ansible_core_version=core_version,
             collection_specs=collection_specs,
             session_id=sid,
@@ -1313,24 +1652,20 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         task_names = [name for name, _addr in validator_targets]
         task_coros: list[Awaitable[_ValidatorResult]] = []
         for name, addr in validator_targets:
-            request: ValidateRequest = validate_request
+            request = _validator_request(name, validate_request)
             if name == "ansible" and ansible_context_files:
                 files_by_path: dict[str, File] = {file.path: file for file in files}
                 files_by_path.update({file.path: file for file in ansible_context_files})
-                request = ValidateRequest(
-                    request_id=validate_request.request_id,
-                    project_root=validate_request.project_root,
-                    files=list(files_by_path.values()),
-                    hierarchy_payload=validate_request.hierarchy_payload,
-                    scandata=validate_request.scandata,
-                    ansible_core_version=validate_request.ansible_core_version,
-                    collection_specs=validate_request.collection_specs,
-                    session_id=validate_request.session_id,
-                    venv_path=validate_request.venv_path,
-                    content_graph_data=validate_request.content_graph_data,
-                    graph_rule_opt_in=validate_request.graph_rule_opt_in,
+                del request.files[:]
+                request.files.extend(files_by_path.values())
+            task_coros.append(
+                _call_validator(
+                    addr,
+                    request,
+                    stream_large_request=name in {"native", "ansible"},
+                    fail_on_infra=name == "native",
                 )
-            task_coros.append(_call_validator(addr, request, stream_large_request=name == "ansible"))
+            )
 
         violations: list[ViolationDict] = []
         validator_diagnostics: list[ValidatorDiagnostics] = []
@@ -1388,6 +1723,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             for vname, item in zip(task_names, named_results, strict=True):
                 if isinstance(item, BaseException):
                     logger.error("Validator %s raised (req=%s): %s", vname, scan_id, item)
+                    if isinstance(item, GraphTransportError):
+                        raise GraphTransportError(str(item)) from item
                     if vname in REQUIRED_VALIDATORS:
                         msg = f"Required validator {vname} failed: {item}"
                         raise RequiredValidatorDependencyError(msg) from item
@@ -1454,6 +1791,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     divergent,
                 )
             violations = _apply_rule_configs(violations, configs)
+        violations = _filter_file_noqa(violations)
         _attach_snippets(violations, files)
 
         total_ms = (time.monotonic() - scan_t0) * 1000
@@ -2188,6 +2526,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     *[loop.run_in_executor(None, _file_proto_from_path, fp, temp_dir) for fp in file_paths]
                 )
             )
+            supplied_paths = {file.path for file in rel_files}
+            rel_files.extend(file for file in formatted_files if file.path not in supplied_paths)
             (
                 violations,
                 _,
@@ -2527,12 +2867,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             _heartbeat: Coroutine factory for periodic heartbeats.
             format_content: Formatter function for post-remediation pass.
             format_diffs: Accumulated format diffs from earlier step.
-            rule_configs: Per-rule overrides for opt-in audit GraphRules.
+            rule_configs: Per-rule overrides for validator results and opt-in
+                audit GraphRules, applied consistently to scans and rescans.
 
         Yields:
             SessionEvent: Progress, Tier1Summary, and result events.
         """
-        from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+        from apme_engine.engine.graph_opa_payload import content_nodes_to_opa_dicts
         from apme_engine.graph.content_graph import ContentGraph, EdgeType, NodeType
         from apme_engine.graph.scanner import (
             graph_rule_opt_in_from_rule_configs,
@@ -2541,6 +2882,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         from apme_engine.remediation.graph_engine import (
             GraphRemediationEngine,
+            RescanResult,
             splice_modifications,
         )
         from apme_engine.remediation.partition import (
@@ -2562,6 +2904,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 scan_id,
             )
             graph = ContentGraph()
+
+        # File findings have source/YAML paths rather than graph node IDs.
+        # A graph-only rescan cannot establish that they have been fixed.
+        session.file_violations = [dict(v) for v in initial_violations if _is_file_finding(v)]
+        initial_violations = [v for v in initial_violations if not _is_file_finding(v)]
 
         loop = asyncio.get_running_loop()
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
@@ -2590,7 +2937,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         async def _rescan_bridge(
             g: ContentGraph,
             dirty_ids: frozenset[str],
-        ) -> list[ViolationDict]:
+        ) -> RescanResult:
             """Rescan dirty nodes via gRPC to all configured validators.
 
             Native receives the full (slim) graph with ``dirty_node_ids``
@@ -2603,17 +2950,23 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 dirty_ids: Node IDs that changed since the last pass.
 
             Returns:
-                Merged violation list from all sources.
+                Merged findings and independent assessment coverage.
 
             Raises:
                 RequiredValidatorDependencyError: If a required validator
                     (native, opa, ansible) is not configured or its RPC fails.
+                GraphTransportError: A validator's complete input cannot be transported.
             """
+            from apme_engine.argspec_coverage import ARGSPEC_COVERAGE_KEY, decode_argspec_coverage
+
             all_violations: list[ViolationDict] = []
+            # No response, old validators and malformed metadata cannot prove
+            # argument findings fixed. Only Ansible can establish this coverage.
+            unassessed = decode_argspec_coverage(None)
 
             dirty_nodes = [node for nid in sorted(dirty_ids) if (node := g.get_node(nid)) is not None]
             if not dirty_nodes:
-                return all_violations
+                return RescanResult(violations=all_violations, unassessed=unassessed)
 
             ext_coros: list[Awaitable[_ValidatorResult]] = []
             ext_names: list[str] = []
@@ -2627,7 +2980,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             if native_addr:
                 graph_data = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda: json.dumps(g.to_dict(slim=True), default=str).encode(),
+                    lambda: _serialize_graph_transport(g),
                 )
                 ext_coros.append(
                     _call_validator(
@@ -2638,6 +2991,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             dirty_node_ids=sorted(dirty_ids),
                             graph_rule_opt_in=opt_in_rules,
                         ),
+                        stream_large_request=True,
+                        fail_on_infra=True,
                     )
                 )
                 ext_names.append("native")
@@ -2679,7 +3034,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         if parent is not None and parent.node_type == NodeType.PLAY:
                             opa_node_ids.add(src_id)
                 opa_nodes = [node for nid in sorted(opa_node_ids) if (node := g.get_node(nid)) is not None]
-                opa_dicts = [d for n in opa_nodes if (d := content_node_to_opa_dict(n, graph=g))]
+                opa_dicts = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: content_nodes_to_opa_dicts(opa_nodes, g)
+                )
                 if opa_dicts:
                     opa_payload = {
                         "scan_id": f"{scan_id}-rescan",
@@ -2694,12 +3051,15 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         "collection_set": [],
                         "metadata": {},
                     }
+                    opa_data = await asyncio.get_event_loop().run_in_executor(
+                        None, _bounded_transport_json, opa_payload
+                    )
                     ext_coros.append(
                         _call_validator(
                             opa_addr,
                             ValidateRequest(
                                 request_id=f"{scan_id}-rescan",
-                                hierarchy_payload=json.dumps(opa_payload, default=str).encode(),
+                                hierarchy_payload=opa_data,
                             ),
                         )
                     )
@@ -2713,11 +3073,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     "Required validator ansible not configured for rescan (ANSIBLE_GRPC_ADDRESS unset)"
                 )
             if ans_addr and session.venv_path:
-                task_dicts = [
-                    d
-                    for n in dirty_nodes
-                    if (d := content_node_to_opa_dict(n, graph=g)) and d.get("type") == "taskcall"
-                ]
+                task_dicts = [d for d in opa_dicts if d.get("type") == "taskcall" and d.get("key") in dirty_ids]
                 if task_dicts:
                     ans_payload = {
                         "scan_id": f"{scan_id}-rescan",
@@ -2733,12 +3089,15 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         "metadata": {},
                     }
                     ans_opts = session.fix_options or session.scan_options
+                    ans_data = await asyncio.get_event_loop().run_in_executor(
+                        None, _bounded_transport_json, ans_payload
+                    )
                     ext_coros.append(
                         _call_validator(
                             ans_addr,
                             ValidateRequest(
                                 request_id=f"{scan_id}-rescan",
-                                hierarchy_payload=json.dumps(ans_payload, default=str).encode(),
+                                hierarchy_payload=ans_data,
                                 files=_ansible_context_files(session.working_files),
                                 dirty_node_ids=sorted(dirty_ids),
                                 venv_path=session.venv_path,
@@ -2754,6 +3113,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 results = await asyncio.gather(*ext_coros, return_exceptions=True)
                 for name, result in zip(ext_names, results, strict=True):
                     if isinstance(result, BaseException):
+                        if isinstance(result, GraphTransportError):
+                            raise GraphTransportError(str(result)) from result
                         if name in REQUIRED_VALIDATORS:
                             msg = f"Required validator {name} failed during rescan: {result}"
                             raise RequiredValidatorDependencyError(msg) from result
@@ -2763,8 +3124,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         msg = f"Required validator {name} RPC failed during rescan: {result.error}"
                         raise RequiredValidatorDependencyError(msg)
                     all_violations.extend(result.violations)
+                    if name == "ansible":
+                        metadata = result.diagnostics.metadata if result.diagnostics is not None else {}
+                        unassessed = decode_argspec_coverage(metadata.get(ARGSPEC_COVERAGE_KEY))
 
-            return filter_noqa_violations(all_violations, g)
+            all_violations = _apply_rule_configs(all_violations, rule_configs or [])
+            return RescanResult(violations=filter_noqa_violations(all_violations, g), unassessed=unassessed)
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
@@ -2869,11 +3234,17 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 patch_abs = temp_dir / patch_abs
             patch_abs.write_text(patch.patched, encoding="utf-8")
 
+        if patches:
+            for patch in patches:
+                session.working_files[_working_files_key(temp_dir, patch.path)] = patch.patched.encode("utf-8")
+            await _refresh_session_file_violations(session)
+
         # 4. Remaining violations — sourced from the graph (authoritative).
         # Copy before enrichment so classification metadata does not mutate
         # the graph-owned NodeState snapshot objects.
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(dep_health_violations)
+        remaining.extend(dict(v) for v in session.file_violations)
         add_classification_to_violations(remaining)
         session.dep_health_violations = [dict(v) for v in remaining if str(v.get("source", "")) in dep_health_sources]
 
@@ -2897,8 +3268,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             session.working_files[rel_path] = patch.patched.encode("utf-8")
 
         session.tier1_patches = tier1_patches
-        session.remaining_ai = list(remaining)
-        session.remaining_manual = []
+        session.remaining_ai = [v for v in remaining if not _is_file_finding(v)]
+        session.remaining_manual = [v for v in remaining if _is_file_finding(v)]
 
         # 6. Enrich violations with node YAML from the graph progression.
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -3326,14 +3697,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         """
         was_tier1_gate = session.awaiting_tier1_gate
         run_ai_gate = was_tier1_gate and bool(session.fix_options and session.fix_options.enable_ai)
-        applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=not run_ai_gate)
-        if session.temp_dir is not None and temp_patches:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                _write_patches_to_temp_dir,
-                session.temp_dir,
-                temp_patches,
-            )
+        applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=False)
+        session.status = 2  # PROCESSING until applied bytes have been assessed
+        if applied or temp_patches:
+            session.pending_file_reassessment = "ai" if run_ai_gate else "complete"
+            session.pending_file_patches = list(temp_patches or [])
+            await _finish_pending_file_reassessment(session)
+        if not run_ai_gate:
+            session.status = 3  # COMPLETE only after file assessment succeeds
         if was_tier1_gate:
             files_touched = len(temp_patches) if temp_patches else 0
             report_fixed = session.report.fixed if session.report else applied
@@ -3580,6 +3951,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(session.dep_health_violations)
+        remaining.extend(dict(v) for v in session.file_violations)
         add_classification_to_violations(remaining)
         rem_counts = count_by_remediation_class(remaining)
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -3599,7 +3971,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             remaining_violations=remaining_protos,
             fixed_violations=fixed_protos,
         )
-        session.remaining_ai = list(remaining)
+        session.remaining_ai = [v for v in remaining if not _is_file_finding(v)]
+        session.remaining_manual = [v for v in remaining if _is_file_finding(v)]
 
         proposed_proposals: list[Proposal] = []
         ai_built: list[Proposal] = []
@@ -3655,13 +4028,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 if getattr(fmt_result, "changed", False):
                     patch.patched = getattr(fmt_result, "formatted", patch.patched)
             _write_patches_to_session(session, patches)
-            if session.temp_dir is not None and patches:
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    _write_patches_to_temp_dir,
-                    session.temp_dir,
-                    patches,
-                )
+            if patches:
+                session.pending_file_reassessment = "complete"
+                session.pending_file_patches = list(patches)
+                await _finish_pending_file_reassessment(session)
             session.status = 3
             async for event in self._session_build_result(session):
                 yield event
@@ -3988,6 +4358,17 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Yields:
             SessionEvent: Events reflecting the session's current state.
         """
+        if session.pending_file_reassessment:
+            continuation = session.pending_file_reassessment
+            await _finish_pending_file_reassessment(session)
+            if continuation == "ai":
+                async for event in self._session_enter_ai_phase(session):
+                    yield event
+                return
+            session.status = 3  # COMPLETE after a successful retry
+            async for event in self._session_build_result(session):
+                yield event
+            return
         if session.tier1_patches or session.format_diffs:
             yield SessionEvent(
                 tier1_complete=Tier1Summary(
@@ -4478,6 +4859,7 @@ def _reconcile_after_approval(
         v["remediation_class"] = RemediationClass.MANUAL_REVIEW
     _enrich_violations_from_graph(remaining, graph, fixed=False)
     remaining.extend(dict(v) for v in session.dep_health_violations)
+    remaining.extend(dict(v) for v in session.file_violations)
 
     fixed = [dict(v) for v in graph.query_violations(status="fixed")]
     for v in fixed:

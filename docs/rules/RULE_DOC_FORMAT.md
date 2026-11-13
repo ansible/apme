@@ -32,6 +32,12 @@ Rule `.md` files describe a single rule and provide examples that can be used bo
 
 - Each example is a **single fenced code block** (use `yaml` as the language).
 - The content must be **valid Ansible YAML** that the engine can parse (e.g. a list of tasks, a play, or a minimal playbook/role layout as required by the rule).
+- Native Molecule file rules (`implementation: molecule.py`) instead use a YAML
+  mapping of snapshot-relative file paths to literal file-content strings. Include
+  a scenario config such as `molecule/default/molecule.yml` and any explicitly
+  referenced files needed by a passing example. The runner sends this snapshot
+  directly to the native file validator; it does not wrap it as a playbook or
+  require OPA. See the L116 and L119 docs for examples.
 - Snippets should be **minimal** but **self-contained** so they can be run in isolation (e.g. a task list under `tasks:` or a full play with `hosts` and `tasks`).
 - Use **consistent** section headers so a parser can find them:
   - `### Example: violation`
@@ -73,9 +79,13 @@ A test runner is provided in `tests/rule_doc_integration_test.py`. It uses `test
 
 The runner:
 
-1. Discovers all rule `.md` files (per validator) via `discover_rule_docs(native_rules_dir, opa_bundle_dir)`.
+1. Discovers GraphRules and OPA docs via `discover_rule_docs(graph_rules_dir, opa_bundle_dir)` and adds native Molecule file-rule docs from their registered rule metadata. Every registered Molecule rule must supply both standard example headings; missing examples fail collection.
 2. Parses frontmatter to get `rule_id` and `validator`.
-3. For each `### Example: violation` section: extract the next fenced code block, run the engine on it, and assert that the reported violations include this `rule_id`.
-4. For each `### Example: pass` section: extract the next fenced code block, run the engine on it, and assert that no violation is reported for this `rule_id`.
+3. For each `### Example: violation` section: extract the next fenced code block, run the appropriate graph/OPA or native file validator, and assert that the reported violations include this `rule_id`.
+4. For each `### Example: pass` section: extract the next fenced code block, run the same validator, and assert that no violation is reported for this `rule_id`.
 
-Code blocks must be valid YAML (and valid Ansible structures) so the engine can load and evaluate them without error. If the scan fails (e.g. engine dependency or bug), the test is skipped so the suite still passes.
+Graph/OPA code blocks must be valid YAML and Ansible structures so the engine can
+load and evaluate them. The existing graph/OPA harness skips engine scan failures.
+Native file-rule examples use explicit snapshots and run without that skip;
+validator errors and missing expected findings fail the test. Malformed source
+files can be included as literal strings when that is what the rule checks.

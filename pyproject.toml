@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
     "jsonpickle",
+    "jsonschema>=4.18",
     "PyYAML",
     "ruamel.yaml",
     "filelock",
@@ -54,6 +55,7 @@ dev = [
     "pydoclint>=0.8.0",
     "types-protobuf",
     "types-PyYAML",
+    "types-jsonschema",
     "grpc-stubs",
     "grpcio-tools>=1.84.0",
     "pytest-playwright",
@@ -214,6 +216,8 @@ where = ["src"]
 "apme_engine.engine.annotators" = ["ansible.builtin/*.py"]
 "apme_engine.graph.rules" = ["*.md", "*.json"]
 "apme_engine.validators.opa" = ["bundle/*.rego", "bundle/*.json", "bundle/*.md"]
+"apme_engine.molecule" = ["data/*.json", "data/LICENSE"]
+"apme_engine.validators.native" = ["rules/*.md"]
 "apme_engine.data" = ["*.yml", "*.yaml"]
 "galaxy_proxy" = ["py.typed"]
 

@@ -155,6 +155,50 @@ class _AbortSignal(Exception):
         self.details = details
 
 
+async def test_pipeline_explicit_native_skip_does_not_call_native(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicitly skipped Native is neither required nor dispatched by a scan.
+
+    Args:
+        monkeypatch: Replace validator endpoints and local scan dependencies.
+        tmp_path: Temporary project and session venv path.
+    """
+    from unittest.mock import MagicMock
+
+    from apme.v1.common_pb2 import File
+    from apme_engine.daemon import engine_server
+
+    for env_var in engine_server.VALIDATOR_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("OPA_GRPC_ADDRESS", "opa")
+    monkeypatch.setenv("ANSIBLE_GRPC_ADDRESS", "ansible")
+    context = SimpleNamespace(
+        hierarchy_payload={"hierarchy": [], "collection_set": []},
+        scandata=None,
+        engine_diagnostics=SimpleNamespace(
+            parse_ms=0.0, annotate_ms=0.0, total_ms=0.0, files_scanned=1, graph_nodes_built=0
+        ),
+    )
+    manager = MagicMock()
+    manager.get.return_value = None
+    manager.peek_warm.return_value = SimpleNamespace(
+        venv_root=tmp_path, failed_collections=[], installed_collections=[]
+    )
+    monkeypatch.setattr(engine_server, "run_scan", MagicMock(return_value=context))
+    monkeypatch.setattr(engine_server.EngineServicer, "_get_venv_manager", MagicMock(return_value=manager))
+    dispatch = AsyncMock(return_value=engine_server._ValidatorResult())
+    monkeypatch.setattr(engine_server, "_call_validator", dispatch)
+    findings, *_ = await engine_server.EngineServicer()._execute_scan_pipeline(
+        tmp_path,
+        [File(path="molecule/default/molecule.yml", content=b"---")],
+        "skip-native",
+        skip_validators=frozenset({"native"}),
+    )
+    assert not findings
+    assert {call.args[0] for call in dispatch.await_args_list} == {"opa", "ansible"}
+
+
 # ---------------------------------------------------------------------------
 # Part 1: SessionState unit tests
 # ---------------------------------------------------------------------------
@@ -744,14 +788,200 @@ class TestSessionApprovalGates:
         assert "Applied 0 approved Tier 1 proposal" in (events[0].progress.message or "")
         assert session.status == 3  # COMPLETE
 
-    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path) -> None:
+    async def test_approval_reassesses_applied_files(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Approval reports findings from the new bytes, not the initial snapshot.
+
+        Args:
+            monkeypatch: Configure a synthetic Native endpoint.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer, _ValidatorResult
+
+        monkeypatch.setenv("NATIVE_GRPC_ADDRESS", "native")
+        session = SessionState(session_id="approval-rescan", status=1)
+        session.working_files = {"molecule/default/molecule.yml": b"old: value\n"}
+        old: ViolationDict = {"rule_id": "L115", "path": "$.old", "message": "old"}
+        new: ViolationDict = {
+            "rule_id": "L116",
+            "file": "molecule/default/molecule.yml",
+            "line": 1,
+            "path": "$.new",
+            "message": "new",
+            "remediation_class": "manual-review",
+        }
+        session.file_violations = [old]
+        session.remaining_manual = [old]
+        session.report = FixReport(remaining_manual=1)
+
+        def apply(*_args: object, **_kwargs: object) -> tuple[int, None]:
+            session.working_files["molecule/default/molecule.yml"] = b"new: value\n"
+            session.status = 3
+            return 1, None
+
+        async def build_result(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult(report=_session.report))
+
+        dispatch = AsyncMock(return_value=_ValidatorResult(violations=[new]))
+        with (
+            patch.object(EngineServicer, "_session_apply_approved", side_effect=apply),
+            patch.object(EngineServicer, "_session_build_result", build_result),
+            patch("apme_engine.daemon.engine_server._call_validator", dispatch),
+        ):
+            events = [event async for event in EngineServicer()._session_handle_approval(session, {"proposal"})]
+
+        awaited = dispatch.await_args
+        assert awaited is not None
+        assert awaited.args[1].files[0].content == b"new: value\n"
+        report = events[-1].result.report
+        assert report is not None
+        assert [v.message for v in report.remaining_violations] == ["new"]
+        assert session.report is not None and session.report.remaining_manual == 1
+
+    async def test_approval_requires_native_for_reassessment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A missing required Native cannot produce an approval result with stale findings.
+
+        Args:
+            monkeypatch: Remove the Native endpoint from the environment.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer, RequiredValidatorDependencyError
+
+        monkeypatch.delenv("NATIVE_GRPC_ADDRESS", raising=False)
+        session = SessionState(session_id="missing-native", working_files={"molecule/default/molecule.yml": b"---"})
+        with (
+            patch.object(EngineServicer, "_session_apply_approved", return_value=(1, None)),
+            pytest.raises(RequiredValidatorDependencyError, match="native not configured"),
+        ):
+            _ = [event async for event in EngineServicer()._session_handle_approval(session, {"proposal"})]
+        assert session.status != 3
+        assert session.pending_file_reassessment == "complete"
+
+    @pytest.mark.parametrize("run_ai", [False, True])  # type: ignore[untyped-decorator]
+    async def test_approval_reassessment_retries_on_resume(self, run_ai: bool) -> None:
+        """Resume retries a failed assessment before completing or entering AI.
+
+        Args:
+            run_ai: Whether approval should continue to the AI gate.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer, RequiredValidatorDependencyError
+
+        session = SessionState(session_id="retry-file-assessment", status=1)
+        session.awaiting_tier1_gate = run_ai
+        session.fix_options = FixOptions(enable_ai=run_ai)
+        session.report = FixReport()
+        session.file_violations = [{"rule_id": "L115", "path": "$.old", "message": "old"}]
+        attempts = 0
+
+        async def reassess(current: SessionState) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RequiredValidatorDependencyError("unavailable")
+            current.file_violations = [{"rule_id": "L116", "path": "$.new", "message": "new"}]
+
+        refresh = AsyncMock(side_effect=reassess)
+        emit = AsyncMock()
+
+        async def enter_ai(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(progress=ProgressUpdate(message="AI gate"))
+
+        servicer = EngineServicer()
+        with (
+            patch.object(EngineServicer, "_session_apply_approved", return_value=(1, None)),
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", refresh),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", emit),
+            patch.object(EngineServicer, "_session_enter_ai_phase", enter_ai),
+        ):
+            with pytest.raises(RequiredValidatorDependencyError):
+                _ = [event async for event in servicer._session_handle_approval(session, {"proposal"})]
+            assert session.status != 3
+            assert session.pending_file_reassessment == ("ai" if run_ai else "complete")
+            events = [event async for event in servicer._session_replay_state(session)]
+
+        assert refresh.await_count == 2
+        assert not session.pending_file_reassessment
+        if run_ai:
+            assert events[-1].progress.message == "AI gate"
+            assert session.status != 3
+        else:
+            assert events[-1].WhichOneof("event") == "result"
+            assert session.status == 3
+            assert [v.message for v in events[-1].result.remaining_violations] == ["new"]
+            emit.assert_awaited_once()
+
+    @pytest.mark.parametrize("run_ai", [False, True])  # type: ignore[untyped-decorator]
+    async def test_approval_retries_disk_writes_before_reassessment(self, tmp_path: Path, run_ai: bool) -> None:
+        """Repeated write failures keep applied patches available for resume.
+
+        Args:
+            tmp_path: Session directory for the applied playbook.
+            run_ai: Whether the continuation should enter the AI gate.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer, _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+
+        session = SessionState(session_id="retry-file-write", status=1, temp_dir=tmp_path)
+        session.awaiting_tier1_gate = run_ai
+        session.fix_options = FixOptions(enable_ai=run_ai)
+        session.report = FixReport()
+        patch_file = SplicedFilePatch(path="play.yml", original="old", patched="new", diff="")
+        session.working_files = {"play.yml": b"new"}
+        writes = 0
+
+        def write(root: Path, patches: list[SplicedFilePatch]) -> None:
+            nonlocal writes
+            writes += 1
+            if writes <= 2:
+                raise OSError("temporary write failure")
+            _write_patches_to_temp_dir(root, patches)
+
+        async def reassess(_session: SessionState) -> None:
+            assert (tmp_path / "play.yml").read_text(encoding="utf-8") == "new"
+            _session.file_violations = [{"rule_id": "L116", "path": "$.new", "message": "new"}]
+
+        async def enter_ai(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(progress=ProgressUpdate(message="AI gate"))
+
+        refresh = AsyncMock(side_effect=reassess)
+        servicer = EngineServicer()
+        with (
+            patch.object(EngineServicer, "_session_apply_approved", return_value=(1, [patch_file])) as apply,
+            patch("apme_engine.daemon.engine_server._write_patches_to_temp_dir", side_effect=write),
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", refresh),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+            patch.object(EngineServicer, "_session_enter_ai_phase", enter_ai),
+        ):
+            with pytest.raises(OSError, match="temporary write failure"):
+                _ = [event async for event in servicer._session_handle_approval(session, {"proposal"})]
+            assert session.pending_file_reassessment == ("ai" if run_ai else "complete")
+            assert session.pending_file_patches == [patch_file]
+            assert session.status != 3
+            refresh.assert_not_awaited()
+            with pytest.raises(OSError, match="temporary write failure"):
+                _ = [event async for event in servicer._session_replay_state(session)]
+            assert session.pending_file_patches == [patch_file]
+            refresh.assert_not_awaited()
+            events = [event async for event in servicer._session_replay_state(session)]
+
+        assert writes == 3
+        apply.assert_called_once()
+        refresh.assert_awaited_once_with(session)
+        assert not session.pending_file_patches and not session.pending_file_reassessment
+        if run_ai:
+            assert events[-1].progress.message == "AI gate"
+        else:
+            assert events[-1].WhichOneof("event") == "result"
+            assert [v.message for v in events[-1].result.remaining_violations] == ["new"]
+
+    @pytest.mark.parametrize("fail_write", [False, True])  # type: ignore[untyped-decorator]
+    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path, fail_write: bool) -> None:
         """Gate 2 drops stale t1-* pending IDs; no-proposal path may sync files.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
+            fail_write: Fail the first write and resume the pending work.
         """
-        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.daemon.engine_server import EngineServicer, _write_patches_to_temp_dir
         from apme_engine.graph.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 
         class _DummyGraphEngine:
             def __init__(self) -> None:
@@ -790,8 +1020,29 @@ class TestSessionApprovalGates:
         session.graph_originals = {"play.yml": "- name: test\n  debug:\n    msg: hi\n"}
         session.temp_dir = tmp_path
 
+        file_finding: ViolationDict = {
+            "rule_id": "L115",
+            "file": "molecule/default/molecule.yml",
+            "line": 1,
+            "path": "$.provisioner",
+            "scope": "collection",
+            "remediation_class": "manual-review",
+        }
+        session.file_violations = [file_finding]
+        session.remaining_manual = [dict(file_finding)]
+
         async def _fake_build_result(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
-            yield SessionEvent(result=SessionResult())
+            async for event in _self._session_serialize_result(_session):
+                yield event
+
+        writes = 0
+
+        def write(root: Path, patches: list[SplicedFilePatch]) -> None:
+            nonlocal writes
+            writes += 1
+            if fail_write and writes == 1:
+                raise OSError("temporary write failure")
+            _write_patches_to_temp_dir(root, patches)
 
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
@@ -804,11 +1055,33 @@ class TestSessionApprovalGates:
                 return_value=SimpleNamespace(changed=True, formatted="- name: test\n  debug:\n    msg: hi there\n"),
             ),
             patch.object(EngineServicer, "_session_build_result", _fake_build_result),
+            patch("apme_engine.daemon.engine_server._write_patches_to_temp_dir", side_effect=write),
+            patch(
+                "apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock
+            ) as refresh,
         ):
-            events = [e async for e in servicer._session_run_ai_gate(session)]
+            events: list[SessionEvent] = []
+            if fail_write:
+                with pytest.raises(OSError, match="temporary write failure"):
+                    async for event in servicer._session_run_ai_gate(session):
+                        events.append(event)
+                assert session.pending_file_reassessment == "complete"
+                assert len(session.pending_file_patches) == 1
+                refresh.assert_not_awaited()
+                events.extend([event async for event in servicer._session_replay_state(session)])
+            else:
+                events = [e async for e in servicer._session_run_ai_gate(session)]
 
+        refresh.assert_awaited_once_with(session)
+        assert writes == (2 if fail_write else 1)
         event_types = [e.WhichOneof("event") for e in events]
         assert event_types == ["progress", "result"]
+        assert session.remaining_ai == []
+        assert session.remaining_manual == [file_finding]
+        assert session.report is not None
+        assert session.report.remaining_manual == 1
+        assert len(session.report.remaining_violations) == 1
+        assert len(events[-1].result.remaining_violations) == 1
         assert session.proposals == {}
         assert "t1-0000" in session.rejected_proposals
         assert session.pre_gate2_files["play.yml"] == b"- name: test\n  debug:\n    msg: hi\n"
@@ -1356,6 +1629,9 @@ class TestSessionGraphRemediate:
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch(
+                "apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock
+            ) as refresh,
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
 
@@ -1377,6 +1653,7 @@ class TestSessionGraphRemediate:
             ):
                 events.append(event)
 
+        refresh.assert_awaited_once_with(session)
         assert call_count[0] == 1, f"scan_fn should be called once (initial only, no final scan), got {call_count[0]}"
 
         # Verify the validator bridge (rescan_fn) was wired into the engine
@@ -1689,14 +1966,23 @@ class TestSessionRescanBridge:
     closure and passes it to GraphRemediationEngine as rescan_fn.
     """
 
-    async def test_bridge_passed_to_graph_engine_as_rescan_fn(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("argspec_rule", ["L058", "L059"])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("coverage_state", ["incomplete", "complete", "missing", "malformed"])  # type: ignore[untyped-decorator]
+    async def test_bridge_passed_to_graph_engine_as_rescan_fn(
+        self, tmp_path: Path, argspec_rule: str, coverage_state: str
+    ) -> None:
         """Bridge closure is constructed and passed into GraphRemediationEngine as rescan_fn.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
+            argspec_rule: Rule whose severity override must also apply on rescan.
+            coverage_state: Independent coverage metadata from the Ansible RPC.
         """
         from unittest.mock import MagicMock
 
+        from apme.v1.common_pb2 import SEVERITY_HIGH, ValidatorDiagnostics
+        from apme.v1.engine_pb2 import RuleConfig
+        from apme_engine.argspec_coverage import ARGSPEC_COVERAGE_KEY, ARGSPEC_RULE_IDS, encode_argspec_coverage
         from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
@@ -1751,6 +2037,13 @@ class TestSessionRescanBridge:
             mock_engine.remediate = AsyncMock(return_value=mock_report)
             return mock_engine
 
+        configs: list[object] = [
+            RuleConfig(rule_id=argspec_rule, enabled=True, severity=SEVERITY_HIGH),
+            RuleConfig(rule_id="L001", enabled=False),
+        ]
+        if argspec_rule == "L059":
+            configs.append(RuleConfig(rule_id="L058", enabled=False))
+
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch(
@@ -1759,6 +2052,9 @@ class TestSessionRescanBridge:
             ),
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch(
+                "apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock
+            ) as refresh,
         ):
             events: list[SessionEvent] = []
             async for event in servicer._session_graph_remediate(
@@ -1775,14 +2071,42 @@ class TestSessionRescanBridge:
                 _heartbeat=_noop_heartbeat,
                 format_content=_noop_format,
                 format_diffs=[],
+                rule_configs=configs,
             ):
                 events.append(event)
 
+        refresh.assert_awaited_once_with(session)
         assert captured_rescan_fn[0] is not None, "rescan_fn must be passed to engine"
         assert callable(captured_rescan_fn[0])
 
         # Rescans retain configuration and local plugins from the same upload.
+        import json
+        import threading
+
         from apme_engine.daemon.engine_server import _ValidatorResult
+        from apme_engine.engine import graph_opa_payload
+        from apme_engine.graph.content_graph import EdgeType
+
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            options={"module_defaults": {"ansible.builtin.file": {"mode": "0644"}}},
+        )
+        second = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[1]", node_type=NodeType.TASK),
+            module="ansible.builtin.file",
+            module_options={"path": "/tmp/second"},
+        )
+        graph.add_node(play)
+        graph.add_node(second)
+        graph.add_edge(play.node_id, "play.yml/plays[0]/tasks[0]", EdgeType.CONTAINS)
+        graph.add_edge(play.node_id, second.node_id, EdgeType.CONTAINS)
+        event_loop_thread = threading.get_ident()
+        serialization_threads: list[int] = []
+        original_context_builder = graph_opa_payload._build_module_defaults_contexts
+
+        def record_context_builder(g: ContentGraph) -> object:
+            serialization_threads.append(threading.get_ident())
+            return original_context_builder(g)
 
         session.venv_path = "/session/venv"
         session.working_files.update(
@@ -1792,23 +2116,104 @@ class TestSessionRescanBridge:
                 "docs/large-unrelated.bin": b"x" * (50 * 1024 * 1024 + 1),
             }
         )
-        dirty_ids = frozenset({"play.yml/plays[0]/tasks[0]"})
+        dirty_ids = frozenset({"play.yml/plays[0]/tasks[0]", second.node_id})
+        coverage = {"play.yml/plays[0]/tasks[0]": ARGSPEC_RULE_IDS} if coverage_state == "incomplete" else {}
+        diagnostics = None
+        if coverage_state != "missing":
+            diagnostics = ValidatorDiagnostics(
+                metadata={
+                    ARGSPEC_COVERAGE_KEY: "[]" if coverage_state == "malformed" else encode_argspec_coverage(coverage)
+                }
+            )
+        disabled_findings: list[ViolationDict] = []
+        if argspec_rule == "L059":
+            disabled_findings.append({"rule_id": "L058", "severity": "warning", "path": "play.yml/plays[0]/tasks[0]"})
         with (
             patch.dict(
                 os.environ,
                 {"NATIVE_GRPC_ADDRESS": "native", "OPA_GRPC_ADDRESS": "opa", "ANSIBLE_GRPC_ADDRESS": "ansible"},
             ),
             patch("apme_engine.daemon.engine_server._call_validator", new_callable=AsyncMock) as call_validator,
+            patch.object(graph_opa_payload, "_build_module_defaults_contexts", side_effect=record_context_builder),
         ):
-            call_validator.return_value = _ValidatorResult()
-            await captured_rescan_fn[0](graph, dirty_ids)
+            call_validator.return_value = _ValidatorResult(
+                violations=[
+                    {
+                        "rule_id": argspec_rule,
+                        "severity": "error",
+                        "path": "play.yml/plays[0]/tasks[0]",
+                        "message": "Missing required parameter 'path' for ansible.builtin.file",
+                    },
+                    {"rule_id": "L001", "severity": "error", "path": "play.yml/plays[0]/tasks[0]"},
+                    *disabled_findings,
+                ],
+                diagnostics=diagnostics,
+            )
+            rescanned = await captured_rescan_fn[0](graph, dirty_ids)
+        assert rescanned.violations
+        assert {finding["rule_id"] for finding in rescanned.violations} == {argspec_rule}
+        assert all(finding["severity"] == "high" for finding in rescanned.violations)
+        expected = {"*": ARGSPEC_RULE_IDS} if coverage_state in {"missing", "malformed"} else coverage
+        assert rescanned.unassessed == expected
+        assert len(serialization_threads) == 1
+        assert serialization_threads[0] != event_loop_thread
         request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "ansible")
+        task_payload = json.loads(request.hierarchy_payload)["hierarchy"][0]["nodes"]
+        assert {node["key"] for node in task_payload} == dirty_ids
+        assert all(node["module_defaults_contexts"] == [[play.options["module_defaults"]]] for node in task_payload)
         assert {file.path: file.content for file in request.files} == {
             "ansible.cfg": b"[defaults]\nlibrary = ./library\n",
             "library/apt.py": b"# local\n",
         }
         assert request.ByteSize() < 50 * 1024 * 1024
         assert set(request.dirty_node_ids) == dirty_ids
+        ansible_call = next(call for call in call_validator.call_args_list if call.args[0] == "ansible")
+        assert ansible_call.kwargs["stream_large_request"] is True
+        native_request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "native")
+        opa_request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "opa")
+        assert native_request.content_graph_data and not native_request.hierarchy_payload
+        assert opa_request.hierarchy_payload and not opa_request.content_graph_data and not opa_request.files
+
+        if coverage_state == "complete" and argspec_rule == "L058":
+            from apme_engine.daemon.engine_server import GraphTransportError
+
+            for backend in ("native", "gitleaks"):
+
+                async def overflow(
+                    address: str, request: object, *, _backend: str = backend, **kwargs: object
+                ) -> _ValidatorResult:
+                    """Fail one rescan transport without inventing clean coverage.
+
+                    Args:
+                        address: Validator endpoint label.
+                        request: Complete rescan input.
+                        _backend: Endpoint whose transport limit is exceeded.
+                        **kwargs: Per-validator transport settings.
+
+                    Returns:
+                        An empty response from unaffected validators.
+
+                    Raises:
+                        GraphTransportError: The selected request cannot be sent.
+                    """
+                    if address == _backend:
+                        raise GraphTransportError("Complete request exceeds transport; validation is incomplete")
+                    return _ValidatorResult()
+
+                with (
+                    patch.dict(
+                        os.environ,
+                        {
+                            "NATIVE_GRPC_ADDRESS": "native",
+                            "OPA_GRPC_ADDRESS": "opa",
+                            "ANSIBLE_GRPC_ADDRESS": "ansible",
+                            "GITLEAKS_GRPC_ADDRESS": "gitleaks",
+                        },
+                    ),
+                    patch("apme_engine.daemon.engine_server._call_validator", side_effect=overflow),
+                    pytest.raises(GraphTransportError, match="validation is incomplete"),
+                ):
+                    await captured_rescan_fn[0](graph, dirty_ids)
 
     async def test_bridge_uses_correct_rules_dir(self, tmp_path: Path) -> None:
         """load_graph_rules is called with the native rules directory.
@@ -2141,10 +2546,11 @@ class TestFixSessionRPC:
         )
 
         events: list[SessionEvent] = []
-        with patch.object(
-            EngineServicer,
-            "_session_process",
-            _mock_session_process_with_proposals,
+        with (
+            patch.object(EngineServicer, "_session_process", _mock_session_process_with_proposals),
+            patch(
+                "apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock
+            ) as refresh,
         ):
             async for event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
                 events.append(event)
@@ -2161,6 +2567,7 @@ class TestFixSessionRPC:
                 elif oneof == "closed":
                     break
 
+        refresh.assert_awaited_once()
         types = [e.WhichOneof("event") for e in events]
         assert "created" in types
         assert "tier1_complete" in types

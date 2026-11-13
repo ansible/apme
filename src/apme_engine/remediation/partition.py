@@ -65,16 +65,18 @@ def _get_scope(violation: ViolationDict) -> str:
 def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry) -> bool:
     """Return True if the violation has a registered deterministic transform (Tier 1).
 
-    Cross-file / data-flow rules are never Tier 1, even if a caller registers
-    a node-local transform. Those rewrites are unsafe without project context.
+    Explicit manual-review findings and cross-file / data-flow rules are never
+    Tier 1, even if a caller registers a node-local transform.
 
     Args:
         violation: Violation dict with rule_id.
         registry: Transform registry to check for rule.
 
     Returns:
-        True if rule_id has a registered transform and is not cross-file.
+        True if the finding is eligible for a registered transform.
     """
+    if violation.get("remediation_class") == RemediationClass.MANUAL_REVIEW:
+        return False
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
         return False
@@ -94,8 +96,10 @@ def is_ai_escalatable(violation: ViolationDict) -> bool:
         violation: Finding considered for AI escalation.
 
     Returns:
-        False for FQCN findings, otherwise True.
+        False for explicit manual-review and FQCN findings, otherwise True.
     """
+    if violation.get("remediation_class") == RemediationClass.MANUAL_REVIEW:
+        return False
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     return bare_id not in FQCN_RULES
 
@@ -107,7 +111,7 @@ def partition_violations(
     """Split violations into (tier1_fixable, tier2_ai, tier3_manual).
 
     Routing uses scope metadata (ADR-026) instead of hardcoded rule lists:
-    - Cross-file / data-flow rules (``CROSS_FILE_RULES``) are always Tier 3.
+    - Explicit manual-review and cross-file rules are always Tier 3.
     - Tier 1: deterministic transform exists in registry.
     - Tier 2: scope is AI-proposable (task/block) and no cross-file constraint.
     - Tier 3: scope is not AI-proposable, or cross-file context required.
@@ -128,6 +132,10 @@ def partition_violations(
         sev = str(v.get("severity") or "").lower()
         if sev == "info":
             v["remediation_resolution"] = RemediationResolution.INFORMATIONAL
+            tier3.append(v)
+            continue
+        if v.get("remediation_class") == RemediationClass.MANUAL_REVIEW:
+            v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
             continue
         if bare_id in CROSS_FILE_RULES:
@@ -156,7 +164,8 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     fixed during convergence are classified separately as AUTO_FIXABLE by
     the caller — remaining violations are never AUTO_FIXABLE because the
     convergence loop already tried all deterministic transforms.  What
-    remains is either AI-proposable or requires manual review.
+    remains is either AI-proposable or requires manual review. Explicit
+    manual-review markers are preserved.
 
     Args:
         violation: Violation dict with rule_id and scope.
@@ -164,6 +173,8 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     Returns:
         One of RemediationClass.AI_CANDIDATE or MANUAL_REVIEW.
     """
+    if violation.get("remediation_class") == RemediationClass.MANUAL_REVIEW:
+        return RemediationClass.MANUAL_REVIEW
     sev = str(violation.get("severity") or "").lower()
     if sev == "info":
         return RemediationClass.MANUAL_REVIEW

@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from apme_engine.argspec_coverage import decode_argspec_coverage
 from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.rule_base import GraphRule
@@ -44,8 +45,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger("apme.remediation.graph")
 
 ProgressCallback = Callable[[str, str, float, int], None]
-RescanFn = Callable[[ContentGraph, frozenset[str]], Awaitable[list["ViolationDict"]]]
 AiPhaseStartCallback = Callable[[list[ViolationDict]], Awaitable[None] | None]
+
+
+@dataclass
+class RescanResult:
+    """Rescan findings plus assessment coverage unaffected by display filters.
+
+    Attributes:
+        violations: Findings after rule configuration and suppression.
+        unassessed: Task IDs mapped to rules with incomplete assessment;
+            ``*`` applies to every task when coverage is unavailable.
+    """
+
+    violations: list[ViolationDict] = field(default_factory=list)
+    unassessed: dict[str, frozenset[str]] = field(default_factory=lambda: decode_argspec_coverage(None))
+
+
+RescanFn = Callable[[ContentGraph, frozenset[str]], Awaitable[list[ViolationDict] | RescanResult]]
 
 
 @dataclass
@@ -836,8 +853,14 @@ class GraphRemediationEngine:
         # resolution below already operate on effective_dirty, and the
         # built-in rescan expands internally as well — scanning only the raw
         # dirty set would resolve ancestors that were never re-evaluated.
+        unassessed = decode_argspec_coverage(None)
         if self._rescan_fn is not None:
-            new_violations = await self._rescan_fn(graph, effective_dirty)
+            result = await self._rescan_fn(graph, effective_dirty)
+            if isinstance(result, RescanResult):
+                new_violations = result.violations
+                unassessed = result.unassessed
+            else:
+                new_violations = result
         else:
             rescan_report = rescan_dirty(graph, self._rules, effective_dirty)
             new_violations = graph_report_to_violations(rescan_report)
@@ -858,6 +881,7 @@ class GraphRemediationEngine:
                 fixed_by=resolve_fixed_by,
                 pass_number=pass_num,
                 status=resolve_status,
+                unassessed=unassessed,
             )
 
         graph.clear_dirty()
@@ -1021,12 +1045,12 @@ def _resolve_dirty_violations(
     fixed_by: str,
     pass_number: int,
     status: str = "fixed",
+    unassessed: dict[str, frozenset[str]] | None = None,
 ) -> None:
     """Resolve violations on dirty nodes based on rescan results.
 
-    For each dirty node, computes which rule IDs are still present
-    and calls ``graph.resolve_violations`` so that absent violations
-    transition to *status* with the given attribution.
+    For each dirty node, forwards remaining rule IDs and diagnostic payloads
+    so absent argspec diagnostics can resolve independently of their peers.
 
     Args:
         graph: ContentGraph whose ledger to update.
@@ -1035,23 +1059,28 @@ def _resolve_dirty_violations(
         fixed_by: Attribution (``"deterministic"`` or ``"ai"``).
         pass_number: Current convergence pass number.
         status: Target status (``"fixed"`` or ``"proposed"``).
+        unassessed: Explicit node/rule coverage exclusions; ``*`` applies to all.
     """
-    remaining_by_node: dict[str, set[str]] = defaultdict(set)
+    remaining_by_node: dict[str, list[ViolationDict]] = defaultdict(list)
     for v in rescan_violations:
         node_id = str(v.get("path", ""))
         if node_id:
-            remaining_by_node[node_id].add(
-                normalize_rule_id(str(v.get("rule_id", ""))),
-            )
+            remaining_by_node[node_id].append(v)
 
     for nid in dirty_ids:
-        remaining = remaining_by_node.get(nid, set())
+        remaining = remaining_by_node.get(nid, [])
         graph.resolve_violations(
             nid,
-            remaining,
+            {normalize_rule_id(str(v.get("rule_id", ""))) for v in remaining},
             fixed_by=fixed_by,
             pass_number=pass_number,
             status=status,
+            remaining_violations=remaining,
+            unassessed_rule_ids=(
+                unassessed.get(nid, frozenset()) | unassessed.get("*", frozenset())
+                if unassessed is not None
+                else frozenset()
+            ),
         )
 
 

@@ -6,7 +6,7 @@ This directory contains the phased delivery roadmap. Each phase groups related r
 
 | Phase | Name | Status | Requirements |
 |-------|------|--------|--------------|
-| PHASE-001 | CLI Scanner | In Progress | REQ-001 |
+| PHASE-001 | CLI Scanner | In Progress | REQ-001, REQ-022, REQ-023 |
 | PHASE-002 | Rewrite Engine | Implemented | REQ-002 |
 | PHASE-003 | Enterprise Dashboard | In Progress | REQ-003, REQ-004, REQ-008, REQ-010–014, REQ-016 |
 | PHASE-004 | AI Remediation | Implemented | DR-005 decided |

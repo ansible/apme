@@ -210,6 +210,12 @@ artifact type, translate it:
    be O(1); `len(list(seq))` when `len(seq)` works; nested scans
    that are O(P×V) when an id→row map would be O(P+V) — reviewers
    treat these as dead weight even when functionally correct.
+   Follow bounded parser output through merges and reporting: a node limit
+   does not bound repeated full-map scans per key or full-source decoding per
+   diagnostic. Check scaling across both input width and nesting depth.
+   For inline annotations, verify the control's scope independently of the
+   source excerpt retained for display or identity: a comment on unrelated
+   child data must not suppress a neighboring diagnostic.
 
 7. **Is this internally and externally consistent?** Within each
    module: do all code paths use the same patterns (e.g., registry
@@ -256,6 +262,30 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   Keep content recognition independent of dispatch/exclusion policy, and trace
+   every recognized construct through invalid shapes as well as valid ones;
+   a mismatched value must not disappear through a missing branch. Repeated
+   membership checks should reuse an existing request-local index rather than
+   rescan the full input for each reference.
+   Bound expanded representations, including repeated shared references and
+   serialized bytes, at every downstream consumer; account for repeated work
+   after an aggregate budget is exhausted and combined transport payloads. Enforce
+   the budget during parsing as well as after it, and trace incomplete discovery
+   into every downstream decision that relies on the discovered set. After edits,
+   check that cached relationships and selectors reflect the current input.
+   Validate values after the same type conversions used by their real consumer.
+   When async work follows a state transition, trace failure and reconnect through
+   every awaited operation in order, including partial writes, retained inputs,
+   retries, reporting side effects, and updated results.
+   Trace reachability through imports using the runtime's exact path and value
+   semantics, including alternative caller bases and whitespace. Check execution
+   ordering and the outer value containing nested dynamic values. Trace distinct findings and explicit
+   remediation constraints through deduplication, storage, and routing. Treat
+   missing results as evidence of a fix only when the relevant check actually
+   assessed that input, including when findings are filtered or disabled.
+   When combining graph paths,
+   distinguish inactive paths from paths with unavailable context so inactive
+   metadata cannot affect an active invocation.
    Include requests disconnected during async authorization, shutdown while a
    dependency lookup is pending, simultaneous large bodies across distinct
    resources, and edits that preserve versus clear an existing optional value.

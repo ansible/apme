@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without restoring L030's static `builtin-modules.txt` check. Modules that
   left core (e.g. `mount` → `ansible.posix`) are not flagged.
 
+- **L115–L119** — Static Molecule validation: legacy `provisioner:` and native
+  `ansible:`/shared-state configuration checked against bundled Molecule
+  profiles (24.9.0 and 26.11.0), scenario playbook/import/inventory references,
+  lifecycle actions, and play `module_defaults` structure, without running
+  Molecule or reading anything outside the uploaded snapshot.
+  Ansible `L057` leaves Molecule scenario content to these checks and no longer
+  runs runtime syntax checks there. Findings carry unexpanded source lines for
+  `# noqa` and fingerprint-based suppression.
+
 ### Removed
 
 - **L030** — Static builtin-module list check retired; short names are covered by

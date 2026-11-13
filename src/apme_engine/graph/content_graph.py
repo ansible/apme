@@ -26,6 +26,7 @@ import networkx as nx  # type: ignore[import-untyped]
 
 from apme_engine.graph.types import RemediationResolution, ViolationDict, YAMLDict, YAMLValue
 from apme_engine.rule_ids import normalize_rule_id
+from apme_engine.violation_identity import diagnostic_discriminator
 
 if TYPE_CHECKING:
     from ruamel.yaml.comments import CommentedMap as _CommentedMap
@@ -229,8 +230,8 @@ class NodeState:
 # ViolationRecord — mutable violation lifecycle (ADR-044 violation ledger)
 # ---------------------------------------------------------------------------
 
-ViolationKey = tuple[str, str]
-"""Identity key for a violation: ``(node_id, normalized_rule_id)``."""
+ViolationKey = tuple[str, str] | tuple[str, str, str]
+"""Node/rule identity, with a diagnostic discriminator for argspec findings."""
 
 
 @dataclass
@@ -258,7 +259,7 @@ class ViolationRecord:
                   └──→ declined (user rejected, violation restored)
 
     Attributes:
-        key: ``(node_id, normalized_rule_id)`` identity.
+        key: Node/rule identity, plus an argspec diagnostic discriminator.
         violation: Original violation dict from the validator.
         status: ``"open"``, ``"fixed"``, ``"pending_review"``, ``"proposed"``,
             ``"declined"``, or ``"ai_abstained"``.
@@ -291,9 +292,11 @@ def _violation_key(v: ViolationDict) -> ViolationKey:
         v: Violation dict with ``path`` and ``rule_id`` entries.
 
     Returns:
-        ``(path, normalized_rule_id)`` tuple.
+        Node/rule tuple, with a third component for distinct argspec diagnostics.
     """
-    return (str(v.get("path", "")), normalize_rule_id(str(v.get("rule_id", ""))))
+    key = (str(v.get("path", "")), normalize_rule_id(str(v.get("rule_id", ""))))
+    discriminator = diagnostic_discriminator(v)
+    return (*key, discriminator) if discriminator else key
 
 
 def _content_hash(text: str) -> str:
@@ -409,8 +412,8 @@ class ContentNode:
         state: Current ``NodeState`` snapshot (most recent entry in progression).
         progression: Ordered list of ``NodeState`` snapshots across pipeline phases.
         violation_ledger: Mutable violation lifecycle records keyed by
-            ``(node_id, rule_id)``.  Single source of truth for violation
-            status and attribution.
+            node/rule identity, with a discriminator for argspec diagnostics.
+            Single source of truth for violation status and attribution.
         collections_in_play: Collection search order in scope for task nodes.
         MAX_PROGRESSION: Upper bound on progression length per node (class-level).
     """
@@ -883,11 +886,15 @@ class ContentGraph:
         fixed_by: str,
         pass_number: int,
         status: str = "fixed",
+        remaining_violations: list[ViolationDict] | None = None,
+        unassessed_rule_ids: frozenset[str] = frozenset(),
     ) -> int:
         """Transition open violations when absent from a rescan.
 
         For the given node, any open ledger entry whose rule_id is
-        **not** in ``remaining_rule_ids`` transitions to *status*.
+        **not** in ``remaining_rule_ids`` transitions to *status*. When rescan
+        payloads are supplied, distinct argspec diagnostics resolve separately.
+        Rules with incomplete assessment retain their open ledger entries.
 
         Use ``status="fixed"`` for deterministic transforms (auto-approved),
         ``status="pending_review"`` for deterministic transforms awaiting
@@ -901,6 +908,10 @@ class ContentGraph:
             fixed_by: Attribution (``"deterministic"`` or ``"ai"``).
             pass_number: Convergence pass of the resolution.
             status: Target status (``"fixed"`` or ``"proposed"``).
+            remaining_violations: Rescan payloads for distinguishing diagnostics
+                with the same rule ID; None retains rule-level reconciliation.
+            unassessed_rule_ids: Rules that could not assess every invocation
+                context on this node, independent of visible findings.
 
         Returns:
             Number of violations transitioned.
@@ -908,12 +919,17 @@ class ContentGraph:
         node = self.get_node(node_id)
         if node is None:
             return 0
+        remaining_keys = {_violation_key(v) for v in remaining_violations} if remaining_violations is not None else None
         count = 0
         for record in node.violation_ledger.values():
             if record.status != "open":
                 continue
-            _, rule_id = record.key
-            if rule_id not in remaining_rule_ids:
+            rule_id = record.key[1]
+            if rule_id in unassessed_rule_ids:
+                continue
+            if rule_id not in remaining_rule_ids or (
+                len(record.key) == 3 and remaining_keys is not None and record.key not in remaining_keys
+            ):
                 record.status = status
                 record.fixed_by = fixed_by
                 record.fixed_in_pass = pass_number
@@ -956,7 +972,7 @@ class ContentGraph:
         for record in node.violation_ledger.values():
             if record.status != "open":
                 continue
-            _, rule_id = record.key
+            rule_id = record.key[1]
             if rule_id in rule_ids:
                 record.status = "ai_abstained"
                 if reasons is not None:
@@ -2020,13 +2036,20 @@ def _violation_record_from_dict(d: dict[str, object]) -> ViolationRecord:
     Returns:
         Reconstructed ViolationRecord.
     """
+    raw_violation = d.get("violation", {})
+    violation: ViolationDict = dict(raw_violation) if isinstance(raw_violation, dict) else {}
     raw_key = d.get("key", ("", ""))
     if isinstance(raw_key, (list, tuple)) and len(raw_key) >= 2:
         key: ViolationKey = (str(raw_key[0]), str(raw_key[1]))
+        # Recompute argspec identities so persisted presentation-based keys
+        # migrate when severity overrides or module spellings have changed.
+        discriminator = diagnostic_discriminator(violation)
+        if not discriminator and len(raw_key) >= 3:
+            discriminator = str(raw_key[2])
+        if discriminator:
+            key = (str(raw_key[0]), str(raw_key[1]), discriminator)
     else:
         key = ("", "")
-    raw_violation = d.get("violation", {})
-    violation: ViolationDict = dict(raw_violation) if isinstance(raw_violation, dict) else {}
     fixed_in_raw = d.get("fixed_in_pass")
     return ViolationRecord(
         key=key,
