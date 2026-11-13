@@ -2,14 +2,10 @@
  * Shared inventory summary boxes for review panels (findings + proposals).
  */
 
+import { Box } from '@backstage/ui';
+
 export type ReviewInventoryTone =
-  | 'total'
-  | 'auto'
-  | 'ai'
-  | 'manual'
-  | 'pending'
-  | 'accepted'
-  | 'declined';
+  'total' | 'auto' | 'ai' | 'manual' | 'pending' | 'accepted' | 'declined';
 
 export interface ReviewInventoryBox {
   key: string;
@@ -33,31 +29,27 @@ export function ReviewInventoryRow({
   ariaLabel = 'Review inventory',
 }: ReviewInventoryRowProps) {
   return (
-    <div
-      className="apme-review-inventory"
-      role="group"
-      aria-label={ariaLabel}
-    >
+    <Box className="apme-review-inventory" role="group" aria-label={ariaLabel}>
       {boxes.map((box) => (
-        <div
+        <Box
           key={box.key}
           className={`apme-review-inventory-box apme-review-inventory-box--${box.tone}`}
         >
-          <div className="apme-review-inventory-box__label">{box.label}</div>
-          <div className="apme-review-inventory-box__nums">
+          <Box className="apme-review-inventory-box__label">{box.label}</Box>
+          <Box className="apme-review-inventory-box__nums">
             <span className="apme-review-inventory-box__primary">
               {box.primary}
             </span>
             <span className="apme-review-inventory-box__secondary">
               {box.secondary}
             </span>
-          </div>
-          <div className="apme-review-inventory-box__captions">
+          </Box>
+          <Box className="apme-review-inventory-box__captions">
             <span>{box.primaryCaption ?? 'findings'}</span>
             <span>{box.secondaryCaption ?? 'locations'}</span>
-          </div>
-        </div>
+          </Box>
+        </Box>
       ))}
-    </div>
+    </Box>
   );
 }

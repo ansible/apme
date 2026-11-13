@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { BUIProvider } from "@backstage/ui";
 import { createDefaultApmeApiAdapter } from "@apme/client";
@@ -98,11 +104,16 @@ it.each(["", "2.18"])(
       await screen.findByRole("heading", { name: "Automation" }),
     ).toBeTruthy();
     fireEvent.click(await screen.findByText("Advanced Options"));
-    const versionSelect = screen.getByRole("combobox", {
-      name: "Ansible Core Version",
-    });
-    expect((versionSelect as HTMLSelectElement).value).toBe("");
-    fireEvent.change(versionSelect, { target: { value: ansibleVersion } });
+    const versionSelect = screen.getByLabelText("Ansible Core Version");
+    expect(within(versionSelect).getByText("Engine default")).toBeTruthy();
+    fireEvent.click(versionSelect);
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: ansibleVersion
+          ? `ansible-core ${ansibleVersion}`
+          : "Engine default",
+      }),
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "Check repository" }),
     );

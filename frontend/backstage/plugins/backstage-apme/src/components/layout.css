@@ -185,24 +185,15 @@
   text-decoration: underline;
 }
 
-/* Match the original APME outlined table surfaces and PatternFly link palette. */
+/* Use the host BUI palette for page content and portaled APME dialogs. */
 .apme-ui {
-  --apme-surface: #fff;
-  --apme-table-heading: #f5f5f5;
-  --apme-text: #151515;
-  --apme-muted: #6a6e73;
-  --apme-line: rgba(0, 0, 0, 0.12);
-  --apme-link: #0066cc;
-  --apme-hover: #f5f5f5;
-}
-:where([data-theme-mode="dark"], .pf-v6-theme-dark) .apme-ui {
-  --apme-surface: #212121;
-  --apme-table-heading: #2a2a2a;
-  --apme-text: #e0e0e0;
-  --apme-muted: #a8a8a8;
-  --apme-line: rgba(255, 255, 255, 0.12);
-  --apme-link: #73bcf7;
-  --apme-hover: #2e2e2e;
+  --apme-surface: var(--bui-bg-neutral-1);
+  --apme-table-heading: var(--bui-bg-neutral-2);
+  --apme-text: var(--bui-fg-primary);
+  --apme-muted: var(--bui-fg-secondary);
+  --apme-line: var(--bui-border-1);
+  --apme-link: var(--bui-fg-info);
+  --apme-hover: var(--bui-bg-neutral-1-hover);
 }
 .apme-ui .apme-table-scroll,
 .apme-ui .apme-panel,
@@ -295,7 +286,7 @@
   font-variant-numeric: tabular-nums;
 }
 .apme-ui table.bui-Table button.apme-issue-count[data-has-issues="true"] {
-  color: var(--pf-t--global--color--status--danger--default, #c9190b);
+  color: var(--bui-fg-danger);
 }
 .apme-ui .apme-findings-dialog {
   max-width: min(70rem, calc(100vw - 32px));
@@ -312,7 +303,7 @@
   }
 }
 
-/* Only these opted-in controls change; the remediation workflow keeps its UI. */
+/* Compact controls share the host palette. */
 .apme-ui button.bui-Button.apme-button[data-variant] {
   box-sizing: border-box;
   display: inline-flex;
@@ -340,7 +331,7 @@
 .apme-ui button.bui-Button.apme-button[data-variant][data-variant="primary"] {
   background: var(--apme-link);
   border-color: var(--apme-link);
-  color: var(--apme-surface);
+  color: var(--bui-fg-solid);
 }
 .apme-ui
   button.bui-Button.apme-button[data-variant][data-variant="primary"]:hover {
@@ -357,7 +348,7 @@
   text-decoration: underline;
 }
 .apme-ui button.bui-Button.apme-button[data-variant][data-destructive="true"] {
-  color: var(--pf-t--global--color--status--danger--default, #c9190b);
+  color: var(--bui-fg-danger);
   border-color: currentColor;
   background: transparent;
 }

@@ -51,15 +51,12 @@ jest.mock("../EditInDevSpacesButton", () => ({
   EditInDevSpacesButton: () => null,
 }));
 
-jest.mock("../PortalWorkflowPanel", () => ({
-  PortalProjectWorkflowPanel: () => <div data-testid="workflow-panel" />,
-}));
-
 jest.mock("../PreviewChip", () => ({
   PreviewLabelRow: () => <div data-testid="preview-label" />,
 }));
 
 jest.mock("@apme/ui-workflow", () => ({
+  ProjectWorkflowPanel: () => <div data-testid="workflow-panel" />,
   ApmeApiProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),

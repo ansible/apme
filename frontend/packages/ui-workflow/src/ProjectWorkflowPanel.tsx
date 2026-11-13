@@ -1,17 +1,11 @@
 /**
  * Session-tab body for the shared scan/remediate workflow.
- * Host supplies chrome (tabs, Overview); this renders OperationPanel or session spinners.
+ * Host supplies chrome (tabs, Overview); this renders OperationPanel or session loading states.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import {
-  Alert,
-  AlertActionCloseButton,
-  Button,
-  Card,
-  CardBody,
-  Spinner,
-} from '@patternfly/react-core';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Alert, Button, Card, CardBody } from '@backstage/ui';
+import { LoadingIndicator } from './components/WorkflowProgress';
 import { OperationPanel } from './components/OperationPanel';
 import type { ProjectWorkflowController } from './useProjectWorkflow';
 
@@ -21,6 +15,8 @@ export interface ProjectWorkflowPanelProps {
   feedbackEnabled: boolean;
   /** Host navigation for "View details" on completed ops. */
   onViewDetails?: (scanId: string) => void;
+  /** Host controls shown after a successful push, or beside a completed PR. */
+  hostShipActions?: ReactNode;
 }
 
 export function ProjectWorkflowPanel({
@@ -28,6 +24,7 @@ export function ProjectWorkflowPanel({
   enableAi,
   feedbackEnabled,
   onViewDetails,
+  hostShipActions,
 }: ProjectWorkflowPanelProps) {
   const {
     opState,
@@ -56,11 +53,11 @@ export function ProjectWorkflowPanel({
     return (
       <Card>
         <CardBody style={{ textAlign: 'center', padding: '48px 24px' }}>
-          <Spinner size="lg" />
+          <LoadingIndicator />
           <div style={{ marginTop: 12, fontSize: 16 }}>Stopping session…</div>
           <Button
-            variant="link"
-            onClick={dismiss}
+            variant="tertiary"
+            onPress={dismiss}
             style={{ marginTop: 16 }}
           >
             Dismiss
@@ -75,11 +72,11 @@ export function ProjectWorkflowPanel({
     return (
       <Card>
         <CardBody style={{ textAlign: 'center', padding: '48px 24px' }}>
-          <Spinner size="lg" />
+          <LoadingIndicator />
           <div style={{ marginTop: 12, fontSize: 16 }}>Starting scan…</div>
           <Button
-            variant="link"
-            onClick={dismiss}
+            variant="tertiary"
+            onPress={dismiss}
             style={{ marginTop: 16 }}
           >
             Dismiss
@@ -93,16 +90,16 @@ export function ProjectWorkflowPanel({
     <>
       {draftError ? (
         <Alert
-          variant="danger"
+          status="danger"
           title="Could not save draft proposals"
-          isInline
+          description={draftError}
           style={{ marginBottom: 12 }}
-          actionClose={
-            <AlertActionCloseButton onClose={() => setDraftError(null)} />
+          customActions={
+            <Button variant="tertiary" onPress={() => setDraftError(null)}>
+              Dismiss error
+            </Button>
           }
-        >
-          {draftError}
-        </Alert>
+        />
       ) : null}
       <OperationPanel
         state={opState}
@@ -125,6 +122,7 @@ export function ProjectWorkflowPanel({
         onDismiss={dismiss}
         feedbackEnabled={feedbackEnabled}
         enableAi={enableAi}
+        hostShipActions={hostShipActions}
         onViewDetails={onViewDetails}
       />
     </>

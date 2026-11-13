@@ -8,8 +8,8 @@ The page lists and registers repositories, preserves branch/project identity,
 and provides findings, history/run details, dependency inventory and the existing
 assessment/remediation workflow, rule catalog, overrides, system health,
 model preferences, Galaxy settings, content graphs and CycloneDX SBOM download. It uses
-BUI for ordinary host controls and the existing PatternFly workflow for findings,
-proposal review, progress and publishing. Remaining feature migration is tracked
+BUI for host controls and shared workflow findings, proposal review, progress
+and publishing. Remaining feature migration is tracked
 in REQ-021; this package does not yet replace the existing Portal plugin's full
 catalog/SDK contribution surface.
 
@@ -39,7 +39,18 @@ through props; the views do not detect which host is running.
 
 Install a released plugin tarball into the host. Its manifest pins the client
 and workflow tarballs from the same APME product release. Ensure the host provides
-the peer versions in the repository compatibility table and BUI/PatternFly CSS.
+React 18 / Router 6 peer versions in the repository compatibility table,
+`BUIProvider` context and `@backstage/ui/css/styles.css`. Set BUI's native
+`data-theme-mode="light|dark"` on a shared ancestor of page content and body
+portals, normally the document root. Local resolves host-selected custom theme
+IDs and Auto/system preference to that attribute and restores it on unmount.
+Shared layouts use BUI tokens and require no PatternFly reset or theme class.
+Portal must retain its separate PatternFly bridge while Portal-owned PatternFly
+components remain.
+
+Native backward compatibility is waived for this BUI migration. This does not
+establish native retirement or issue #833 acceptance; actual RHDH/Portal workflow,
+theme, accessibility and resource acceptance remain tracked in TASK-005.
 
 ```tsx
 import { ApmePage } from "@apme/backstage-plugin";

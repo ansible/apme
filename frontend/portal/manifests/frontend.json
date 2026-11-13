@@ -33,6 +33,7 @@
     "@backstage/core-plugin-api": "1.12.9",
     "@backstage/frontend-plugin-api": "0.18.0",
     "@backstage/integration-react": "1.2.21",
+    "@backstage/ui": "0.17.1",
     "@backstage/plugin-catalog": "2.0.8",
     "@backstage/plugin-catalog-react": "3.2.2",
     "@backstage/plugin-permission-react": "0.5.4",

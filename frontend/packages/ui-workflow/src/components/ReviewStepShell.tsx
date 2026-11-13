@@ -5,15 +5,9 @@
  */
 
 import type { ReactNode } from 'react';
-import { Button, Card, CardBody } from '@patternfly/react-core';
-import {
-  NodeReviewList,
-  type NodeReviewListProps,
-} from './NodeReviewList';
-import {
-  ReviewFilterBar,
-  type ReviewFilterGroup,
-} from './ReviewFilterBar';
+import { Button, Card, CardBody } from '@backstage/ui';
+import { NodeReviewList, type NodeReviewListProps } from './NodeReviewList';
+import { ReviewFilterBar, type ReviewFilterGroup } from './ReviewFilterBar';
 import { WorkflowNextBar, type WorkflowNextConfig } from './WorkflowNextBar';
 
 export interface ReviewStepShellProps {
@@ -76,7 +70,7 @@ export function ReviewStepShell({
                 isLoading={next.isLoading}
                 secondary={
                   onCancel ? (
-                    <Button variant="link" onClick={onCancel}>
+                    <Button variant="tertiary" onPress={onCancel}>
                       Cancel
                     </Button>
                   ) : (
@@ -88,7 +82,7 @@ export function ReviewStepShell({
           )}
           {showHeaderActions && next == null && onCancel && (
             <div className="apme-review-step-header__actions">
-              <Button variant="link" onClick={onCancel}>
+              <Button variant="tertiary" onPress={onCancel}>
                 Cancel
               </Button>
             </div>

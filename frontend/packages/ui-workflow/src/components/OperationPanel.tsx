@@ -19,15 +19,17 @@
  *   cancelled       → null (no panel)
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  Button,
-  Card,
-  CardBody,
-  Flex,
-  FlexItem,
-  Spinner,
-} from '@patternfly/react-core';
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { Button, ButtonLink, Card, CardBody, Flex } from '@backstage/ui';
+import { LoadingIndicator } from './WorkflowProgress';
+import { RiExternalLinkLine } from '@remixicon/react';
+import { toPrFilesDiffUrl } from '../utils/prDiffUrl';
 import type {
   ProjectOperationState,
   ProjectOperationStatus,
@@ -48,10 +50,7 @@ import {
 } from './ProposalReviewPanel';
 import { OperationResultCard } from './OperationResultCard';
 import { AssessFindingsPanel } from './AssessFindingsPanel';
-import {
-  AiEscalationPanel,
-  type AiEscalateTarget,
-} from './AiEscalationPanel';
+import { AiEscalationPanel, type AiEscalateTarget } from './AiEscalationPanel';
 import { OperationWorkflowStepper } from './OperationWorkflowStepper';
 import {
   CommitChangesPanel,
@@ -72,8 +71,10 @@ export interface OperationPanelProps {
   feedbackEnabled?: boolean;
   /** Activity "Enable AI" — drives AI steps on the workflow tracker. */
   enableAi?: boolean;
-  /** Host navigation for "View details" (no react-router in workflow). */
+  /** Host navigation for "View details" on completed operations. */
   onViewDetails?: (scanId: string) => void;
+  /** Host controls for the commit and completion steps. */
+  hostShipActions?: ReactNode;
 }
 
 const RUNNING_STATUSES = new Set<ProjectOperationStatus>([
@@ -88,7 +89,9 @@ function shouldShowProposalReview(state: ProjectOperationState): boolean {
   return state.status === 'awaiting_approval';
 }
 
-function mapStatus(s: ProjectOperationStatus): import('../types/operation').OperationStatus {
+function mapStatus(
+  s: ProjectOperationStatus,
+): import('../types/operation').OperationStatus {
   const mapping: Partial<Record<ProjectOperationStatus, string>> = {
     queued: 'connecting',
     cloning: 'cloning',
@@ -129,6 +132,7 @@ export function OperationPanel({
   feedbackEnabled,
   enableAi = false,
   onViewDetails,
+  hostShipActions,
 }: OperationPanelProps) {
   const [prCreating, setPrCreating] = useState(false);
   const [prError, setPrError] = useState<string | null>(null);
@@ -217,7 +221,8 @@ export function OperationPanel({
         }
         return result;
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to submit changes';
+        const message =
+          err instanceof Error ? err.message : 'Failed to submit changes';
         setPrError(message);
         throw err instanceof Error ? err : new Error(message);
       } finally {
@@ -247,9 +252,15 @@ export function OperationPanel({
         enableAi,
         <Card style={{ marginBottom: 16 }}>
           <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
-            <Spinner size="lg" />
-            <div style={{ marginTop: 12, fontSize: 16 }}>Loading proposals...</div>
-            <Button variant="link" onClick={handleCancel} style={{ marginTop: 8 }}>
+            <LoadingIndicator />
+            <div style={{ marginTop: 12, fontSize: 16 }}>
+              Loading proposals...
+            </div>
+            <Button
+              variant="tertiary"
+              onPress={handleCancel}
+              style={{ marginTop: 8 }}
+            >
               Cancel
             </Button>
           </CardBody>
@@ -285,9 +296,15 @@ export function OperationPanel({
         enableAi,
         <Card style={{ marginBottom: 16 }}>
           <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
-            <Spinner size="lg" />
-            <div style={{ marginTop: 12, fontSize: 16 }}>Starting operation...</div>
-            <Button variant="link" onClick={handleCancel} style={{ marginTop: 8 }}>
+            <LoadingIndicator />
+            <div style={{ marginTop: 12, fontSize: 16 }}>
+              Starting operation...
+            </div>
+            <Button
+              variant="tertiary"
+              onPress={handleCancel}
+              style={{ marginTop: 8 }}
+            >
               Cancel
             </Button>
           </CardBody>
@@ -341,11 +358,15 @@ export function OperationPanel({
       candidatesLoading ? (
         <Card style={{ marginBottom: 16 }}>
           <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
-            <Spinner size="lg" />
+            <LoadingIndicator />
             <div style={{ marginTop: 12, fontSize: 16 }}>
               Loading AI-eligible findings…
             </div>
-            <Button variant="link" onClick={handleCancel} style={{ marginTop: 8 }}>
+            <Button
+              variant="tertiary"
+              onPress={handleCancel}
+              style={{ marginTop: 8 }}
+            >
               Cancel
             </Button>
           </CardBody>
@@ -364,7 +385,11 @@ export function OperationPanel({
     );
   }
 
-  if (status === 'completed' || status === 'submitting_pr' || status === 'pr_submitted') {
+  if (
+    status === 'completed' ||
+    status === 'submitting_pr' ||
+    status === 'pr_submitted'
+  ) {
     const resultData: OperationResult | null = state.result
       ? {
           total_violations: state.result.total_violations,
@@ -417,6 +442,7 @@ export function OperationPanel({
           onDismiss={onDismiss}
           submitting={prCreating || status === 'submitting_pr'}
           error={prError}
+          hostShipActions={hostShipActions}
           prUrl={state.pr_url || localPrUrl}
         />,
         stepperOpts,
@@ -427,13 +453,34 @@ export function OperationPanel({
       return withStepper(
         state,
         enableAi,
-        <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--success--default)' }}>
+        <Card
+          style={{
+            marginBottom: 16,
+            borderLeft: '4px solid var(--bui-fg-success)',
+          }}
+        >
           <CardBody style={{ textAlign: 'center', padding: 32 }}>
-            <div style={{ fontSize: 48, color: 'var(--pf-t--global--color--status--success--default)' }}>&#10003;</div>
+            <div style={{ fontSize: 48, color: 'var(--bui-fg-success)' }}>
+              &#10003;
+            </div>
             <h2>Operation Complete</h2>
-            <Button variant="link" onClick={onDismiss} style={{ marginTop: 8 }}>
-              Dismiss
-            </Button>
+            <Flex justify="center" gap="2" style={{ marginTop: 8 }}>
+              {(state.pr_url || localPrUrl) && hostShipActions}
+              {(state.pr_url || localPrUrl) && (
+                <ButtonLink
+                  href={toPrFilesDiffUrl((state.pr_url || localPrUrl)!)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="secondary"
+                  iconEnd={<RiExternalLinkLine />}
+                >
+                  View pull request
+                </ButtonLink>
+              )}
+              <Button variant="tertiary" onPress={onDismiss}>
+                Dismiss
+              </Button>
+            </Flex>
           </CardBody>
         </Card>,
         { ...stepperOpts, commitFinished: true },
@@ -445,8 +492,12 @@ export function OperationPanel({
       enableAi,
       <OperationResultCard
         result={resultData}
-        isRemediate={state.scan_type === 'remediate' || (resultData.remediated_count ?? 0) > 0}
+        isRemediate={
+          state.scan_type === 'remediate' ||
+          (resultData.remediated_count ?? 0) > 0
+        }
         onDismiss={onDismiss}
+        hostShipActions={hostShipActions}
         prUrl={state.pr_url || localPrUrl}
         prError={prError}
         scanId={state.scan_id}
@@ -460,16 +511,21 @@ export function OperationPanel({
     return withStepper(
       state,
       enableAi,
-      <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--danger--default)' }}>
+      <Card
+        style={{
+          marginBottom: 16,
+          borderLeft: '4px solid var(--bui-fg-danger)',
+        }}
+      >
         <CardBody>
-          <h3 style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>
-            Operation Failed
-          </h3>
+          <h3 style={{ color: 'var(--bui-fg-danger)' }}>Operation Failed</h3>
           <p>{state.error || 'An unknown error occurred.'}</p>
-          <Flex gap={{ default: 'gapSm' }} style={{ marginTop: 8 }}>
-            <FlexItem>
-              <Button variant="link" onClick={onDismiss}>Dismiss</Button>
-            </FlexItem>
+          <Flex gap="2" style={{ marginTop: 8 }}>
+            <div>
+              <Button variant="tertiary" onPress={onDismiss}>
+                Dismiss
+              </Button>
+            </div>
           </Flex>
         </CardBody>
       </Card>,
@@ -480,11 +536,18 @@ export function OperationPanel({
     return withStepper(
       state,
       enableAi,
-      <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--warning--default)' }}>
+      <Card
+        style={{
+          marginBottom: 16,
+          borderLeft: '4px solid var(--bui-fg-warning)',
+        }}
+      >
         <CardBody>
           <h3>Session Expired</h3>
           <p>This operation session has expired. Please start a new one.</p>
-          <Button variant="link" onClick={onDismiss}>Dismiss</Button>
+          <Button variant="tertiary" onPress={onDismiss}>
+            Dismiss
+          </Button>
         </CardBody>
       </Card>,
     );
@@ -500,13 +563,17 @@ export function OperationPanel({
         <p style={{ opacity: 0.8 }}>
           Status: <code>{status}</code>
         </p>
-        <Flex gap={{ default: 'gapSm' }} style={{ marginTop: 8 }}>
-          <FlexItem>
-            <Button variant="link" onClick={handleCancel}>Cancel</Button>
-          </FlexItem>
-          <FlexItem>
-            <Button variant="link" onClick={onDismiss}>Dismiss</Button>
-          </FlexItem>
+        <Flex gap="2" style={{ marginTop: 8 }}>
+          <div>
+            <Button variant="tertiary" onPress={handleCancel}>
+              Cancel
+            </Button>
+          </div>
+          <div>
+            <Button variant="tertiary" onPress={onDismiss}>
+              Dismiss
+            </Button>
+          </div>
         </Flex>
       </CardBody>
     </Card>,

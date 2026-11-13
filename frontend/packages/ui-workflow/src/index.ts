@@ -1,7 +1,7 @@
 /**
  * @apme/ui-workflow — shared scan → pause → choose → remediate UI.
- * Hosts: native APME SPA shell, thin Portal Quality tab.
- * No react-router dependency; hosts supply navigation callbacks.
+ * Hosts: personal RHDH Local and Portal, using BUI presentation.
+ * Hosts supply navigation callbacks and BUI React/Router peers.
  */
 
 /* Inventory cards, review shell, proposals, diffs — required by Portal host.
@@ -21,11 +21,7 @@ export {
   type ApmeFetch,
 } from './api/apmeApiAdapter';
 
-export {
-  parseSseChunk,
-  readSseStream,
-  type SseEvent,
-} from './api/sseFetch';
+export { parseSseChunk, readSseStream, type SseEvent } from './api/sseFetch';
 
 export { listAiModels, type AiModelInfo } from './api/listAiModels';
 
@@ -41,7 +37,10 @@ export {
   type ProjectWorkflowPanelProps,
 } from './ProjectWorkflowPanel';
 
-export { OperationPanel, type OperationPanelProps } from './components/OperationPanel';
+export {
+  OperationPanel,
+  type OperationPanelProps,
+} from './components/OperationPanel';
 export { CheckOptionsForm } from './components/CheckOptionsForm';
 export {
   AssessFindingsPanel,
@@ -104,7 +103,14 @@ export {
   scopeLabel,
 } from './shared/severity';
 
-export { DiffView, textsFromUnifiedDiff, CurrentYamlView } from './components/DiffView';
+export {
+  DiffView,
+  textsFromUnifiedDiff,
+  CurrentYamlView,
+} from './components/DiffView';
 
 export { toPrFilesDiffUrl } from './utils/prDiffUrl';
-export { violationToFinding, type FindingSource } from './shared/violationToFinding';
+export {
+  violationToFinding,
+  type FindingSource,
+} from './shared/violationToFinding';

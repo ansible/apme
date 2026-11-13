@@ -2,18 +2,18 @@
  * Commit step — branch, push remediation patches, optionally open a PR (ADR-050).
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   Button,
+  ButtonLink,
+  Alert,
   Card,
   CardBody,
   Checkbox,
   Flex,
-  FormGroup,
-  TextInput,
-  Label,
-} from '@patternfly/react-core';
-import { ExternalLinkAltIcon } from '@patternfly/react-icons';
+  TextField,
+} from '@backstage/ui';
+import { RiExternalLinkLine } from '@remixicon/react';
 import { WorkflowNextBar } from './WorkflowNextBar';
 import { toPrFilesDiffUrl } from '../utils/prDiffUrl';
 
@@ -41,6 +41,8 @@ export interface CommitChangesPanelProps {
   error?: string | null;
   /** Already-known PR from a prior submit. */
   prUrl?: string | null;
+  /** Host controls beside the pull request action after a successful push. */
+  hostShipActions?: ReactNode;
 }
 
 export function CommitChangesPanel({
@@ -52,6 +54,7 @@ export function CommitChangesPanel({
   submitting,
   error,
   prUrl: existingPrUrl,
+  hostShipActions,
 }: CommitChangesPanelProps) {
   const defaultBranch = useMemo(
     () => `apme/remediate-${(scanId ?? 'fix').slice(0, 8)}`,
@@ -91,7 +94,8 @@ export function CommitChangesPanel({
     setLocalError(null);
     try {
       const res = await onSubmit({
-        branch_name: (result?.branch_name || branchName).trim() || defaultBranch,
+        branch_name:
+          (result?.branch_name || branchName).trim() || defaultBranch,
         create_pr: true,
       });
       setResult(res);
@@ -110,7 +114,8 @@ export function CommitChangesPanel({
           <div className="apme-review-step-header__text">
             <h3 style={{ marginTop: 0 }}>{commitHeading}</h3>
             <span style={{ fontSize: 13, opacity: 0.7 }}>
-              Create a branch, push the fixes, and optionally open a pull request.
+              Create a branch, push the fixes, and optionally open a pull
+              request.
             </span>
           </div>
           <div className="apme-review-step-header__actions">
@@ -125,7 +130,7 @@ export function CommitChangesPanel({
               onNext={onFinish}
               secondary={
                 onDismiss ? (
-                  <Button variant="link" onClick={onDismiss}>
+                  <Button variant="tertiary" onPress={onDismiss}>
                     Cancel
                   </Button>
                 ) : undefined
@@ -135,28 +140,18 @@ export function CommitChangesPanel({
         </div>
 
         {displayError && (
-          <div
-            style={{
-              marginBottom: 12,
-              padding: '8px 16px',
-              borderRadius: 6,
-              background: 'var(--pf-t--global--color--status--danger--default)',
-              color: '#fff',
-              fontSize: 13,
-            }}
-          >
-            {displayError}
-          </div>
+          <Alert
+            status="danger"
+            title={displayError}
+            style={{ marginBottom: 12 }}
+          />
         )}
 
         {pushed ? (
           <div>
-            <Label color="green" isCompact>
-              Pushed
-            </Label>
+            <Alert status="success" title="Pushed" />
             <div style={{ marginTop: 8, fontSize: 14 }}>
-              Branch{' '}
-              <code>{result?.branch_name || branchName}</code>
+              Branch <code>{result?.branch_name || branchName}</code>
               {result?.commit_sha ? (
                 <>
                   {' '}
@@ -164,26 +159,25 @@ export function CommitChangesPanel({
                 </>
               ) : null}
             </div>
-            <Flex gap={{ default: 'gapSm' }} style={{ marginTop: 16 }}>
+            <Flex gap="2" style={{ marginTop: 16 }}>
+              {hostShipActions}
               {prUrl ? (
-                <Button
+                <ButtonLink
                   variant="secondary"
-                  component="a"
                   href={toPrFilesDiffUrl(prUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  icon={<ExternalLinkAltIcon />}
-                  iconPosition="end"
+                  iconEnd={<RiExternalLinkLine />}
                 >
                   View pull request
-                </Button>
+                </ButtonLink>
               ) : (
                 <Button
                   variant="secondary"
-                  onClick={() => {
+                  onPress={() => {
                     handleOpenPrOnly().catch(() => {});
                   }}
-                  isLoading={submitting}
+                  isPending={submitting}
                   isDisabled={submitting}
                 >
                   Open pull request
@@ -193,35 +187,35 @@ export function CommitChangesPanel({
           </div>
         ) : (
           <div style={{ maxWidth: 420 }}>
-            <FormGroup label="Branch name" fieldId="apme-commit-branch">
-              <TextInput
-                id="apme-commit-branch"
-                value={branchName}
-                onChange={(_e, v) => setBranchName(v)}
-                isDisabled={submitting}
-              />
-            </FormGroup>
+            <TextField
+              label="Branch name"
+              id="apme-commit-branch"
+              value={branchName}
+              onChange={setBranchName}
+              isDisabled={submitting}
+            />
             <div style={{ marginTop: 12 }}>
               <Checkbox
                 id="apme-commit-create-pr"
-                label="Open a pull request after push"
-                isChecked={createPr}
-                onChange={(_e, checked) => setCreatePr(checked)}
+                isSelected={createPr}
+                onChange={setCreatePr}
                 isDisabled={submitting}
-              />
+              >
+                Open a pull request after push
+              </Checkbox>
             </div>
-            <div style={{ marginTop: 16 }}>
+            <Flex gap="2" style={{ marginTop: 16 }}>
               <Button
                 variant="primary"
-                onClick={() => {
+                onPress={() => {
                   handleCommit().catch(() => {});
                 }}
-                isLoading={submitting}
+                isPending={submitting}
                 isDisabled={submitting}
               >
                 {submitLabel}
               </Button>
-            </div>
+            </Flex>
           </div>
         )}
       </CardBody>

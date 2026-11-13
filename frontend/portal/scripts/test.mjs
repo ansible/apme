@@ -52,6 +52,23 @@ try {
                   "/node_modules/(?!(@backstage|@ansible|@spotify|@backstage-community|lodash-es|nanoid|uuid|jose|@sindresorhus|@octokit|@mswjs|msw)/)",
               ],
         moduleNameMapper: {
+            // Shared source tests cross workspace boundaries. Use the host's
+            // React, router and BUI instances for providers and rendered controls.
+            ...Object.fromEntries(
+                (frontend
+                    ? [
+                          "react",
+                          "react/jsx-runtime",
+                          "react/jsx-dev-runtime",
+                          "react-dom",
+                          "react-dom/client",
+                          "react-dom/test-utils",
+                          "react-router-dom",
+                          "@backstage/ui",
+                      ]
+                    : []
+                ).map((name) => [`^${name}$`, hostRequire.resolve(name)]),
+            ),
             "\\.(css|scss)$": join(
                 portal,
                 "node_modules/identity-obj-proxy/src/index.js",

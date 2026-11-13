@@ -111,58 +111,22 @@ jobs:
             exit 1
           fi
 
+  # Keep the `ui` job ID/name for required branch protection.
+  # Shared BUI harness smoke only; real RHDH/Portal host acceptance stays #833.
   ui:
     runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
-        env:
-          POSTGRES_USER: apme
-          POSTGRES_PASSWORD: apme
-          POSTGRES_DB: apme_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U apme -d apme_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: frontend/package.json
+          node-version-file: package.json
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install OPA binary
-        env:
-          OPA_VERSION: "1.17.1"
-          OPA_SHA256: "3d4bb88482958d990351ec5d2f7558509992776bc473bc1b78d86d76cb993ca3"
-        run: |
-          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/opa_linux_amd64_static \
-            "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static"
-          echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
-          sudo install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
-      - name: Build and serve UI
-        run: |
-          cd frontend && npm ci && npm run build && cd ..
-          uv run python -m apme_gateway.main &
-          npx serve frontend/dist -l 8081 -s &
-          sleep 3
-        env:
-          APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
-          APME_GATEWAY_GRPC_LISTEN: 127.0.0.1:50060
-          APME_GATEWAY_HTTP_HOST: 127.0.0.1
-          APME_GATEWAY_HTTP_PORT: 8080
-      # This job serves the legacy native frontend; Local RHDH browser checks
-      # run separately against the image started by `tox -e up`.
-      - run: uvx --with-requirements ci/tox-requirements.txt tox -e ui-native
-        env:
-          APME_NATIVE_UI_URL: http://localhost:8081
-          APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
-          APME_GATEWAY_HTTP_HOST: 127.0.0.1
-          APME_GATEWAY_HTTP_PORT: 8080
+          cache-dependency-path: package-lock.json
+      - name: Install workspace and build shared BUI development harness
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-dev-build
+      - name: Chromium shared workflow harness smoke (not host certification)
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e ui-workflow-browser
 
   test-ai-extra:
     runs-on: ubuntu-24.04
@@ -181,7 +145,7 @@ jobs:
         with:
           node-version-file: package.json
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: uvx --with-requirements ci/tox-requirements.txt tox -e ui-workflow-pack
 
   backstage-packages:

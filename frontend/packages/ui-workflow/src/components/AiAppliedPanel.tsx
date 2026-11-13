@@ -2,7 +2,7 @@
  * Gate 2 completion — user acknowledges AI fixes before Create branch.
  */
 
-import { Button, Card, CardBody } from '@patternfly/react-core';
+import { Button, Card, CardBody } from '@backstage/ui';
 import { WorkflowNextBar } from './WorkflowNextBar';
 
 export interface AiAppliedPanelProps {
@@ -46,7 +46,7 @@ export function AiAppliedPanel({
               onNext={onContinue}
               secondary={
                 onDismiss ? (
-                  <Button variant="link" onClick={onDismiss}>
+                  <Button variant="tertiary" onPress={onDismiss}>
                     Dismiss
                   </Button>
                 ) : undefined

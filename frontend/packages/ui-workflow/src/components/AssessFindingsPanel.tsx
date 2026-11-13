@@ -5,17 +5,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Label } from '@patternfly/react-core';
+import { Alert, Badge } from '@backstage/ui';
 import { RuleId } from '../shared/RuleId';
 import { CurrentYamlView } from './DiffView';
 import { type NodeReviewItem } from './NodeReviewList';
 import { ReviewStepShell } from './ReviewStepShell';
 import { ReviewInventoryRow } from './ReviewInventoryRow';
 import { RuleFilterInput } from './RuleFilterInput';
-import {
-  toggleInFilterSet,
-  type ReviewFilterGroup,
-} from './ReviewFilterBar';
+import { toggleInFilterSet, type ReviewFilterGroup } from './ReviewFilterBar';
 import {
   SEVERITY_LABELS,
   SEVERITY_ORDER,
@@ -188,14 +185,25 @@ function FindingRow({
             : undefined
         }
       />
-      <Label isCompact color={severityLabelColor(sev, f.rule_id)}>
+      <Badge
+        size="small"
+        style={{
+          color: {
+            red: 'var(--bui-fg-danger)',
+            orange: 'var(--bui-fg-warning)',
+            yellow: 'var(--bui-fg-warning)',
+            blue: 'var(--bui-fg-info)',
+            grey: 'var(--bui-fg-secondary)',
+          }[severityLabelColor(sev, f.rule_id)],
+        }}
+      >
         {severityDisplayLabel(sev, f.rule_id)}
-      </Label>
-      <Label isCompact>{fixMethodLabel(fix)}</Label>
+      </Badge>
+      <Badge size="small">{fixMethodLabel(fix)}</Badge>
       {review ? (
-        <Label isCompact color="grey">
+        <Badge size="small" style={{ color: 'var(--bui-fg-secondary)' }}>
           {formatReviewStatus(review)}
-        </Label>
+        </Badge>
       ) : null}
       <span className="apme-assess-finding-msg">{f.message}</span>
       {f.file && (
@@ -247,9 +255,7 @@ export function AssessNodeDetail({
             onRuleClick={onRuleClick}
             resolveRuleHref={resolveRuleHref}
             ruleHrefTarget={ruleHrefTarget}
-            onHighlightLine={
-              beforeYaml.trim() ? setHighlightLine : undefined
-            }
+            onHighlightLine={beforeYaml.trim() ? setHighlightLine : undefined}
           />
         ))}
       </div>
@@ -284,12 +290,26 @@ function findingsToNodeItem(
     className: opts.isSingleton ? 'apme-proposal-declined' : undefined,
     meta: (
       <>
-        <Label isCompact variant="outline">
+        <Badge size="small">
           {findings.length} finding{findings.length !== 1 ? 's' : ''}
-        </Label>
-        <Label isCompact color={nodeTypeLabelColor(nodeType)}>
+        </Badge>
+        <Badge
+          size="small"
+          style={{
+            color: {
+              red: 'var(--bui-fg-danger)',
+              orange: 'var(--bui-fg-warning)',
+              yellow: 'var(--bui-fg-warning)',
+              blue: 'var(--bui-fg-info)',
+              grey: 'var(--bui-fg-secondary)',
+              green: 'var(--bui-fg-success)',
+              teal: 'var(--bui-fg-info)',
+              purple: 'var(--bui-fg-info)',
+            }[nodeTypeLabelColor(nodeType)],
+          }}
+        >
           {nodeTypeLabel(nodeType)}
-        </Label>
+        </Badge>
       </>
     ),
     detail: (
@@ -470,12 +490,17 @@ export function AssessFindingsPanel({
     enableAi,
   ]);
 
-  const groups = useMemo(() => groupFindings(filteredFindings), [filteredFindings]);
+  const groups = useMemo(
+    () => groupFindings(filteredFindings),
+    [filteredFindings],
+  );
 
   const inventory = useMemo(() => {
     const auto = findings.filter((f) => findingFixType(f, enableAi) === 'auto');
     const ai = findings.filter((f) => findingFixType(f, enableAi) === 'ai');
-    const manual = findings.filter((f) => findingFixType(f, enableAi) === 'manual');
+    const manual = findings.filter(
+      (f) => findingFixType(f, enableAi) === 'manual',
+    );
     return {
       totalFindings: findings.length,
       totalNodes: uniqueNodeCount(findings),
@@ -520,7 +545,15 @@ export function AssessFindingsPanel({
         ruleHrefTarget,
       }),
     );
-  }, [view, filteredFindings, groups, enableAi, ruleClickHandler, resolveRuleHref, ruleHrefTarget]);
+  }, [
+    view,
+    filteredFindings,
+    groups,
+    enableAi,
+    ruleClickHandler,
+    resolveRuleHref,
+    ruleHrefTarget,
+  ]);
 
   const filterGroups: ReviewFilterGroup[] = useMemo(
     () => [
@@ -650,12 +683,12 @@ export function AssessFindingsPanel({
     <>
       {error ? (
         <Alert
-          variant="danger"
+          status="danger"
+          role="alert"
           title="Could not continue to remediation"
+          description={error}
           style={{ marginBottom: 12 }}
-        >
-          {error}
-        </Alert>
+        ></Alert>
       ) : null}
       <ReviewStepShell
         title={title}

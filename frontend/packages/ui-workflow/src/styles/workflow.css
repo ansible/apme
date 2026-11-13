@@ -12,8 +12,7 @@
   --apme-border-subtle: rgba(0, 0, 0, 0.12);
 }
 
-:root.pf-v6-theme-dark,
-.pf-v6-theme-dark {
+[data-theme-mode="dark"] {
   --apme-border-subtle: rgba(255, 255, 255, 0.15);
   --apme-decision-accept-fg: #8fb896;
   --apme-decision-accept-bg: rgba(91, 163, 82, 0.16);
@@ -23,27 +22,21 @@
   --apme-decision-decline-border: rgba(196, 84, 84, 0.32);
 }
 
-:root.pf-v6-theme-dark .apme-proposal-card,
-.pf-v6-theme-dark .apme-proposal-card {
+[data-theme-mode="dark"] .apme-proposal-card {
   border-color: var(--apme-border-subtle);
 }
 
-:root.pf-v6-theme-dark .apme-assess-findings-detail,
-:root.pf-v6-theme-dark .apme-assess-finding-row,
-:root.pf-v6-theme-dark .apme-proposal-diff,
-:root.pf-v6-theme-dark .apme-proposal-explanation,
-:root.pf-v6-theme-dark .apme-workflow-next,
-.pf-v6-theme-dark .apme-assess-findings-detail,
-.pf-v6-theme-dark .apme-assess-finding-row,
-.pf-v6-theme-dark .apme-proposal-diff,
-.pf-v6-theme-dark .apme-proposal-explanation,
-.pf-v6-theme-dark .apme-workflow-next {
+[data-theme-mode="dark"] .apme-assess-findings-detail,
+[data-theme-mode="dark"] .apme-assess-finding-row,
+[data-theme-mode="dark"] .apme-proposal-diff,
+[data-theme-mode="dark"] .apme-proposal-explanation,
+[data-theme-mode="dark"] .apme-workflow-next {
   border-color: var(--apme-border-subtle);
 }
 
 /* ── File name ─────────────────────────────────────── */
 .apme-file-name {
-  font-family: var(--pf-t--global--font--family--mono);
+  font-family: var(--bui-font-monospace);
   font-size: 13px;
   flex: 1;
   overflow: hidden;
@@ -65,8 +58,8 @@
 
 .apme-diff-block {
   margin-bottom: 16px;
-  border: 1px solid var(--pf-t--global--border--color--default);
-  border-radius: var(--pf-t--global--border--radius--small);
+  border: 1px solid var(--bui-border-1);
+  border-radius: var(--bui-radius-2);
   overflow: hidden;
 }
 
@@ -75,8 +68,8 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: var(--pf-t--global--background--color--secondary--default);
-  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--bui-bg-neutral-2);
+  border-bottom: 1px solid var(--bui-border-1);
 }
 
 .apme-diff-rules {
@@ -88,7 +81,7 @@
   margin: 0;
   padding: 12px 16px;
   font-size: 12px;
-  font-family: var(--pf-t--global--font--family--mono);
+  font-family: var(--bui-font-monospace);
   overflow-x: auto;
   white-space: pre;
 }
@@ -98,7 +91,7 @@
   grid-template-columns: 1fr 1fr;
   max-height: 420px;
   overflow: auto;
-  border-top: 1px solid var(--pf-t--global--border--color--default);
+  border-top: 1px solid var(--bui-border-1);
 }
 
 .apme-side-by-side.apme-current-only {
@@ -121,27 +114,27 @@
   white-space: pre;
   font-size: 12px;
   line-height: 1.5;
-  font-family: var(--pf-t--global--font--family--mono);
+  font-family: var(--bui-font-monospace);
 }
 
 .apme-diff-pane + .apme-diff-pane {
-  border-left: 1px solid var(--pf-t--global--border--color--default);
+  border-left: 1px solid var(--bui-border-1);
 }
 
 .apme-diff-pane-header {
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--pf-t--global--background--color--secondary--default);
-  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--bui-bg-neutral-2);
+  border-bottom: 1px solid var(--bui-border-1);
 }
 
 .apme-diff-warning {
   grid-column: 1 / -1;
   padding: 6px 12px;
-  color: var(--pf-t--global--color--status--warning--default);
+  color: var(--bui-fg-warning);
   font-size: 12px;
-  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+  border-bottom: 1px solid var(--bui-border-1);
 }
 
 .apme-diff-line {
@@ -166,15 +159,15 @@
 }
 
 /*
- * YAML syntax highlighting — theme-aware via PatternFly tokens + .pf-v6-theme-dark.
- * Default (light) matches the SPA; dark follows documentElement.pf-v6-theme-dark.
+ * YAML syntax highlighting follows BUI tokens and the host data-theme-mode attribute.
+ * The custom syntax palette preserves light/dark code readability.
  */
 .apme-side-by-side.apme-yaml-hl {
-  --apme-yaml-bg: var(--pf-t--global--background--color--secondary--default);
-  --apme-yaml-fg: var(--pf-t--global--text--color--regular);
-  --apme-yaml-muted: var(--pf-t--global--text--color--secondary);
-  --apme-yaml-border: var(--pf-t--global--border--color--default);
-  --apme-yaml-header-bg: var(--pf-t--global--background--color--secondary--default);
+  --apme-yaml-bg: var(--bui-bg-neutral-2);
+  --apme-yaml-fg: var(--bui-fg-primary);
+  --apme-yaml-muted: var(--bui-fg-secondary);
+  --apme-yaml-border: var(--bui-border-1);
+  --apme-yaml-header-bg: var(--bui-bg-neutral-2);
   --apme-yaml-comment: #6e7781;
   --apme-yaml-punctuation: #24292f;
   --apme-yaml-key: #0550ae;
@@ -190,13 +183,12 @@
   color: var(--apme-yaml-fg);
 }
 
-:root.pf-v6-theme-dark .apme-side-by-side.apme-yaml-hl,
-.pf-v6-theme-dark .apme-side-by-side.apme-yaml-hl {
-  --apme-yaml-bg: var(--pf-t--global--background--color--secondary--default);
-  --apme-yaml-fg: var(--pf-t--global--text--color--regular);
-  --apme-yaml-muted: var(--pf-t--global--text--color--secondary);
-  --apme-yaml-border: var(--pf-t--global--border--color--default);
-  --apme-yaml-header-bg: var(--pf-t--global--background--color--secondary--default);
+[data-theme-mode="dark"] .apme-side-by-side.apme-yaml-hl {
+  --apme-yaml-bg: var(--bui-bg-neutral-2);
+  --apme-yaml-fg: var(--bui-fg-primary);
+  --apme-yaml-muted: var(--bui-fg-secondary);
+  --apme-yaml-border: var(--bui-border-1);
+  --apme-yaml-header-bg: var(--bui-bg-neutral-2);
   --apme-yaml-comment: #8b949e;
   --apme-yaml-punctuation: #c9d1d9;
   --apme-yaml-key: #79c0ff;
@@ -243,13 +235,13 @@
 .apme-yaml-hl .apme-diff-remove.apme-diff-line-highlight,
 .apme-yaml-hl .apme-diff-add.apme-diff-line-highlight {
   background: rgba(25, 118, 210, 0.28);
-  box-shadow: inset 3px 0 0 var(--pf-t--global--color--brand--default);
+  box-shadow: inset 3px 0 0 var(--bui-border-info);
 }
 
-.pf-v6-theme-dark .apme-diff-line.apme-diff-line-highlight,
-.pf-v6-theme-dark .apme-yaml-hl .apme-diff-line.apme-diff-line-highlight,
-.pf-v6-theme-dark .apme-yaml-hl .apme-diff-remove.apme-diff-line-highlight,
-.pf-v6-theme-dark .apme-yaml-hl .apme-diff-add.apme-diff-line-highlight {
+[data-theme-mode="dark"] .apme-diff-line.apme-diff-line-highlight,
+[data-theme-mode="dark"] .apme-yaml-hl .apme-diff-line.apme-diff-line-highlight,
+[data-theme-mode="dark"] .apme-yaml-hl .apme-diff-remove.apme-diff-line-highlight,
+[data-theme-mode="dark"] .apme-yaml-hl .apme-diff-add.apme-diff-line-highlight {
   background: rgba(66, 165, 245, 0.32);
 }
 
@@ -355,10 +347,10 @@
   flex: 0 1 auto;
   width: 7rem;
   padding: 6px 8px;
-  border: 1px solid var(--pf-t--global--border--color--default);
+  border: 1px solid var(--bui-border-1);
   border-radius: 6px;
   border-left-width: 3px;
-  background: var(--pf-t--global--background--color--secondary--default, transparent);
+  background: var(--bui-bg-neutral-2, transparent);
 }
 
 .apme-review-inventory-box__label {
@@ -400,24 +392,24 @@
 
 .apme-review-inventory-box--total,
 .apme-review-inventory-box--manual {
-  border-left-color: var(--pf-t--global--border--color--default);
+  border-left-color: var(--bui-border-1);
 }
 
 .apme-review-inventory-box--auto,
 .apme-review-inventory-box--accepted {
-  border-left-color: var(--pf-t--global--color--status--success--default);
+  border-left-color: var(--bui-fg-success);
 }
 
 .apme-review-inventory-box--ai {
-  border-left-color: var(--pf-t--global--color--palette--purple--50, #a18fff);
+  border-left-color: var(--bui-fg-info, #a18fff);
 }
 
 .apme-review-inventory-box--pending {
-  border-left-color: var(--pf-t--global--color--status--warning--default);
+  border-left-color: var(--bui-fg-warning);
 }
 
 .apme-review-inventory-box--declined {
-  border-left-color: var(--pf-t--global--color--status--danger--default);
+  border-left-color: var(--bui-fg-danger);
 }
 
 .apme-review-step-header__actions {
@@ -428,7 +420,7 @@
 .apme-workflow-next {
   margin-top: 20px;
   padding-top: 16px;
-  border-top: 1px solid var(--pf-t--global--border--color--default);
+  border-top: 1px solid var(--bui-border-1);
 }
 
 .apme-workflow-next--header {
@@ -459,8 +451,8 @@
 }
 
 .apme-proposal-card {
-  border: 1px solid var(--pf-t--global--border--color--default);
-  border-radius: var(--pf-t--global--border--radius--small);
+  border: 1px solid var(--bui-border-1);
+  border-radius: var(--bui-radius-2);
   overflow: hidden;
   transition: border-color 0.2s;
 }
@@ -485,25 +477,25 @@
   margin-left: auto;
 }
 
-/* Accept / Decline: soft tint + muted label (PF puts pf-m-selected on the button). */
-.apme-decision-toggle .apme-decision-accept .pf-v6-c-toggle-group__button.pf-m-selected {
+/* Accept / Decline use the BUI toggle selected state. */
+.apme-decision-toggle .apme-decision-accept[data-selected] {
   background-color: var(--apme-decision-accept-bg);
   color: var(--apme-decision-accept-fg);
   border-color: var(--apme-decision-accept-border);
 }
 
-.apme-decision-toggle .apme-decision-decline .pf-v6-c-toggle-group__button.pf-m-selected {
+.apme-decision-toggle .apme-decision-decline[data-selected] {
   background-color: var(--apme-decision-decline-bg);
   color: var(--apme-decision-decline-fg);
   border-color: var(--apme-decision-decline-border);
 }
 
-.apme-decision-toggle .apme-decision-accept .pf-v6-c-toggle-group__button:not(.pf-m-selected) {
+.apme-decision-toggle .apme-decision-accept:not([data-selected]) {
   color: var(--apme-decision-accept-fg);
   opacity: 0.7;
 }
 
-.apme-decision-toggle .apme-decision-decline .pf-v6-c-toggle-group__button:not(.pf-m-selected) {
+.apme-decision-toggle .apme-decision-decline:not([data-selected]) {
   color: var(--apme-decision-decline-fg);
   opacity: 0.7;
 }
@@ -517,7 +509,7 @@
 }
 
 .apme-proposal-header:hover {
-  background: var(--pf-t--global--background--color--secondary--hover);
+  background: var(--bui-bg-neutral-2-hover);
 }
 
 .apme-proposal-chevron {
@@ -526,7 +518,7 @@
   justify-content: center;
   width: 1.25rem;
   flex-shrink: 0;
-  color: var(--pf-t--global--icon--color--regular);
+  color: var(--bui-fg-secondary);
   opacity: 0.75;
 }
 
@@ -543,7 +535,7 @@
   align-items: center;
 }
 
-.apme-filter-pills .pf-v6-c-label {
+.apme-filter-pills button {
   cursor: pointer;
 }
 
@@ -553,6 +545,7 @@
 
 .apme-rule-filter {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   max-width: 36rem;
@@ -564,8 +557,7 @@
   flex-shrink: 0;
 }
 
-.apme-rule-filter .apme-rule-filter-toggle,
-.apme-rule-filter .pf-v6-c-menu-toggle {
+.apme-rule-filter .apme-rule-filter-toggle {
   flex: 1;
   min-width: 0;
 }
@@ -592,7 +584,7 @@ button.apme-rule-id-clickable {
 }
 
 a.apme-rule-id-link {
-  color: var(--pf-t--global--link--Color, #0066cc);
+  color: var(--bui-fg-info, #0066cc);
   cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dotted;
@@ -601,7 +593,7 @@ a.apme-rule-id-link {
 
 a.apme-rule-id-link:hover,
 a.apme-rule-id-link:focus {
-  color: var(--pf-t--global--link--Color--hover, #004080);
+  color: var(--bui-fg-info, #004080);
   text-decoration-style: solid;
 }
 
@@ -624,7 +616,7 @@ a.apme-rule-id-link:focus {
 }
 
 .apme-assess-findings-detail {
-  border-top: 1px solid var(--pf-t--global--border--color--default);
+  border-top: 1px solid var(--bui-border-1);
   padding: 4px 16px 8px;
 }
 
@@ -633,7 +625,7 @@ a.apme-rule-id-link:focus {
   gap: 12px;
   align-items: baseline;
   padding: 8px 0;
-  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+  border-bottom: 1px solid var(--bui-border-1);
   font-size: 13px;
 }
 
@@ -661,7 +653,7 @@ a.apme-rule-id-link:focus {
 }
 
 .apme-proposal-file {
-  font-family: var(--pf-t--global--font--family--mono);
+  font-family: var(--bui-font-monospace);
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -680,7 +672,7 @@ a.apme-rule-id-link:focus {
   flex: 1;
   height: 6px;
   border-radius: 3px;
-  background: var(--pf-t--global--background--color--secondary--default);
+  background: var(--bui-bg-neutral-2);
   overflow: hidden;
 }
 
@@ -688,7 +680,7 @@ a.apme-rule-id-link:focus {
   height: 100%;
   border-radius: 3px;
   transition: width 0.3s;
-  background: var(--pf-t--global--color--status--success--default, #5ba352);
+  background: var(--bui-fg-success, #5ba352);
 }
 
 .apme-confidence-label {
@@ -701,7 +693,7 @@ a.apme-rule-id-link:focus {
   padding: 8px 16px 12px;
   font-size: 13px;
   opacity: 0.8;
-  border-top: 1px solid var(--pf-t--global--border--color--default);
+  border-top: 1px solid var(--bui-border-1);
 }
 
 .apme-proposal-declined {
@@ -710,7 +702,7 @@ a.apme-rule-id-link:focus {
 }
 
 .apme-proposal-diff {
-  border-top: 1px solid var(--pf-t--global--border--color--default);
+  border-top: 1px solid var(--bui-border-1);
 }
 
 
