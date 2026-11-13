@@ -1,7 +1,7 @@
 # Build the checkout's packages, then bake them into a pinned RHDH host.
 # No APME release or host Node installation is needed by tox -e build.
 ARG NODE_IMAGE=registry.access.redhat.com/ubi10/nodejs-24-minimal:10.2
-ARG RHDH_IMAGE=quay.io/rhdh-community/rhdh@sha256:3bd31bddec7e9b37856fa8ae375e1461076c88d287a2cb0bbda86651e4243f49
+ARG RHDH_IMAGE=quay.io/rhdh-community/rhdh@sha256:be563de8b56deb0b7ccde68bfdff8d126de65229489c3883e836198f7504f45e
 
 FROM ${NODE_IMAGE} AS plugins
 USER root
@@ -30,6 +30,7 @@ COPY containers/rhdh/dynamic-plugins.yaml dynamic-plugins.yaml
 COPY containers/rhdh/entrypoint.sh /entrypoint.sh
 # Install at image-build time. Startup needs no registry or package downloads.
 RUN ./install-dynamic-plugins.sh dynamic-plugins-root \
+    && mkdir -p /etc/nginx/conf.d \
     && chmod -R a+rX local-plugins dynamic-plugins-root containers/rhdh \
     && chmod a+rx /entrypoint.sh \
     && chown -R 1001:0 dynamic-plugins-root

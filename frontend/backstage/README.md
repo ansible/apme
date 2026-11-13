@@ -31,8 +31,8 @@ instead of the host's React 18 runtime. Export success alone does not prove that
 such a mixed-install browser bundle is compatible.
 
 RHDH is pinned to the multi-platform community `next-2.1` manifest
-`sha256:3bd31bddec7e9b37856fa8ae375e1461076c88d287a2cb0bbda86651e4243f49`,
-source revision `131ebce80d1285ced5c5ef6f0a24807cf6d3db82` (Backstage 1.54.9).
+`sha256:be563de8b56deb0b7ccde68bfdff8d126de65229489c3883e836198f7504f45e`,
+source revision `7eb3a2ea50ef712488e2e46b960d0f55ff23370f` (Backstage 1.54.9).
 The frontend wrapper uses NFS and RHDH CLI 2.1.2; it lazily loads the shared page.
 The backend bundles private dependencies and shares the host backend API.
 Plugins are installed during the image build, so startup does not download them.
