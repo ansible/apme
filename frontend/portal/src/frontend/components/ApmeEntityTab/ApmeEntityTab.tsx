@@ -269,7 +269,7 @@ function WorkflowBody({ projectId }: Readonly<{ projectId: string }>) {
  * `@apme/ui-workflow` (ADR-056: Gateway owns SCM push; no file bundles).
  */
 export const ApmeEntityTab = (_props: ApmeEntityTabProps) => {
-  // PF + @apme/ui-workflow dark tokens require pf-v6-theme-dark on <html>.
+  // The hook sets both the PatternFly class and BUI's root theme mode.
   useSyncPatternFlyTheme();
 
   const { adapter, projectId, error, unavailable } = useResolveApmeProject();
