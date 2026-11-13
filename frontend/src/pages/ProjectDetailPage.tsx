@@ -28,7 +28,7 @@ import {
   ShieldAltIcon,
 } from '@patternfly/react-icons';
 import { useApmeApi } from '../api/apmeApiAdapter';
-import { getGitRequirementsPolicy, deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject, apiErrorMessage } from '../services/api';
+import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject, apiErrorMessage } from '../services/api';
 import type { GraphData } from '../services/api';
 import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
 import { GraphVisualization } from '../components/GraphVisualization';
@@ -264,12 +264,9 @@ export function ProjectDetailPage() {
   const [editName, setEditName] = useState('');
   const [editUrl, setEditUrl] = useState('');
   const [editBranch, setEditBranch] = useState('');
-  const [gitRequirementsEnabled, setGitRequirementsEnabled] = useState(false);
+  const gitRequirementsEnabled = project?.git_requirements_enabled ?? false;
   const [requirementsToken, setRequirementsToken] = useState('');
   const [requirementsTokenDirty, setRequirementsTokenDirty] = useState(false);
-  useEffect(() => {
-    getGitRequirementsPolicy(api).then(p => setGitRequirementsEnabled(p.enabled)).catch(() => setGitRequirementsEnabled(false));
-  }, [api]);
   const [editScmToken, setEditScmToken] = useState('');
   const [editScmProvider, setEditScmProvider] = useState('');
   const [scmTokenDirty, setScmTokenDirty] = useState(false);

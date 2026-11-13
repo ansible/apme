@@ -41,6 +41,7 @@ it.each([false, true])(
       branch: "main",
       has_scm_token: true,
       has_requirements_token: true,
+      git_requirements_enabled: enabled,
     } as ProjectDetail;
     const fetch = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) =>
@@ -63,7 +64,6 @@ it.each([false, true])(
         <ApmeProjectSettings project={project} adapter={adapter} canManage />
       </BUIProvider>,
     );
-    await waitFor(() => expect(fetch).toHaveBeenCalled());
     if (enabled) {
       const field = await screen.findByLabelText(
         "Git requirements credential (configured)",

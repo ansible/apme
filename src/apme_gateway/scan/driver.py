@@ -823,7 +823,9 @@ async def run_project_operation(
 
         from apme_gateway.scan.git_requirements import resolve_git_requirements
 
-        dependency_files = await resolve_git_requirements(project_id, temp_dir)
+        dependency_files = await resolve_git_requirements(
+            project_id, temp_dir, scm_token=scm_token, scm_provider=scm_provider
+        )
         if dependency_files:
             # Keep each dependency upload below the normal 1 MiB chunk target.
             chunks[-1].last = False

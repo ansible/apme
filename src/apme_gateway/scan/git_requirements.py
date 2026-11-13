@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
-import subprocess
+import signal
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -21,12 +22,16 @@ from apme_gateway.db.models import GitRequirementsSettings, Project
 from apme_gateway.scm.tokens import select_usable_scm_token
 
 
-async def resolve_git_requirements(project_id: str, project_root: str) -> list[File]:
+async def resolve_git_requirements(
+    project_id: str, project_root: str, *, scm_token: str | None = None, scm_provider: str | None = None
+) -> list[File]:
     """Fetch declared Git dependencies using the project credential policy.
 
     Args:
         project_id: Owning project UUID.
         project_root: Temporary project clone.
+        scm_token: Effective project clone credential, including per-operation credentials.
+        scm_provider: Effective project SCM provider.
 
     Returns:
         Dependency files in collection/role install layout.
@@ -45,9 +50,11 @@ async def resolve_git_requirements(project_id: str, project_root: str) -> list[F
         project = await db.get(Project, project_id)
         if project is None:
             raise ValueError("Project not found while resolving Git requirements")
-        token = select_usable_scm_token(project.requirements_token, project.scm_token, GatewayConfig().scm_token)
-        project_host = urlsplit(project.repo_url).hostname
-        project_provider = project.scm_provider
+        token = select_usable_scm_token(
+            project.requirements_token, scm_token, project.scm_token, GatewayConfig().scm_token
+        )
+        project_origin = _origin(project.repo_url)
+        project_provider = scm_provider or project.scm_provider
     files: dict[str, File] = {}
     total = 0
     for kind, entry in declarations:
@@ -63,9 +70,8 @@ async def resolve_git_requirements(project_id: str, project_root: str) -> list[F
         if subdir and (Path(subdir).is_absolute() or ".." in Path(subdir).parts):
             raise ValueError("Invalid Git collection subdirectory")
         with tempfile.TemporaryDirectory(prefix="apme_git_requirement_") as tmp:
-            await asyncio.to_thread(
-                _fetch, source, ref, tmp, token, project_provider if parsed.hostname == project_host else None
-            )
+            same_origin = _origin(source) == project_origin
+            await _fetch(source, ref, tmp, token if same_origin else None, project_provider if same_origin else None)
             collected = await asyncio.to_thread(
                 _collect_files, kind, entry, Path(tmp) / subdir, Path(tmp), Path(parsed.path).name
             )
@@ -130,11 +136,15 @@ def _collect_files(
         if not galaxy.exists():
             galaxy = content_root / "galaxy.yaml"
         if galaxy.is_file() and not galaxy.is_symlink():
+            if galaxy.stat().st_size > 2 * 1024 * 1024:
+                raise RuntimeError("Git requirement metadata exceeds 2 MiB")
             metadata = yaml.safe_load(galaxy.read_text())
         else:
             manifest = content_root / "MANIFEST.json"
             if manifest.is_symlink():
                 raise ValueError("Symlinked collection metadata is not supported")
+            if manifest.stat().st_size > 2 * 1024 * 1024:
+                raise RuntimeError("Git requirement metadata exceeds 2 MiB")
             metadata = json.loads(manifest.read_text())["collection_info"]
         namespace, name = str(metadata["namespace"]), str(metadata["name"])
         if not all(re.fullmatch(r"[a-z][a-z0-9_]*", value) for value in (namespace, name)):
@@ -166,7 +176,7 @@ def _collect_files(
     return list(files.values())
 
 
-def _fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str | None = None) -> None:
+async def _fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str | None = None) -> None:
     """Fetch a branch, tag or commit with credentials scoped to its origin.
 
     Args:
@@ -178,6 +188,7 @@ def _fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str |
 
     Raises:
         RuntimeError: Fetch failed or timed out.
+        asyncio.CancelledError: Caller canceled; child process is stopped first.
     """
     from apme_gateway.scan.driver import _apply_git_auth_env, _git_subprocess_env
 
@@ -187,12 +198,43 @@ def _fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str |
         ["git", "-C", dest, "fetch", "--depth=1", "--", url, ref],
         ["git", "-C", dest, "checkout", "--detach", "FETCH_HEAD"],
     )
-    try:
-        for command in commands:
-            result = subprocess.run(command, env=env, capture_output=True, timeout=120, check=False)  # noqa: S603
-            if result.returncode:
-                raise RuntimeError(
-                    "Git requirement fetch failed; check the requirement URL, version and project credentials"
-                )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("Git requirement fetch timed out") from exc
+    for command in commands:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            env=env,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            await asyncio.wait_for(process.wait(), timeout=120)
+        except (asyncio.CancelledError, TimeoutError) as exc:
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except TimeoutError:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    await process.wait()
+            if isinstance(exc, asyncio.CancelledError):
+                raise asyncio.CancelledError from exc
+            raise RuntimeError("Git requirement fetch timed out") from exc
+        if process.returncode:
+            raise RuntimeError(
+                "Git requirement fetch failed; check the requirement URL, version and project credentials"
+            )
+
+
+def _origin(url: str) -> tuple[str, str | None, int]:
+    """Normalize an HTTPS origin for credential scoping.
+
+    Args:
+        url: Project or dependency URL.
+
+    Returns:
+        Scheme, hostname and effective port.
+    """
+    parsed = urlsplit(url)
+    return parsed.scheme.lower(), parsed.hostname, parsed.port or 443

@@ -27,7 +27,11 @@ def is_git_requirement(entry: object) -> bool:
             or entry.get("scm") == "git"
             or is_git_requirement(entry.get("src", entry.get("name", "")))
         )
-    return isinstance(entry, str) and (entry.startswith(("git+", "https://", "ssh://", "git://", "git@")))
+    if not isinstance(entry, str):
+        return False
+    return entry.startswith(("git+", "ssh://", "git://", "git@")) or (
+        entry.startswith("https://") and entry.split(",", 1)[0].split("#", 1)[0].endswith(".git")
+    )
 
 
 def git_entries(data: object, *, roles_file: bool = False) -> Iterator[tuple[str, dict[str, object]]]:

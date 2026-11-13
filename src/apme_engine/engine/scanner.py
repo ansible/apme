@@ -341,17 +341,19 @@ class AnsibleProjectLoader:
         if not loaded:
             scandata.load_definitions_root(target_path=scandata.target_path)
 
-        # Preinstalled dependencies are context, kept outside root project definitions.
+        # Only explicit Git dependencies need external source parsing here.
+        # Enumerating every installed Galaxy collection makes warm scans scale
+        # with the entire venv rather than the project dependency snapshot.
         if dependency_dir and not skip_dependency:
             dep_root = Path(dependency_dir)
-            for collection in sorted(dep_root.glob("ansible_collections/*/*")):
-                if collection.is_dir() and ((collection / "plugins").is_dir() or (collection / "roles").is_dir()):
-                    scandata.load_definition_ext(
-                        LoadType.COLLECTION, f"{collection.parent.name}.{collection.name}", str(collection)
-                    )
-            for role in sorted(dep_root.glob("roles/*")):
-                if role.is_dir():
-                    scandata.load_definition_ext(LoadType.ROLE, role.name, str(role))
+            index_path = dep_root / ".apme-git-dependencies.json"
+            if index_path.is_file():
+                index = json.loads(index_path.read_text())
+                for name in index.get("collections", []):
+                    collection = dep_root / "ansible_collections" / name.replace(".", "/")
+                    scandata.load_definition_ext(LoadType.COLLECTION, name, str(collection))
+                for name in index.get("roles", []):
+                    scandata.load_definition_ext(LoadType.ROLE, name, str(dep_root / "roles" / name))
 
         scandata.set_target_object()
 

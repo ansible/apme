@@ -25,30 +25,22 @@ function setup(
 ) {
   const onDeleted = vi.fn();
   let readCount = 0;
-  const request = vi.fn(
-    async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const method = init?.method ?? "GET";
-      if (method === "GET") {
-        readCount += 1;
-        const operationIsActive = active || (activeOnConfirm && readCount > 1);
-        return new Response(
-          JSON.stringify({
-            ...project,
-            active_operation: operationIsActive ? { status: "running" } : null,
-          }),
-        );
-      }
-      return denied
-        ? new Response('{"detail":"Delete denied"}', { status: 403 })
-        : new Response(null, { status: 204 });
-    },
-  );
-  const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input).endsWith("/settings/git-requirements")) {
-      return new Response(JSON.stringify({ enabled: false }));
+  const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (method === "GET") {
+      readCount += 1;
+      const operationIsActive = active || (activeOnConfirm && readCount > 1);
+      return new Response(
+        JSON.stringify({
+          ...project,
+          active_operation: operationIsActive ? { status: "running" } : null,
+        }),
+      );
     }
-    return request(input, init);
-  };
+    return denied
+      ? new Response('{"detail":"Delete denied"}', { status: 403 })
+      : new Response(null, { status: 204 });
+  });
   render(
     <BUIProvider>
       <ApmeProjectSettings
@@ -69,7 +61,7 @@ function setup(
       />
     </BUIProvider>,
   );
-  return { fetch: request, onDeleted };
+  return { fetch, onDeleted };
 }
 it("requires an independent host deletion permission", () => {
   const { fetch } = setup();

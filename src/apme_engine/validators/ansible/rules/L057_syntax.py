@@ -1,5 +1,6 @@
 """L057: Syntax check via ansible-playbook --syntax-check."""
 
+import json
 import os
 import re
 import subprocess
@@ -102,6 +103,38 @@ def run(
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
+
+    git_roles = sorted(venv_root.glob("lib/python*/site-packages/roles"))
+    if git_roles:
+        # Ask this Ansible runtime to resolve its configuration before appending
+        # dependency paths; an env override alone would discard ansible.cfg.
+        resolved = subprocess.run(
+            [
+                str(venv_root / "bin/python"),
+                "-I",
+                "-c",
+                "import json; from ansible import constants as C; print(json.dumps(C.DEFAULT_ROLES_PATH))",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(root_dir),
+            timeout=30,
+            env=env,
+        )
+        if resolved.returncode != 0:
+            return [
+                {
+                    "rule_id": RULE_ID,
+                    "severity": "error",
+                    "message": "Unable to resolve Ansible role search paths",
+                    "file": "",
+                    "line": 1,
+                    "path": "",
+                    "scope": "playbook",
+                }
+            ]
+        paths = json.loads(resolved.stdout)
+        env["ANSIBLE_ROLES_PATH"] = os.pathsep.join([*paths, *(str(path) for path in git_roles)])
 
     for playbook_path in _find_playbooks(root_dir):
         rel_path = str(playbook_path.relative_to(root_dir)) if root_dir in playbook_path.parents else str(playbook_path)

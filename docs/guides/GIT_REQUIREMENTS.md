@@ -27,7 +27,9 @@ existing deployment SCM fallback. When the global policy is enabled, **Project â
 Settings â†’ Git requirements credential** lets you supply a separate credential
 for dependency repositories. This credential overrides the default for Git
 requirements and does not affect project cloning or pull requests. Remove it to
-return to the default. Saved credentials are never returned by the API.
+return to the default. Credentials are sent only to the project repository's HTTPS
+origin; dependencies on other origins are fetched anonymously. Saved credentials
+are never returned by the API.
 
 The Gateway fetches declared dependencies before checks and remediation. Engine
 installs the supplied files in its session venv and exposes roles to Ansible
@@ -45,3 +47,8 @@ operations; local CLI uploads do not fetch Git dependencies.
 
 Changing the gRPC dependency payload requires upgrading Gateway and Engine
 together. Existing clients without dependency payloads retain their scan flow.
+Each distinct Git snapshot retains a separate venv on disk. Automatic disk-cache
+reaping is not wired into the daemon yet; account for retained session storage
+when operating this feature.
+
+Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).

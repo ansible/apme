@@ -1391,7 +1391,7 @@
         "type": "object"
       },
       "ProjectDetail": {
-        "description": "Full project representation with latest activity summary.\n\nAttributes:\n    latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).\n    severity_breakdown: Violation counts keyed by severity level.",
+        "description": "Full project representation with latest activity summary.\n\nAttributes:\n    git_requirements_enabled: Global Git policy exposed to authorized project readers.\n    latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).\n    severity_breakdown: Violation counts keyed by severity level.",
         "properties": {
           "active_operation": {
             "anyOf": [
@@ -1410,6 +1410,11 @@
           "created_at": {
             "title": "Created At",
             "type": "string"
+          },
+          "git_requirements_enabled": {
+            "default": false,
+            "title": "Git Requirements Enabled",
+            "type": "boolean"
           },
           "has_new_commits": {
             "default": false,

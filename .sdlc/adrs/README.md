@@ -58,6 +58,7 @@ Decisions that are fully reflected in the codebase.
 | [ADR-068](ADR-068-adaptive-operation-deadlines.md) | Adaptive Operation Deadlines for Long AI Remediation | 2026-07-30 |
 | [ADR-070](ADR-070-gateway-abbenay-admin-proxy.md) | Gateway HTTP Proxy to In-Pod Abbenay Admin (Simple Model) | 2026-08-03 |
 | [ADR-075](ADR-075-bounded-validator-request-streaming.md) | Bounded Streaming for Oversized Validator Requests | 2026-11-06 |
+| [ADR-076](ADR-076-git-requirements.md) | Gateway resolution of Git requirements | 2026-11-13 |
 
 ## Partially Implemented
 
@@ -103,7 +104,6 @@ Decisions under consideration — not yet accepted or implemented.
 | [ADR-058](ADR-058-collection-dependency-suggestion.md) | Collection Dependency Suggestion for Unresolved Modules (R501) | 2026-06-23 |
 | [ADR-071](ADR-071-pip-index-egress.md) | Pip Index Egress via Galaxy Proxy | 2026-09-16 |
 | [ADR-072](ADR-072-unified-supply-chain-sbom-cve-cwe.md) | Unified Supply Chain Security — CycloneDX SBOM with Gateway CVE/CWE Enrichment | 2026-09-21 |
-| [ADR-076](ADR-076-git-requirements.md) | Gateway resolution of Git requirements | 2026-11-13 |
 
 ## Superseded
 
