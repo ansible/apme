@@ -1,7 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { ApmeButton as Button } from "./layout";
 import "./layout.css";
-import { useCallback, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import {
   Alert,
   Checkbox,
@@ -12,14 +12,12 @@ import {
   TextField,
 } from "@backstage/ui";
 import {
-  getGitRequirementsPolicy,
   updateProject,
   type ProjectDetail,
   type ProjectSummary,
   type UpdateProjectRequest,
 } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
-import { useLoad } from "./useLoad";
 import { useMutation } from "./useMutation";
 import { DeleteProject } from "./DeleteProject";
 import { adapterIdentity } from "./adapterIdentity";
@@ -72,11 +70,6 @@ function ProjectSettingsForm({
   const [removeToken, setRemoveToken] = useState(false);
   const [saved, setSaved] = useState(false);
   const mutation = useMutation(adapter);
-  const loadPolicy = useCallback(
-    () => getGitRequirementsPolicy(adapter),
-    [adapter],
-  );
-  const policy = useLoad(loadPolicy);
   const [requirementsToken, setRequirementsToken] = useState("");
   const [removeRequirementsToken, setRemoveRequirementsToken] = useState(false);
 
@@ -88,7 +81,7 @@ function ProjectSettingsForm({
     changes.scm_provider = provider || null;
   if (removeToken) changes.scm_token = "";
   else if (token.trim()) changes.scm_token = token.trim();
-  if (policy.value?.enabled) {
+  if (project.git_requirements_enabled) {
     if (removeRequirementsToken) changes.requirements_token = "";
     else if (requirementsToken.trim())
       changes.requirements_token = requirementsToken.trim();
@@ -208,7 +201,7 @@ function ProjectSettingsForm({
             Remove the stored SCM token
           </Checkbox>
         )}
-        {policy.value?.enabled && (
+        {project.git_requirements_enabled && (
           <>
             <PasswordField
               label={

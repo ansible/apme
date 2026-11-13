@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Implemented
 
 ## Date
 
@@ -41,7 +41,8 @@ and may include third-party source in generated PRs. Rejected.
 - Dependency fetching remains at the edge; validators retain read-only venv access.
 - Gateway and Engine must be upgraded together to use the new dependency field.
 - Different Git snapshots have separate venvs, trading disk space for reproducibility
-  and isolation from warm state. Existing session reaping applies.
+  and isolation from warm state. Disk cache cleanup requires operational management;
+  automatic safe venv reaping is a tracked follow-up.
 - Tokens use the existing database secret-storage model; API responses expose presence only.
 - Initial scope supports direct HTTPS Git declarations, not recursive Git manifests.
 
@@ -49,3 +50,12 @@ and may include third-party source in generated PRs. Rejected.
 
 [REQ-023](../specs/REQ-023-git-requirements/requirement.md), ADR-020, ADR-029,
 ADR-045, ADR-060.
+
+
+## Revision History
+
+| Date | Change |
+|------|--------|
+| 2026-11-13 | Implemented global policy, project credential override, gateway fetching and isolated Engine dependency payloads (REQ-023). |
+
+Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).

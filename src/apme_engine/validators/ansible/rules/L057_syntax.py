@@ -616,6 +616,38 @@ def run(
     if env_extra:
         env.update(env_extra)
 
+    git_roles = sorted(venv_root.glob("lib/python*/site-packages/roles"))
+    if git_roles:
+        # Ask this Ansible runtime to resolve its configuration before appending
+        # dependency paths; an env override alone would discard ansible.cfg.
+        resolved = subprocess.run(
+            [
+                str(venv_root / "bin/python"),
+                "-I",
+                "-c",
+                "import json; from ansible import constants as C; print(json.dumps(C.DEFAULT_ROLES_PATH))",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(root_dir),
+            timeout=30,
+            env=env,
+        )
+        if resolved.returncode != 0:
+            return [
+                {
+                    "rule_id": RULE_ID,
+                    "severity": "error",
+                    "message": "Unable to resolve Ansible role search paths",
+                    "file": "",
+                    "line": 1,
+                    "path": "",
+                    "scope": "playbook",
+                }
+            ]
+        paths = json.loads(resolved.stdout)
+        env["ANSIBLE_ROLES_PATH"] = os.pathsep.join([*paths, *(str(path) for path in git_roles)])
+
     molecule_dirs = _molecule_directories(root_dir)
     static_paths: frozenset[str] = frozenset()
     advisory: dict[str, object] | None = None

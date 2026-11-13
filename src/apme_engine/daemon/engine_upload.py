@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import posixpath
+import re
 from collections.abc import Mapping
 from typing import cast
 
@@ -71,6 +72,31 @@ def _normalize_upload_path(path: str) -> str:
     return normalized
 
 
+def validate_dependency_path(path: str) -> str:
+    """Validate dependency layout and identifiers before filesystem access.
+
+    Args:
+        path: Uploaded dependency path.
+
+    Returns:
+        Normalized dependency path.
+
+    Raises:
+        ValueError: Invalid collection, role or install layout.
+    """
+    normalized = _normalize_upload_path(path)
+    parts = normalized.split("/")
+    collection = (
+        parts[0] == "ansible_collections"
+        and len(parts) >= 4
+        and all(re.fullmatch(r"[a-z][a-z0-9_]*", part) for part in parts[1:3])
+    )
+    role = parts[0] == "roles" and len(parts) >= 3 and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", parts[1])
+    if not (collection or role):
+        raise ValueError("Invalid dependency install path")
+    return normalized
+
+
 def _hash_upload_files(files: Mapping[str, bytes]) -> str:
     """SHA-256 over sorted ``(path, content)`` pairs for payload comparison.
 
@@ -82,10 +108,11 @@ def _hash_upload_files(files: Mapping[str, bytes]) -> str:
     """
     digest = hashlib.sha256()
     for path in sorted(files):
-        digest.update(path.encode("utf-8"))
-        digest.update(b"\x00")
+        encoded = path.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(len(files[path]).to_bytes(8, "big"))
         digest.update(files[path])
-        digest.update(b"\x00")
     return digest.hexdigest()
 
 
@@ -141,10 +168,7 @@ def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
         raise ValueError("Reserved dependency upload path")
     staged = [(_normalize_upload_path(f.path), f.content) for f in chunk.files]  # type: ignore[attr-defined]
     for f in dependency_upload_files(chunk):
-        path = _normalize_upload_path(f.path)
-        parts = path.split("/")
-        if not ((parts[0] == "ansible_collections" and len(parts) >= 4) or (parts[0] == "roles" and len(parts) >= 3)):
-            raise ValueError("Invalid dependency install path")
+        path = validate_dependency_path(f.path)
         staged.append((".git-dependencies/" + path, f.content))
     existing = dict(session.original_files)
     existing.update({".git-dependencies/" + p: c for p, c in session.dependency_files.items()})

@@ -463,10 +463,12 @@ class ProjectDetail(ProjectSummary):
     """Full project representation with latest activity summary.
 
     Attributes:
+        git_requirements_enabled: Global Git policy exposed to authorized project readers.
         latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).
         severity_breakdown: Violation counts keyed by severity level.
     """
 
+    git_requirements_enabled: bool = False
     latest_scan: ActivitySummary | None = None
     severity_breakdown: dict[str, int] = Field(default_factory=dict)
 

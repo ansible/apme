@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from sqlalchemy.dialects.postgresql import insert
 
 from apme_gateway.db import get_session
 from apme_gateway.db.models import GitRequirementsSettings
@@ -42,10 +43,7 @@ async def set_git_requirements_policy(body: GitRequirementsPolicy) -> GitRequire
         Saved policy.
     """
     async with get_session() as db:
-        row = await db.get(GitRequirementsSettings, 1)
-        if row is None:
-            row = GitRequirementsSettings(id=1)
-            db.add(row)
-        row.enabled = body.enabled
+        statement = insert(GitRequirementsSettings).values(id=1, enabled=body.enabled)
+        await db.execute(statement.on_conflict_do_update(index_elements=["id"], set_={"enabled": body.enabled}))
         await db.commit()
     return body

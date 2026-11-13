@@ -1,5 +1,9 @@
 """Git requirement policy, credential and dependency isolation regressions."""
 
+import asyncio
+import os
+import shlex
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,16 +21,25 @@ from apme_gateway.scan import git_requirements as git
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
-    "override,project_token,expected",
+    "override,project_token,expected,operation_token,source_origin",
     [
-        (None, "project", "project"),
-        ("separate", "project", "separate"),
-        ("", "project", "project"),
-        (None, None, "deployment"),
+        (None, "project", "project", None, "git.example"),
+        ("separate", "project", "separate", None, "git.example"),
+        ("", "project", "project", None, "git.example"),
+        (None, None, "deployment", None, "git.example"),
+        (None, "project", "operation", "operation", "git.example"),
+        ("separate", "project", "separate", "operation", "git.example"),
+        ("separate", "project", None, None, "other.example"),
     ],
 )
 async def test_credentials_and_dependency_layout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: str | None, project_token: str | None, expected: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: str | None,
+    project_token: str | None,
+    expected: str | None,
+    operation_token: str | None,
+    source_origin: str,
 ) -> None:
     """Git requirements use their override or default to project credentials.
 
@@ -36,6 +49,8 @@ async def test_credentials_and_dependency_layout(
         override: Requirement credential.
         project_token: Project clone credential.
         expected: Credential used to fetch dependencies.
+        operation_token: Effective project clone credential.
+        source_origin: Git dependency hostname.
     """
     (tmp_path / "requirements.yml").write_text("""collections:
   - name: https://git.example/collection.git
@@ -46,6 +61,8 @@ roles:
     name: example_role
     version: main
 """)
+    path = tmp_path / "requirements.yml"
+    path.write_text(path.read_text().replace("git.example", source_origin))
     db = SimpleNamespace(
         get=AsyncMock(
             side_effect=[
@@ -68,8 +85,8 @@ roles:
     monkeypatch.setenv("APME_SCM_TOKEN", "deployment")
     calls = []
 
-    def fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str | None = None) -> None:
-        assert scm_provider == "gitlab"
+    async def fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str | None = None) -> None:
+        assert scm_provider == ("gitlab" if source_origin == "git.example" else None)
         calls.append((ref, token))
         root = Path(dest)
         if "collection" in url:
@@ -81,14 +98,15 @@ roles:
             (root / "tasks/main.yml").write_text("- ansible.builtin.debug:\n    msg: hello\n")
 
     monkeypatch.setattr(git, "_fetch", fetch)
-    result = await git.resolve_git_requirements("project", str(tmp_path))
+    result = await git.resolve_git_requirements("project", str(tmp_path), scm_token=operation_token)
     assert calls == [("v1", expected), ("main", expected)]
     assert {f.path for f in result} == {
         "ansible_collections/demo/custom/galaxy.yml",
         "ansible_collections/demo/custom/plugins/modules/probe.py",
         "roles/example_role/tasks/main.yml",
     }
-    assert all(expected.encode() not in f.content for f in result)
+    if expected is not None:
+        assert all(expected.encode() not in f.content for f in result)
 
 
 async def test_disabled_policy_blocks_fetch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,6 +206,9 @@ def test_git_role_is_loaded_as_external_context(tmp_path: Path) -> None:
     (collection / "roles/inner/tasks").mkdir(parents=True)
     (collection / "roles/inner/tasks/main.yml").write_text("- ansible.builtin.debug:\n    msg: collection\n")
     (collection / "galaxy.yml").write_text("namespace: demo\nname: custom\nversion: 1.0.0\n")
+    (dependencies / ".apme-git-dependencies.json").write_text(
+        '{"roles":["external_role"],"collections":["demo.custom"]}'
+    )
     context = run_scan(str(project), str(tmp_path / "loader"), dependency_dir=str(dependencies))
     assert isinstance(context.scandata, SingleScan)
     assert "role-external_role" in context.scandata.ext_definitions
@@ -212,3 +233,97 @@ def test_git_snapshot_changes_plugin_cache_version(tmp_path: Path) -> None:
         (venv / ".git-dependencies-ready").write_text(snapshot)
         versions.append(PluginCache()._resolve_version(str(venv), "demo", "custom"))
     assert versions[0] != versions[1]
+
+
+def test_dependency_hash_has_unambiguous_framing() -> None:
+    """Null bytes cannot turn one file into an equivalent two-file snapshot."""
+    assert engine_upload._hash_upload_files({"roles/r/a": b"x\0roles/r/b\0y"}) != engine_upload._hash_upload_files(
+        {"roles/r/a": b"x", "roles/r/b": b"y"}
+    )
+
+
+def test_archive_sources_are_not_git() -> None:
+    """HTTPS archives retain their existing non-Git handling."""
+    from apme_engine.git_requirements import is_git_requirement
+
+    assert not is_git_requirement({"src": "https://example.test/role.tar.gz"})
+    assert not is_git_requirement({"name": "https://example.test/collection.tar.gz", "type": "url"})
+    assert is_git_requirement({"src": "https://example.test/role", "scm": "git"})
+
+
+def test_metadata_limits_precede_parsing(tmp_path: Path) -> None:
+    """Oversized metadata is rejected before loading its YAML.
+
+    Args:
+        tmp_path: Disposable Git checkout.
+    """
+    (tmp_path / "galaxy.yml").write_bytes(b" " * (2 * 1024 * 1024 + 1))
+    with pytest.raises(RuntimeError, match="metadata exceeds"):
+        git._collect_files("collections", {}, tmp_path, tmp_path, "collection.git")
+
+
+async def test_fetch_cancellation_waits_for_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancellation terminates the Git process group before returning.
+
+    Args:
+        monkeypatch: Process lifecycle overrides.
+    """
+    created, stopped = asyncio.Event(), asyncio.Event()
+    process = SimpleNamespace(pid=12345, returncode=None)
+
+    async def wait() -> int:
+        await stopped.wait()
+        process.returncode = -15
+        return -15
+
+    process.wait = wait
+
+    async def create(*args: object, **kwargs: object) -> object:
+        created.set()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(os, "killpg", lambda *_: stopped.set())
+    task = asyncio.create_task(git._fetch("https://git.example/role.git", "HEAD", "/unused", None))
+    await created.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stopped.is_set()
+    assert process.returncode == -15
+
+
+def test_git_roles_preserve_project_role_search_paths(tmp_path: Path) -> None:
+    """Appending Git roles preserves ansible.cfg paths for existing local roles.
+
+    Args:
+        tmp_path: Disposable project and venv fixtures.
+    """
+    from apme_engine.validators.ansible.rules import L057_syntax
+
+    project = tmp_path / "project"
+    local = project / "custom_roles/local/tasks"
+    local.mkdir(parents=True)
+    (local / "main.yml").write_text("[]")
+    (project / "ansible.cfg").write_text("[defaults]\nroles_path = custom_roles\nlibrary = .\n")
+    (project / "json.py").write_text(
+        "from pathlib import Path\nPath('executed').touch()\nraise AssertionError('project import')\n"
+    )
+    (project / "site.yml").write_text("- hosts: localhost\n  gather_facts: false\n  roles: [local, fetched]\n")
+    venv = tmp_path / "venv"
+    roles = venv / "lib/python3.12/site-packages/roles/fetched/tasks"
+    roles.mkdir(parents=True)
+    (roles / "main.yml").write_text("[]")
+    (venv / "bin").mkdir()
+    (venv / "bin/python").write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + ' "$@"\n')
+    (venv / "bin/python").chmod(0o755)
+    (venv / "bin/ansible-playbook").symlink_to(Path(sys.prefix) / "bin/ansible-playbook")
+    assert L057_syntax.run(venv, project) == []
+    assert not (project / "executed").exists()
+
+
+def test_git_dependency_identifiers_cannot_escape_index_paths() -> None:
+    """Collection identifiers cannot become absolute paths in the source index."""
+    for path in ("ansible_collections/.../x/plugins/a.py", "roles/..hidden/tasks/main.yml"):
+        with pytest.raises(ValueError, match="Invalid dependency"):
+            engine_upload.validate_dependency_path(path)

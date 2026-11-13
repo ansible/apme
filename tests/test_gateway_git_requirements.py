@@ -31,7 +31,9 @@ async def test_git_policy_and_project_credentials() -> None:
         project = response.json()
         assert project["has_requirements_token"]
         project_path = f"/api/v1/projects/{project['id']}"
-        assert (await client.get(project_path)).json()["has_requirements_token"]
+        detail = (await client.get(project_path)).json()
+        assert detail["has_requirements_token"]
+        assert detail["git_requirements_enabled"]
         async with get_session() as db:
             saved = await db.get(Project, project["id"])
             assert saved is not None
@@ -41,3 +43,14 @@ async def test_git_policy_and_project_credentials() -> None:
         assert not cleared.json()["has_requirements_token"]
         assert cleared.json()["has_scm_token"]
         assert (await client.put(path, json={"enabled": False})).json() == {"enabled": False}
+
+
+async def test_concurrent_initial_policy_writes() -> None:
+    """The singleton policy supports simultaneous initial saves."""
+    import asyncio
+
+    async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as client:
+        responses = await asyncio.gather(
+            *(client.put("/api/v1/settings/git-requirements", json={"enabled": value}) for value in (False, True))
+        )
+        assert all(response.status_code == 200 for response in responses)

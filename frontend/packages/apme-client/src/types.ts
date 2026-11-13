@@ -188,6 +188,7 @@ export interface ProjectSummary {
 }
 
 export interface ProjectDetail extends ProjectSummary {
+  git_requirements_enabled?: boolean;
   latest_scan: ActivitySummary | null;
   severity_breakdown: Record<string, number>;
   active_operation: ActiveOperationSummary | null;
