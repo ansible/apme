@@ -59,6 +59,9 @@ def create_app() -> FastAPI:
     )
     # Main router first so GET /api/v1/ai/models (Engine) wins over the
     # ADR-070 Abbenay admin catch-all /api/v1/ai/{path}.
+    from apme_gateway.api.git_requirements import router as git_requirements_router
+
+    app.include_router(git_requirements_router)
     app.include_router(router)
     app.include_router(feedback_router)
     app.include_router(operation_router)

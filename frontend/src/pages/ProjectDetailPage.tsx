@@ -28,7 +28,7 @@ import {
   ShieldAltIcon,
 } from '@patternfly/react-icons';
 import { useApmeApi } from '../api/apmeApiAdapter';
-import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject, apiErrorMessage } from '../services/api';
+import { getGitRequirementsPolicy, deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject, apiErrorMessage } from '../services/api';
 import type { GraphData } from '../services/api';
 import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
 import { GraphVisualization } from '../components/GraphVisualization';
@@ -264,6 +264,12 @@ export function ProjectDetailPage() {
   const [editName, setEditName] = useState('');
   const [editUrl, setEditUrl] = useState('');
   const [editBranch, setEditBranch] = useState('');
+  const [gitRequirementsEnabled, setGitRequirementsEnabled] = useState(false);
+  const [requirementsToken, setRequirementsToken] = useState('');
+  const [requirementsTokenDirty, setRequirementsTokenDirty] = useState(false);
+  useEffect(() => {
+    getGitRequirementsPolicy(api).then(p => setGitRequirementsEnabled(p.enabled)).catch(() => setGitRequirementsEnabled(false));
+  }, [api]);
   const [editScmToken, setEditScmToken] = useState('');
   const [editScmProvider, setEditScmProvider] = useState('');
   const [scmTokenDirty, setScmTokenDirty] = useState(false);
@@ -277,6 +283,8 @@ export function ProjectDetailPage() {
       setEditUrl(project.repo_url);
       setEditBranch(project.branch);
       setEditScmToken('');
+      setRequirementsToken('');
+      setRequirementsTokenDirty(false);
       setEditScmProvider(project.scm_provider || '');
       setScmTokenDirty(false);
       setScmProviderDirty(false);
@@ -292,6 +300,7 @@ export function ProjectDetailPage() {
       if (editName !== project.name) updates.name = editName;
       if (editUrl !== project.repo_url) updates.repo_url = editUrl;
       if (editBranch !== project.branch) updates.branch = editBranch;
+      if (gitRequirementsEnabled && requirementsTokenDirty) updates.requirements_token = requirementsToken.trim();
       if (scmTokenDirty) updates.scm_token = editScmToken.trim();
       if (scmProviderDirty) updates.scm_provider = editScmProvider || null;
       if (Object.keys(updates).length > 0) {
@@ -303,7 +312,7 @@ export function ProjectDetailPage() {
     } finally {
       setSaving(false);
     }
-  }, [projectId, project, editName, editUrl, editBranch, editScmToken, editScmProvider, scmTokenDirty, scmProviderDirty, fetchData, api]);
+  }, [projectId, project, editName, editUrl, editBranch, editScmToken, editScmProvider, scmTokenDirty, scmProviderDirty, requirementsToken, requirementsTokenDirty, gitRequirementsEnabled, fetchData, api]);
 
   if (loading && !project) {
     return (
@@ -685,6 +694,16 @@ export function ProjectDetailPage() {
                         Used for private clones and creating pull/merge requests. Leave blank to keep current value.
                       </div>
                     </FlexItem>
+                    {gitRequirementsEnabled && <FlexItem>
+                      <label htmlFor="requirements-token" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                        Git requirements credential {project?.has_requirements_token && '(configured)'}
+                      </label>
+                      <TextInput id="requirements-token" type="password" value={requirementsToken}
+                        onChange={(_e, value) => { setRequirementsToken(value); setRequirementsTokenDirty(true); }}
+                        placeholder={project?.has_requirements_token ? '••••••••' : 'Defaults to the project SCM token'} />
+                      <p>Used only for Git collection and role requirements. Leave untouched to keep the saved credential.
+                        Clear this field and save to use the project SCM token.</p>
+                    </FlexItem>}
                     {saveError && (
                       <FlexItem>
                         <Alert

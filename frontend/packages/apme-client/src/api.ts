@@ -1006,3 +1006,26 @@ export async function deleteNotification(
     await discardResponse(res);
   }
 }
+
+/** Read the deployment-wide policy for Git role and collection requirements. */
+export function getGitRequirementsPolicy(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<{ enabled: boolean }> {
+  return request("/settings/git-requirements", undefined, adapter);
+}
+
+/** Enable or disable Git requirements for project operations. */
+export function setGitRequirementsPolicy(
+  enabled: boolean,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<{ enabled: boolean }> {
+  return request(
+    "/settings/git-requirements",
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+    adapter,
+  );
+}

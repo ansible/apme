@@ -105,7 +105,9 @@ def _run_ansible_validate(
             hierarchy_payload=hierarchy_payload,
             root_dir=str(temp_dir),
         )
-        validator = AnsibleValidator(venv_root=venv_root)
+        role_paths = sorted(venv_root.glob("lib/python*/site-packages/roles"))
+        env_extra = {"ANSIBLE_ROLES_PATH": os.pathsep.join(str(path) for path in role_paths)} if role_paths else None
+        validator = AnsibleValidator(venv_root=venv_root, env_extra=env_extra)
         run_result = validator.run_with_timing(
             scan_context, content_graph_data=content_graph_data, check_syntax=check_syntax
         )

@@ -130,6 +130,7 @@ class SessionState:
 
     Attributes:
         session_id: Unique session identifier.
+        dependency_files: Gateway dependency bytes, excluded from remediation.
         original_files: Original file bytes keyed by relative path.
         working_files: Current working file bytes (mutated by fixes).
         tier1_patches: Applied Tier 1 patches.
@@ -218,6 +219,7 @@ class SessionState:
     """
 
     session_id: str
+    dependency_files: dict[str, bytes] = field(default_factory=dict)
     original_files: dict[str, bytes] = field(default_factory=dict)
     working_files: dict[str, bytes] = field(default_factory=dict)
     tier1_patches: list[FilePatch] = field(default_factory=list)

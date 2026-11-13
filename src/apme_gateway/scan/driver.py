@@ -36,6 +36,7 @@ from apme.v1 import engine_pb2, engine_pb2_grpc
 from apme.v1.common_pb2 import GalaxyServerDef
 from apme_engine.config_env import get_env_float
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
+from apme_engine.daemon.engine_upload import dependency_upload_files
 from apme_gateway.scan.operator_queue import (
     OperatorAnswerQueue as OperatorAnswerQueue,
 )
@@ -820,9 +821,31 @@ async def run_project_operation(
             )
         )
 
+        from apme_gateway.scan.git_requirements import resolve_git_requirements
+
+        dependency_files = await resolve_git_requirements(project_id, temp_dir)
+        if dependency_files:
+            # Keep each dependency upload below the normal 1 MiB chunk target.
+            chunks[-1].last = False
+            batch = engine_pb2.ScanChunk()
+            for dependency in dependency_files:
+                if (
+                    dependency_upload_files(batch)
+                    and sum(len(f.content) + len(f.path) + 32 for f in dependency_upload_files(batch))
+                    + len(dependency.content)
+                    + len(dependency.path)
+                    > 1024 * 1024
+                ):
+                    chunks.append(batch)
+                    batch = engine_pb2.ScanChunk()
+                dependency_upload_files(batch).append(dependency)
+            batch.last = True
+            chunks.append(batch)
+
         attach_fix = remediate or assess_pause
         if attach_fix and chunks:
             fix_opts = engine_pb2.FixOptions(
+                session_id=session_id,
                 ansible_core_version=ansible_version,
                 collection_specs=collection_specs or [],
                 enable_ai=enable_ai,

@@ -180,6 +180,7 @@ export interface ProjectSummary {
   scan_count: number;
   last_scanned_at: string | null;
   scm_provider: string | null;
+  has_requirements_token?: boolean;
   has_scm_token: boolean;
   last_scanned_commit: string;
   has_new_commits: boolean;
@@ -196,6 +197,7 @@ export interface CreateProjectRequest {
   name: string;
   repo_url: string;
   branch?: string;
+  requirements_token?: string;
   scm_token?: string;
   scm_provider?: string;
 }
@@ -204,6 +206,7 @@ export interface UpdateProjectRequest {
   name?: string;
   repo_url?: string;
   branch?: string;
+  requirements_token?: string;
   scm_token?: string;
   scm_provider?: string | null;
 }
