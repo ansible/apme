@@ -36,7 +36,7 @@ def test_aliased_findings_reuse_full_excerpts_and_preserve_suppression() -> None
     """Aliases retain distinct paths while sharing untruncated source strings."""
     from apme_engine.daemon.engine_server import _filter_file_noqa
     from apme_engine.fingerprint import compute_fingerprint
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis as molecule
 
     text = "x" * (128 * 1024) + "full-excerpt-tail"
     source = _aliased_invalid_plays(12, text, noqa=True)
@@ -56,7 +56,7 @@ def test_aliased_findings_reuse_full_excerpts_and_preserve_suppression() -> None
 
 def test_excerpt_cache_keeps_different_source_files_distinct() -> None:
     """Equal line numbers in separate source files must not share excerpts."""
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis as molecule
 
     with patch.object(molecule, "_source_excerpt", wraps=molecule._source_excerpt) as excerpt:
         findings = _scan(
@@ -77,7 +77,7 @@ def test_excerpt_cache_keeps_different_source_files_distinct() -> None:
 
 def test_aliased_excerpts_cannot_expand_into_an_oversized_response() -> None:
     """The reported sub-MiB upload fails before allocating GiB of proto strings."""
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis as molecule
 
     source = _aliased_invalid_plays(4000, "private-source-value-" + "x" * (512 * 1024))
     assert len(source) < 1024 * 1024
@@ -99,7 +99,7 @@ def test_diagnostic_size_accounts_for_unicode_and_json_escaping(text: str) -> No
     """
     import json
 
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis as molecule
 
     assert molecule._diagnostic_string_size(text) == len(json.dumps(text))
     assert molecule._diagnostic_string_size(text) >= len(text.encode())
@@ -109,7 +109,7 @@ async def test_native_rpc_rejects_expanded_excerpts_before_proto_conversion() ->
     """Oversized file diagnostics produce a bounded explicit infrastructure error."""
     from apme_engine.daemon import native_validator_server
     from apme_engine.daemon.validator_errors import RULE_VALIDATOR_FAILURE
-    from apme_engine.validators.native import molecule
+    from apme_engine.molecule import analysis as molecule
 
     source = _aliased_invalid_plays(30, "private-source-value-" + "x" * 1024)
     request = validate_pb2.ValidateRequest(
@@ -1604,6 +1604,69 @@ def test_noqa_on_child_data_does_not_suppress_an_unrelated_import() -> None:
     assert len(kept) == 1
     assert kept[0]["line"] == 1
     assert "note:" in str(kept[0]["original_yaml"])
+
+
+def test_l115_uses_the_profile_message_for_rejected_values() -> None:
+    """Report the accepted set from the bundled profile instead of a keyword."""
+    findings = _scan("driver:\n  name: ansible\n")
+    assert [item["rule_id"] for item in findings] == ["L115"]
+    message = str(findings[0]["message"])
+    assert "24.9.0 schema: is not one of [" in message
+    assert "anyOf" not in message
+
+
+def test_l118_external_driver_notice_is_advisory() -> None:
+    """A supported external driver needs a coverage notice, not a warning."""
+    findings = _scan("driver:\n  name: docker\n")
+    assert [(item["rule_id"], item["severity"]) for item in findings] == [("L118", "info")]
+
+
+def test_l118_non_ansible_verifier_notice_is_advisory() -> None:
+    """Verifier code outside Ansible playbooks is reported without gating CI."""
+    findings = _scan("verifier:\n  name: testinfra\n")
+    assert [item["severity"] for item in findings if item["rule_id"] == "L118"] == ["info"]
+
+
+def test_escaped_dollar_suppresses_variable_context_notice() -> None:
+    """`$$` stays an escaped literal, so it cannot be an unresolved reference."""
+    findings = _scan("driver:\n  name: $$literal\n")
+    assert [item["rule_id"] for item in findings] == ["L115"]
+
+
+def test_equivalent_snapshot_spellings_resolve_shared_configuration() -> None:
+    """`./`, doubled, and trailing-separator spellings address the same file."""
+    findings = validate_molecule(
+        {
+            "./molecule/default/molecule.yml": b"driver:\n  name: default\n",
+            "./.config//molecule/config.yml": b"verifier:\n  name: bogus\n",
+        }
+    )
+    assert [(item["rule_id"], item["file"], item["line"]) for item in findings if item["rule_id"] == "L115"] == [
+        ("L115", ".config/molecule/config.yml", 2)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("$", True),
+        ("$.driver.name", True),
+        ("$[0].tasks", True),
+        ("", False),
+        ("3f1c9b7e-node-id", False),
+        ("$x", False),
+    ],
+)
+def test_file_finding_detection_matches_yaml_path_shape(path: str, expected: bool) -> None:
+    """Only source positions are treated as file findings, not node identifiers.
+
+    Args:
+        path: Finding path field.
+        expected: Whether the finding is a file diagnostic.
+    """
+    from apme_engine.daemon.engine_server import _is_file_finding
+
+    assert _is_file_finding({"path": path}) is expected
 
 
 def test_wide_config_merge_does_not_rescan_all_origins_per_key() -> None:

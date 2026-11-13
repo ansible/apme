@@ -158,3 +158,4 @@ bundled profile updates; scans never fetch schemas or run Molecule.
 | 2026-11-05 | Codex | Captured scope and user decisions; compatibility target pending |
 | 2026-11-05 | Codex | Implemented L115-L119, graph/file integration, scenario discovery, and verified coverage |
 | 2026-11-06 | Codex | Set minimum to 24.9.0+, added native profile and regression coverage |
+| 2026-11-06 | Reviewer | Shared static analysis moved to neutral `apme_engine/molecule`; L118 uses `info` for coverage notices that also fire on valid common configuration and no longer repeats a rejected `driver.name`; L115 reports the bundled profile's own value message; source excerpts carry only the diagnostic line; `./`-equivalent snapshot spellings normalise; `$$` escapes stay literal and are not unresolved references |

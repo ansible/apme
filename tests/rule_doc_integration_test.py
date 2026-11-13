@@ -13,8 +13,8 @@ from apme_engine.graph.scanner import (
     load_graph_rules,
 )
 from apme_engine.graph.scanner import scan as graph_scan
+from apme_engine.molecule import MOLECULE_RULES, validate_molecule
 from apme_engine.opa_client import opa_eval_unavailable_reason, run_opa_test
-from apme_engine.validators.native.molecule import MOLECULE_RULES, validate_molecule
 from apme_engine.validators.opa import OpaValidator
 from tests.rule_doc_harness import run_scan_playbook_yaml
 from tests.rule_doc_parser import discover_rule_docs, parse_rule_doc

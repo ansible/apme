@@ -18,6 +18,15 @@ use rule enablement or suppression when a warning should not gate CI.
 | L118 | Coverage limited by unavailable environment, files, or driver context |
 | L119 | Referenced Ansible playbook YAML and play structure |
 
+L118 cases differ in weight. A notice that also fires on valid, common
+configuration - a supported external driver, or verifier code outside Ansible
+playbooks - is labelled advisory (`info`): the configuration is supported and
+only the unassessed remainder is disclosed. Notices about content that could not
+be resolved (unknown environment values, unavailable files, exhausted limits)
+stay warnings (`medium`), because checks were skipped rather than passed.
+Severity is a label, not a gate: as described above, any remaining finding keeps
+`apme check` failing until the rule is disabled or the finding is suppressed.
+
 Scenario playbooks may use Ansible
 [`module_defaults`](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_module_defaults.html).
 Native L119 checks the declaration's shape at play, block, task, and include
@@ -127,6 +136,9 @@ and explicit `${VAR:-default}` / `${VAR-default}` fallbacks can resolve referenc
 Without a supplied value, the explicit fallback is used. Other environment or template values produce
 an L118 coverage notice; server environment values are never substituted.
 Diagnostics exclude substituted secret values.
+A `$$` escape is left as written and is not treated as an unresolved reference:
+no static check depends on the collapsed value, and collapsing it would make an
+intentional literal dollar sign indistinguishable from an unknown variable.
 
 Documented generated paths (`MOLECULE_EPHEMERAL_DIRECTORY`, `MOLECULE_FILE`,
 `MOLECULE_STATE_FILE`, `MOLECULE_INVENTORY_FILE`, `MOLECULE_INSTANCE_CONFIG`)

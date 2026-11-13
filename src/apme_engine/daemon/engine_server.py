@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 import tempfile
 import time
 import uuid
@@ -558,6 +559,26 @@ def _enrich_violations_from_graph(
             v["co_fixes"] = co_fixes  # type: ignore[assignment]
 
 
+_FILE_FINDING_PATH = re.compile(r"^\$(?:\.|\[|$)")
+
+
+def _is_file_finding(violation: Mapping[str, object]) -> bool:
+    """Distinguish file diagnostics from findings on graph nodes.
+
+    File diagnostics locate a position in uploaded source with a YAML path
+    (``$``, ``$.driver.name``, ``$[0]``); graph findings reference a node ID.
+    Matching the whole path shape keeps findings without a path from being
+    mistaken for graph findings and then looked up as an empty node ID.
+
+    Args:
+        violation: Finding payload from a validator.
+
+    Returns:
+        True for source-position findings rather than graph-node findings.
+    """
+    return _FILE_FINDING_PATH.match(str(violation.get("path", ""))) is not None
+
+
 def _filter_file_noqa(violations: list[ViolationDict]) -> list[ViolationDict]:
     """Apply source-local noqa to file findings after rule enforcement.
 
@@ -570,7 +591,7 @@ def _filter_file_noqa(violations: list[ViolationDict]) -> list[ViolationDict]:
     return [
         violation
         for violation in violations
-        if not str(violation.get("path", "")).startswith("$")
+        if not _is_file_finding(violation)
         or violation.get("_enforced")
         or str(violation.get("rule_id", "")).upper()
         not in parse_noqa(str(violation.get("original_yaml", "")).split("\n", 1)[0])
@@ -602,7 +623,7 @@ async def _refresh_session_file_violations(session: SessionState) -> None:
     if result.error:
         raise RequiredValidatorDependencyError(f"Required validator native file rescan failed: {result.error}")
     configs, _complete = _scan_rule_audit_inputs(session.scan_options)
-    findings = [v for v in result.violations if str(v.get("path", "")).startswith("$")]
+    findings = [v for v in result.violations if _is_file_finding(v)]
     findings = _apply_rule_configs(findings, configs)
     findings = _filter_file_noqa(_deduplicate_violations(_sort_violations(findings)))
     _attach_snippets(findings, files)
@@ -633,9 +654,7 @@ def _sync_session_file_report(session: SessionState) -> None:
     """
     from apme_engine.remediation.partition import add_classification_to_violations, count_by_remediation_class
 
-    remaining = [
-        v for v in session.remaining_ai + session.remaining_manual if not str(v.get("path", "")).startswith("$")
-    ]
+    remaining = [v for v in session.remaining_ai + session.remaining_manual if not _is_file_finding(v)]
     remaining.extend(dict(v) for v in session.file_violations)
     add_classification_to_violations(remaining)
     session.remaining_ai = [v for v in remaining if v.get("remediation_class") == RemediationClass.AI_CANDIDATE]
@@ -2888,8 +2907,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         # File findings have source/YAML paths rather than graph node IDs.
         # A graph-only rescan cannot establish that they have been fixed.
-        session.file_violations = [dict(v) for v in initial_violations if str(v.get("path", "")).startswith("$")]
-        initial_violations = [v for v in initial_violations if not str(v.get("path", "")).startswith("$")]
+        session.file_violations = [dict(v) for v in initial_violations if _is_file_finding(v)]
+        initial_violations = [v for v in initial_violations if not _is_file_finding(v)]
 
         loop = asyncio.get_running_loop()
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
@@ -3249,8 +3268,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             session.working_files[rel_path] = patch.patched.encode("utf-8")
 
         session.tier1_patches = tier1_patches
-        session.remaining_ai = [v for v in remaining if not str(v.get("path", "")).startswith("$")]
-        session.remaining_manual = [v for v in remaining if str(v.get("path", "")).startswith("$")]
+        session.remaining_ai = [v for v in remaining if not _is_file_finding(v)]
+        session.remaining_manual = [v for v in remaining if _is_file_finding(v)]
 
         # 6. Enrich violations with node YAML from the graph progression.
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -3952,8 +3971,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             remaining_violations=remaining_protos,
             fixed_violations=fixed_protos,
         )
-        session.remaining_ai = [v for v in remaining if not str(v.get("path", "")).startswith("$")]
-        session.remaining_manual = [v for v in remaining if str(v.get("path", "")).startswith("$")]
+        session.remaining_ai = [v for v in remaining if not _is_file_finding(v)]
+        session.remaining_manual = [v for v in remaining if _is_file_finding(v)]
 
         proposed_proposals: list[Proposal] = []
         ai_built: list[Proposal] = []

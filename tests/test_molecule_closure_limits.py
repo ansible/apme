@@ -3,8 +3,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+from apme_engine.molecule import analysis as molecule
 from apme_engine.validators.ansible.rules import L057_syntax
-from apme_engine.validators.native import molecule
 
 
 def test_legacy_import_is_in_static_closure() -> None:

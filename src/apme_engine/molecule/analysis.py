@@ -24,6 +24,7 @@ from typing import cast
 
 import yaml
 from jsonschema import Draft7Validator
+from jsonschema.exceptions import ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
@@ -70,6 +71,12 @@ _MAX_REQUEST_BYTES = 32 * 1024 * 1024
 _MAX_REQUEST_NODES = 500_000
 _MAX_REQUEST_STEPS = 100_000
 _DIAGNOSTIC_OVERHEAD_BYTES = 1024
+_INCLUDE_ACTIONS = frozenset(
+    prefix + action
+    for prefix in ("", "ansible.builtin.", "ansible.legacy.")
+    for action in ("include_role", "include_tasks")
+)
+_TEMPLATE_MARKERS = ("{{", "{%", "{#")
 _NAMES = {
     "L115": "Molecule configuration does not match the supported profile",
     "L116": "Molecule file reference is unavailable in the scan",
@@ -257,20 +264,44 @@ def _yaml_path(path: YamlPath) -> str:
     return "$" + "".join(f"[{part}]" if isinstance(part, int) else f".{part}" for part in path)
 
 
-def _finding(rule_id: str, origin: _Location, message: str) -> ViolationDict:
+def _schema_message(version: str, error: ValidationError) -> str:
+    """Render a schema violation, preferring the profile's own explanation.
+
+    Upstream schemas annotate selected keywords with ``messages`` entries (for
+    example the accepted driver names), which explain what was expected instead
+    of naming a jsonschema keyword.
+
+    Args:
+        version: Selected profile version.
+        error: Violation reported by the bundled profile schema.
+
+    Returns:
+        Human-readable, template-free finding message.
+    """
+    base = f"Configuration violates Molecule {version} schema"
+    annotations = error.schema.get("messages") if isinstance(error.schema, dict) else None
+    hint = annotations.get(error.validator) if isinstance(annotations, dict) else None
+    if isinstance(hint, str) and hint.strip():
+        return f"{base}: {hint.strip()}"
+    return f"{base} ({error.validator})"
+
+
+def _finding(rule_id: str, origin: _Location, message: str, severity: str = "medium") -> ViolationDict:
     """Create a normal Native finding without exposing source values.
 
     Args:
         rule_id: Stable lint rule identifier.
         origin: Source location.
         message: Explanation excluding interpolated secrets.
+        severity: Label for this finding; coverage notices covering valid,
+            common configuration are advisory (``info``).
 
     Returns:
         A finding with manual-review scope.
     """
     return {
         "rule_id": rule_id,
-        "severity": "medium",
+        "severity": severity,
         "message": message,
         "file": origin.file,
         "line": origin.line,
@@ -386,6 +417,10 @@ def _locations(
 
 def _expand(source: str, variables: Mapping[str, str]) -> str:
     """Expand known values while preserving unknown context and escaped dollars.
+
+    ``$$`` stays escaped. Collapsing it to ``$`` would make an intentionally
+    literal dollar sign indistinguishable from an unresolved reference, so the
+    escaped form is kept for the checks that look at values.
 
     Args:
         source: Raw config source.
@@ -746,7 +781,7 @@ def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict
                             not isinstance(name, yaml.ScalarNode)
                             or name.tag != "tag:yaml.org,2002:str"
                             or not name.value
-                            or any(marker in name.value for marker in ("{{", "{%", "{#"))
+                            or any(marker in name.value for marker in _TEMPLATE_MARKERS)
                             or not (
                                 (
                                     isinstance(parameters, yaml.MappingNode)
@@ -757,7 +792,7 @@ def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict
                                 )
                                 or (
                                     isinstance(parameters, yaml.ScalarNode)
-                                    and any(marker in parameters.value for marker in ("{{", "{%", "{#"))
+                                    and any(marker in parameters.value for marker in _TEMPLATE_MARKERS)
                                 )
                             )
                         ):
@@ -801,12 +836,7 @@ def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict
                         f"Scenario task section '{section}' must be a list",
                     )
                 )
-        include_actions = {
-            prefix + action
-            for prefix in ("", "ansible.builtin.", "ansible.legacy.")
-            for action in ("include_role", "include_tasks")
-        }
-        invocations = [(entries[action][1], (*path, action), False) for action in include_actions if action in entries]
+        invocations = [(entries[action][1], (*path, action), False) for action in _INCLUDE_ACTIONS if action in entries]
         for form in ("action", "local_action"):
             if form not in entries:
                 continue
@@ -817,13 +847,13 @@ def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict
                     module is not None
                     and isinstance(module[1], yaml.ScalarNode)
                     and module[1].value.split(maxsplit=1)[:1]
-                    and module[1].value.split(maxsplit=1)[0] in include_actions
+                    and module[1].value.split(maxsplit=1)[0] in _INCLUDE_ACTIONS
                 ):
                     invocations.append((value, (*path, form), True))
             elif (
                 isinstance(value, yaml.ScalarNode)
                 and value.value.split(maxsplit=1)[:1]
-                and value.value.split(maxsplit=1)[0] in include_actions
+                and value.value.split(maxsplit=1)[0] in _INCLUDE_ACTIONS
             ):
                 invocations.append((value, (*path, form), True))
         for arguments, origin, old_style in invocations:
@@ -1207,7 +1237,12 @@ def _sequences(
             ):
                 if verifier.get("enabled") is not False:
                     findings.append(
-                        _finding("L118", origin, "Non-Ansible verifier code was not assessed as Ansible playbooks")
+                        _finding(
+                            "L118",
+                            origin,
+                            "Non-Ansible verifier code was not assessed as Ansible playbooks",
+                            severity="info",
+                        )
                     )
                 continue
             for argument in arguments:
@@ -1226,6 +1261,31 @@ def _sequences(
     return findings
 
 
+def _normalised_files(files: Mapping[str, bytes]) -> dict[str, bytes]:
+    """Map snapshot paths to the single spelling discovery uses.
+
+    Uploads are normally normalised already, but library callers build their own
+    mappings. Accepting ``./`` prefixes, duplicated separators, and trailing
+    slashes keeps shared configuration and scenario discovery stable instead of
+    silently treating a present file as missing.
+
+    Args:
+        files: Snapshot paths mapped to bytes, in any equivalent spelling.
+
+    Returns:
+        Snapshot mapping keyed by normalised relative POSIX paths.
+    """
+    normalised: dict[str, bytes] = {}
+    for path, content in files.items():
+        candidate = str(path).replace("\\", "/")
+        if not candidate.startswith("/"):
+            candidate = posixpath.normpath(candidate)
+            if candidate in ("", "."):
+                continue
+        normalised.setdefault(candidate, content)
+    return normalised
+
+
 def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict], frozenset[str], bool]:
     """Validate all supplied Molecule scenarios without requiring a graph.
 
@@ -1238,6 +1298,7 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
     Raises:
         MoleculeAssessmentLimitError: If complete diagnostics exceed safe serialization limits.
     """
+    files = _normalised_files(files)
     scenarios = sorted(file for file in files if PurePosixPath(file).name in {"molecule.yml", "molecule.yaml"})
     if not scenarios:
         return [], frozenset(), False
@@ -1355,9 +1416,12 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
         driver = effective.data.get("driver")
         if isinstance(driver, dict) and driver.get("name") in ("default", "delegated"):
             validators.append(_driver_profile(version))
+        invalid_driver = False
         for schema_error in (error for profile in validators for error in profile.iter_errors(effective.data)):
             collections.budget.charge(steps=1)
             path = tuple(schema_error.absolute_path)
+            if path == ("driver", "name"):
+                invalid_driver = True
             if any(path[: len(item)] == item for item in unknown):
                 continue
             if (
@@ -1389,19 +1453,21 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
                     _finding(
                         "L115",
                         _origin(effective, path, scenario),
-                        f"Configuration violates Molecule {version} schema ({schema_error.validator})",
+                        _schema_message(version, schema_error),
                     )
                 )
         if (
             isinstance(driver, dict)
             and driver.get("name") not in ("default", "delegated")
             and not _unknowns(driver.get("name"))
+            and not invalid_driver
         ):
             findings.append(
                 _finding(
                     "L118",
                     _origin(effective, ("driver", "name"), scenario),
                     "Core schema checked; external driver installation and driver-specific schema were not assessed",
+                    severity="info",
                 )
             )
         findings.extend(_references(effective, scenario, files, playbook_cache, collections))

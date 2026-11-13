@@ -44,6 +44,10 @@ _PLAY_MARKER = re.compile(
     r"(?:ansible\.(?:builtin|legacy)\.)?import_playbook)\s*:",
     re.MULTILINE,
 )
+# Superset of the keys a play can be recognized by: quoted keys, flow style, and
+# explicit key syntax all still contain the bare word, so a document without any
+# of them cannot be a playbook and never needs parsing.
+_PLAY_TOKENS = re.compile(r"\b(?:hosts|tasks|pre_tasks|post_tasks|handlers|roles|import_playbook)\b")
 
 _PLAY_STRUCTURE_PATTERNS = (
     "is not a valid attribute for a play",
@@ -491,6 +495,8 @@ def _find_playbooks(root: Path) -> list[Path]:
     Returns:
         List of paths to playbook-like YAML files.
     """
+    # Candidate detection is a text prefilter first; only documents that could
+    # contain a play are parsed.
     playbooks = []
     resolved_root = root.resolve()
     for ext in ("*.yml", "*.yaml"):
@@ -510,8 +516,11 @@ def _find_playbooks(root: Path) -> list[Path]:
 def _looks_like_playbook(text: str) -> bool:
     """Recognize runtime syntax candidates without confusing config with plays.
 
-    BaseLoader treats Ansible YAML tags as inert data. Malformed candidates
-    with play markers are retained so the syntax checker can diagnose them.
+    BaseLoader treats Ansible YAML tags as inert data. A document without any
+    play key token is rejected before parsing, so scanning a project is dominated
+    by the file read rather than by a full YAML load per file. Malformed
+    candidates with play markers are retained so the syntax checker can
+    diagnose them.
     Import-only playbooks are candidates too; dispatch separately excludes
     Molecule content so those files receive static Native checks instead.
 
@@ -521,6 +530,8 @@ def _looks_like_playbook(text: str) -> bool:
     Returns:
         Whether the document is a playbook or a malformed playbook candidate.
     """
+    if not _PLAY_TOKENS.search(text):
+        return False
     try:
         document = _load_yaml(text)
     except (yaml.YAMLError, RecursionError):
@@ -535,22 +546,31 @@ def _looks_like_playbook(text: str) -> bool:
     )
 
 
-def _is_molecule_content(path: Path, root: Path) -> bool:
+def _molecule_directories(root: Path) -> frozenset[Path]:
+    """Collect directories holding Molecule scenario configuration once per run.
+
+    Args:
+        root: Uploaded project root.
+
+    Returns:
+        Directories containing a scenario config file.
+    """
+    return frozenset(
+        path.parent for name in ("molecule.yml", "molecule.yaml") for path in root.rglob(name) if path.is_file()
+    )
+
+
+def _is_molecule_content(path: Path, molecule_dirs: frozenset[Path]) -> bool:
     """Identify scenario content that must receive only static file checks.
 
     Args:
         path: Candidate playbook.
-        root: Uploaded project root.
+        molecule_dirs: Scenario directories discovered under the project root.
 
     Returns:
-        Whether an ancestor within the project contains Molecule config.
+        Whether an ancestor contains Molecule config.
     """
-    for directory in path.parents:
-        if not directory.is_relative_to(root):
-            break
-        if any((directory / name).is_file() for name in ("molecule.yml", "molecule.yaml")):
-            return True
-    return False
+    return any(directory in molecule_dirs for directory in path.parents)
 
 
 def run(
@@ -596,6 +616,7 @@ def run(
     if env_extra:
         env.update(env_extra)
 
+    molecule_dirs = _molecule_directories(root_dir)
     static_paths: frozenset[str] = frozenset()
     if file_snapshot is not None:
         try:
@@ -614,7 +635,7 @@ def run(
                     "message": "Molecule runtime exclusions are incomplete; runtime syntax checks were skipped",
                 }
             ]
-    elif any(path.is_file() for name in ("molecule.yml", "molecule.yaml") for path in root_dir.rglob(name)):
+    elif molecule_dirs:
         return [
             {
                 "rule_id": RULE_ID,
@@ -635,7 +656,9 @@ def run(
         else (set(), set())
     )
     for playbook_path in playbooks:
-        rel_path = str(playbook_path.relative_to(root_dir)) if root_dir in playbook_path.parents else str(playbook_path)
+        rel_path = (
+            playbook_path.relative_to(root_dir).as_posix() if root_dir in playbook_path.parents else str(playbook_path)
+        )
         if rel_path in incomplete:
             violations.append(
                 {
@@ -650,7 +673,7 @@ def run(
                 }
             )
             continue
-        if rel_path in static_paths or rel_path in excluded or _is_molecule_content(playbook_path, root_dir):
+        if rel_path in static_paths or rel_path in excluded or _is_molecule_content(playbook_path, molecule_dirs):
             continue
         try:
             result = subprocess.run(

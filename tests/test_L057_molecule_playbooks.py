@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from apme_engine.validators.ansible.rules.L057_syntax import _find_playbooks, _looks_like_playbook, run
+from apme_engine.validators.ansible.rules.L057_syntax import (
+    _find_playbooks,
+    _looks_like_playbook,
+    _molecule_directories,
+    run,
+)
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -49,6 +54,70 @@ def test_L057_excludes_configuration_and_task_data(source: str) -> None:
         source: YAML configuration or task source.
     """
     assert not _looks_like_playbook(source)
+
+
+def test_L057_skips_parsing_documents_without_play_keys(tmp_path: Path) -> None:
+    """Configuration-only YAML is rejected before any document parse.
+
+    Args:
+        tmp_path: Temporary project root.
+    """
+    for index in range(50):
+        (tmp_path / f"vars_{index}.yml").write_text(f"setting_{index}: value\nnested:\n  - one\n  - two\n")
+    with patch("apme_engine.validators.ansible.rules.L057_syntax.yaml.load", side_effect=AssertionError):
+        assert _find_playbooks(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "- hosts: all\n  tasks: []\n",
+        "[{hosts: all, tasks: []}]\n",
+        '- "hosts": all\n  "tasks": []\n',
+        "- ansible.builtin.import_playbook: site.yml\n",
+    ],
+)
+def test_L057_play_token_prefilter_keeps_alternative_spellings(tmp_path: Path, source: str) -> None:
+    """Flow style, quoted keys, and imports remain discovery candidates.
+
+    Args:
+        tmp_path: Temporary project root.
+        source: Playbook spelling.
+    """
+    playbook = tmp_path / "site.yml"
+    playbook.write_text(source)
+    assert _find_playbooks(tmp_path) == [playbook]
+
+
+def test_L057_discovers_molecule_directories_once(tmp_path: Path) -> None:
+    """Scenario discovery does not rescan the tree for every candidate playbook.
+
+    Args:
+        tmp_path: Temporary project and mock venv.
+    """
+    executable = tmp_path / "venv" / "bin" / "ansible-playbook"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    project = tmp_path / "project"
+    scenario = project / "molecule" / "default"
+    scenario.mkdir(parents=True)
+    (scenario / "molecule.yml").write_text("driver:\n  name: default\n")
+    (scenario / "converge.yml").write_text("- hosts: all\n  tasks: []\n")
+    for index in range(5):
+        (project / f"site_{index}.yml").write_text("- hosts: all\n  tasks: []\n")
+    snapshot = {str(path.relative_to(project)): path.read_bytes() for path in sorted(project.rglob("*.yml"))}
+    with (
+        patch(
+            "apme_engine.validators.ansible.rules.L057_syntax._molecule_directories", wraps=_molecule_directories
+        ) as discover,
+        patch("apme_engine.validators.ansible.rules.L057_syntax.subprocess.run") as invoke,
+    ):
+        invoke.return_value.returncode = 0
+        invoke.return_value.stderr = ""
+        findings = run(tmp_path / "venv", project, file_snapshot=snapshot)
+    assert discover.call_count == 1
+    assert findings == []
+    assert invoke.call_count == 5
 
 
 def test_L057_discovers_imports_without_misclassifying_configuration(tmp_path: Path) -> None:

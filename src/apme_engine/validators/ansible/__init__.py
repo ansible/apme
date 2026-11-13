@@ -230,17 +230,27 @@ class AnsibleValidator:
         self,
         context: ScanContext,
         content_graph_data: bytes = b"",
+        *,
+        check_syntax: bool = True,
+        file_snapshot: Mapping[str, bytes] | None = None,
     ) -> list[dict[str, object]]:
         """Run all ansible checks and return violation dicts.
 
         Args:
             context: Scan context with hierarchy payload and root dir.
             content_graph_data: Serialized ContentGraph for L057 node resolution.
+            check_syntax: Run project syntax checks; false for task-only rescans.
+            file_snapshot: Uploaded bytes for complete static scenario exclusions.
 
         Returns:
             List of violation dicts.
         """
-        return self.run_with_timing(context, content_graph_data=content_graph_data).violations
+        return self.run_with_timing(
+            context,
+            content_graph_data=content_graph_data,
+            check_syntax=check_syntax,
+            file_snapshot=file_snapshot,
+        ).violations
 
     def run_with_timing(
         self,
