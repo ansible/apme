@@ -107,6 +107,7 @@ from apme_engine.venv_manager.session import (
     list_installed_collections,
     list_installed_packages,
 )
+from apme_engine.violation_identity import diagnostic_discriminator
 
 logger = logging.getLogger("apme.engine")
 
@@ -475,7 +476,7 @@ def _sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
 
 
 def _deduplicate_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
-    """Remove duplicate violations sharing the same (rule_id, file, line).
+    """Remove source duplicates while preserving distinct argspec diagnostics.
 
     Args:
         violations: List of violation dicts (may contain duplicates).
@@ -483,13 +484,13 @@ def _deduplicate_violations(violations: list[ViolationDict]) -> list[ViolationDi
     Returns:
         Deduplicated list preserving first occurrence order.
     """
-    seen: set[tuple[str, str, str | int | list[int] | tuple[int, ...] | bool | None]] = set()
+    seen: set[tuple[str, str, str | int | tuple[int, ...] | bool | None, str]] = set()
     out: list[ViolationDict] = []
     for v in violations:
         line: str | int | list[int] | tuple[int, ...] | bool | None = v.get("line")
         if isinstance(line, list | tuple):
             line = tuple(line)
-        dedup_key = (str(v.get("rule_id", "")), str(v.get("file", "")), line)
+        dedup_key = (str(v.get("rule_id", "")), str(v.get("file", "")), line, diagnostic_discriminator(v))
         if dedup_key not in seen:
             seen.add(dedup_key)
             out.append(v)
@@ -2721,7 +2722,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             _heartbeat: Coroutine factory for periodic heartbeats.
             format_content: Formatter function for post-remediation pass.
             format_diffs: Accumulated format diffs from earlier step.
-            rule_configs: Per-rule overrides for opt-in audit GraphRules.
+            rule_configs: Per-rule overrides for validator results and opt-in
+                audit GraphRules, applied consistently to scans and rescans.
 
         Yields:
             SessionEvent: Progress, Tier1Summary, and result events.
@@ -2967,6 +2969,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         raise RequiredValidatorDependencyError(msg)
                     all_violations.extend(result.violations)
 
+            all_violations = _apply_rule_configs(all_violations, rule_configs or [])
             return filter_noqa_violations(all_violations, g)
 
         ai_provider = self._resolve_ai_provider(session.fix_options)

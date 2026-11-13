@@ -87,6 +87,10 @@ session runtime's metadata without running plays or templating values. Merge
 defaults by module/group entry in scope order, then groups, the module entry,
 and explicit task arguments. Reuse the resolved arguments for both argspec
 checks; distinguish malformed defaults from unavailable runtime/template context.
+Preserve distinct argument errors and coverage warnings through output and
+the graph ledger, and retain manual-review routing for inherited defaults.
+Native scenario validation also checks task-section shapes in referenced files;
+Ansible-compatible empty play sections remain valid.
 
 Use tox for rule tests, Native RPC behavior, engine no-hierarchy behavior,
 catalog registration, file/line locations, suppression/severity overrides, and

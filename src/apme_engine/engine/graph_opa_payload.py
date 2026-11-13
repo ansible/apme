@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import logging
 import posixpath
 from collections import deque
 from collections.abc import Iterable
@@ -28,7 +27,10 @@ from apme_engine.graph.sensitivity import redact_urls_in_text
 
 from .models import Annotation, Location, RiskAnnotation, YAMLDict, YAMLValue
 
-logger = logging.getLogger(__name__)
+
+class OpaPayloadSerializationError(RuntimeError):
+    """Policy assessment cannot proceed with truncated serialized input."""
+
 
 _MODULE_DEFAULTS_CONTEXT_LIMIT = 64
 _MODULE_DEFAULTS_LAYER_LIMIT = 256
@@ -36,6 +38,8 @@ _JSON_SAFE_NODE_LIMIT = 20_000
 _JSON_SAFE_BYTE_LIMIT = 8 * 1024 * 1024
 _DEFAULTS_CACHE_NODE_LIMIT = 200_000
 _HIERARCHY_DEFAULTS_BYTE_LIMIT = 32 * 1024 * 1024
+_HIERARCHY_ARGUMENT_NODE_LIMIT = 200_000
+_HIERARCHY_ARGUMENT_BYTE_LIMIT = 32 * 1024 * 1024
 _DEFAULTS_SCOPE_TYPES = frozenset({NodeType.PLAY, NodeType.BLOCK, NodeType.TASK, NodeType.HANDLER})
 _APPLY_INCLUDE_MODULES = frozenset(
     f"{prefix}{name}"
@@ -68,6 +72,127 @@ class _ModuleDefaultsContexts:
 
     paths: dict[_ModuleDefaultsPath, tuple[YAMLValue, ...]] = field(default_factory=dict)
     incomplete: bool = False
+
+
+@dataclass(frozen=True)
+class _DefaultsSize:
+    """Cached conversion cost and JSON size of a defaults layer or context.
+
+    Attributes:
+        nodes: Expanded value nodes visited by json_safe.
+        conversion_bytes: Byte allowance charged by json_safe.
+        serialized_bytes: Size using the payload limiter's JSON encoding.
+    """
+
+    nodes: int
+    conversion_bytes: int
+    serialized_bytes: int
+
+
+def _measure_defaults_layer(value: YAMLValue) -> _DefaultsSize | None:
+    """Measure an already-normalized layer without allocating another copy.
+
+    Args:
+        value: JSON-safe layer retained in the request-local context cache.
+
+    Returns:
+        Bounded conversion cost and JSON size, or None when it cannot fit.
+    """
+    pending = [value]
+    nodes = conversion_bytes = serialized_bytes = 0
+    while pending:
+        current = pending.pop()
+        nodes += 1
+        conversion_bytes += 2
+        if isinstance(current, dict | list):
+            if len(current) > _JSON_SAFE_NODE_LIMIT - nodes - len(pending):
+                return None
+            serialized_bytes += 2 + 2 * max(0, len(current) - 1)
+            if isinstance(current, dict):
+                for name, child in current.items():
+                    if len(name) > _JSON_SAFE_BYTE_LIMIT - conversion_bytes:
+                        return None
+                    key_bytes = len(json.dumps(name))
+                    conversion_bytes += key_bytes
+                    serialized_bytes += key_bytes + 2
+                    pending.append(child)
+            else:
+                pending.extend(current)
+        else:
+            if isinstance(current, str) and len(current) > _JSON_SAFE_BYTE_LIMIT - conversion_bytes:
+                return None
+            encoded_bytes = len(json.dumps(current))
+            conversion_bytes += encoded_bytes if isinstance(current, str) else len(str(current))
+            serialized_bytes += encoded_bytes
+        if nodes > _JSON_SAFE_NODE_LIMIT or conversion_bytes > _JSON_SAFE_BYTE_LIMIT:
+            return None
+    return _DefaultsSize(nodes, conversion_bytes, serialized_bytes)
+
+
+@dataclass
+class _DefaultsPayloadBudget:
+    """Shared preflight sizes and remaining allowance for one serialized batch.
+
+    Attributes:
+        remaining: Hierarchy byte allowance, charged by the final payload limiter.
+        arguments: Shared work allowance for arguments, options, and annotations.
+        layers: Bounded sizes of interned defaults layers, including failures.
+        contexts: Bounded sizes of distinct ordered contexts, including failures.
+    """
+
+    remaining: list[int]
+    arguments: list[int] = field(
+        default_factory=lambda: [_HIERARCHY_ARGUMENT_NODE_LIMIT, _HIERARCHY_ARGUMENT_BYTE_LIMIT]
+    )
+    layers: dict[int, _DefaultsSize | None] = field(default_factory=dict)
+    contexts: dict[tuple[int, ...], _DefaultsSize | None] = field(default_factory=dict)
+
+    def fits(self, defaults: _ModuleDefaultsContexts) -> bool:
+        """Check individual and aggregate limits before copying task defaults.
+
+        Args:
+            defaults: Distinct positional contexts for one task.
+
+        Returns:
+            Whether conversion and serialization can fit the remaining budgets.
+        """
+        if all(not values for values in defaults.paths.values()):
+            return True
+        nodes, conversion_bytes = 1, 2
+        serialized_bytes = 2 + 2 * max(0, len(defaults.paths) - 1)
+        if serialized_bytes + 2 * len(defaults.paths) > self.remaining[0]:
+            return False
+        for path, values in defaults.paths.items():
+            if path.layers not in self.contexts:
+                context_nodes, context_bytes = 1, 2
+                context_size = 2 + 2 * max(0, len(values) - 1)
+                self.contexts[path.layers] = None
+                for layer_id, value in zip(path.layers, values, strict=True):
+                    if layer_id not in self.layers:
+                        self.layers[layer_id] = _measure_defaults_layer(value)
+                    size = self.layers[layer_id]
+                    if size is None:
+                        break
+                    context_nodes += size.nodes
+                    context_bytes += size.conversion_bytes
+                    context_size += size.serialized_bytes
+                    if context_nodes > _JSON_SAFE_NODE_LIMIT or context_bytes > _JSON_SAFE_BYTE_LIMIT:
+                        break
+                else:
+                    self.contexts[path.layers] = _DefaultsSize(context_nodes, context_bytes, context_size)
+            context = self.contexts[path.layers]
+            if context is None:
+                return False
+            nodes += context.nodes
+            conversion_bytes += context.conversion_bytes
+            serialized_bytes += context.serialized_bytes
+            if (
+                nodes > _JSON_SAFE_NODE_LIMIT
+                or conversion_bytes > _JSON_SAFE_BYTE_LIMIT
+                or serialized_bytes > self.remaining[0]
+            ):
+                return False
+        return serialized_bytes <= self.remaining[0]
 
 
 def _include_apply_defaults(
@@ -511,11 +636,12 @@ def json_safe(v: YAMLValue, *, _budget: list[int] | None = None) -> YAMLValue:
             _budget[1] -= byte_allowance - max(0, remaining_bytes)
 
 
-def _location_to_dict(loc: Location | None) -> YAMLDict | None:
+def _location_to_dict(loc: Location | None, *, _budget: list[int] | None = None) -> YAMLDict | None:
     """Serialize a Location to a JSON-safe dict for OPA.
 
     Args:
         loc: Location to serialize, or None.
+        _budget: Shared remaining conversion work allowance.
 
     Returns:
         Dict with type, value, is_mutable, or None if loc is empty/None.
@@ -523,48 +649,57 @@ def _location_to_dict(loc: Location | None) -> YAMLDict | None:
     if loc is None or getattr(loc, "is_empty", False):
         return None
     location_type = getattr(loc, "type", "") or ""
-    value = json_safe(getattr(loc, "value", "")) or ""
+    result = cast(
+        YAMLDict,
+        json_safe(
+            {
+                "type": location_type,
+                "value": getattr(loc, "value", ""),
+                "is_mutable": getattr(loc, "is_mutable", False),
+            },
+            _budget=_budget,
+        ),
+    )
+    value = result["value"] or ""
     if location_type == "url" and isinstance(value, str):
         value = redact_urls_in_text(value)
-    return {
-        "type": location_type,
-        "value": value,
-        "is_mutable": getattr(loc, "is_mutable", False),
-    }
+    result["value"] = value
+    return result
 
 
-def annotation_to_dict(an: Annotation) -> YAMLDict:
+def annotation_to_dict(an: Annotation, *, _budget: list[int] | None = None) -> YAMLDict:
     """Serialize an Annotation (including RiskAnnotation detail) for OPA input.
 
     Args:
         an: Annotation to serialize.
+        _budget: Shared remaining conversion work allowance.
 
     Returns:
         Dict with type, key, risk_type, and detail-specific fields.
     """
-    d: YAMLDict = {
-        "type": getattr(an, "type", ""),
-        "key": getattr(an, "key", ""),
-    }
+    d = cast(
+        YAMLDict,
+        json_safe({"type": getattr(an, "type", ""), "key": getattr(an, "key", "")}, _budget=_budget),
+    )
     if not isinstance(an, RiskAnnotation):
         d["risk_type"] = ""
         return d
 
-    d["risk_type"] = getattr(an, "risk_type", "") or ""
+    d["risk_type"] = json_safe(getattr(an, "risk_type", "") or "", _budget=_budget)
 
     cmd = getattr(an, "command", None)
     if cmd is not None:
-        d["command"] = json_safe(getattr(cmd, "raw", None)) or ""
+        d["command"] = json_safe(getattr(cmd, "raw", None), _budget=_budget) or ""
     exec_files = getattr(an, "exec_files", None)
     if exec_files:
-        d["exec_files"] = [_location_to_dict(ef) for ef in exec_files if ef]
+        d["exec_files"] = [_location_to_dict(ef, _budget=_budget) for ef in exec_files if ef]
 
     src = getattr(an, "src", None)
     dest = getattr(an, "dest", None)
     if isinstance(src, Location):
-        d["src"] = _location_to_dict(src)
+        d["src"] = _location_to_dict(src, _budget=_budget)
     if isinstance(dest, Location):
-        d["dest"] = _location_to_dict(dest)
+        d["dest"] = _location_to_dict(dest, _budget=_budget)
     for flag in ("is_mutable_src", "is_mutable_dest"):
         val = getattr(an, flag, None)
         if val is not None:
@@ -572,10 +707,10 @@ def annotation_to_dict(an: Annotation) -> YAMLDict:
 
     pkg = getattr(an, "pkg", None)
     if pkg is not None and pkg != "":
-        d["pkg"] = json_safe(pkg)
+        d["pkg"] = json_safe(pkg, _budget=_budget)
     version = getattr(an, "version", None)
     if version is not None and version != "":
-        d["version"] = json_safe(version)
+        d["version"] = json_safe(version, _budget=_budget)
     for flag in ("is_mutable_pkg", "disable_validate_certs", "allow_downgrade"):
         val = getattr(an, flag, None)
         if val is not None:
@@ -583,7 +718,7 @@ def annotation_to_dict(an: Annotation) -> YAMLDict:
 
     path_loc = getattr(an, "path", None)
     if isinstance(path_loc, Location):
-        d["path_loc"] = _location_to_dict(path_loc)
+        d["path_loc"] = _location_to_dict(path_loc, _budget=_budget)
     for flag in ("is_mutable_path", "is_mutable_src", "is_unsafe_write", "is_deletion", "is_insecure_permissions"):
         val = getattr(an, flag, None)
         if val is not None:
@@ -591,7 +726,7 @@ def annotation_to_dict(an: Annotation) -> YAMLDict:
 
     config_key = getattr(an, "key", None)
     if config_key and d.get("key") != config_key:
-        d["config_key"] = json_safe(config_key)
+        d["config_key"] = json_safe(config_key, _budget=_budget)
     if getattr(an, "is_mutable_key", None) is not None:
         d["is_mutable_key"] = bool(getattr(an, "is_mutable_key", False))
 
@@ -608,6 +743,7 @@ def content_node_to_opa_dict(
     graph: ContentGraph | None = None,
     *,
     _module_defaults_contexts: dict[str, _ModuleDefaultsContexts] | None = None,
+    _defaults_payload_budget: _DefaultsPayloadBudget | None = None,
 ) -> YAMLDict:
     """Serialize a ``ContentNode`` to the OPA node dict format.
 
@@ -615,15 +751,21 @@ def content_node_to_opa_dict(
     collection search context for the Ansible validator's plugin resolution.
     Task defaults are separate root-to-task layers for each distinct positional
     context; explicit arguments remain unchanged. Without a graph, only the
-    node's local defaults can be serialized.
+    node's local defaults can be serialized. Policy-visible fields are atomic:
+    conversion failure aborts serialization instead of presenting omitted data
+    as absent to OPA, raising ``OpaPayloadSerializationError``. Defaults-only
+    coverage markers remain separate.
 
     Args:
         node: ContentNode to serialize.
         graph: Optional graph for structural queries (e.g. edge inspection).
         _module_defaults_contexts: Shared context cache for full hierarchy builds.
+        _defaults_payload_budget: Shared defaults preflight sizes and hierarchy
+            defaults/argument allowances.
 
     Returns:
         Dict with type, key, file, line, defined_in, and type-specific fields.
+
     """
     node_type = node.node_type
     opa_type = _OPA_TYPE_MAP.get(node_type, "")
@@ -637,6 +779,28 @@ def content_node_to_opa_dict(
         "line": [node.line_start, node.line_end] if node.line_start else None,
         "defined_in": node.file_path,
     }
+    work_budget = _defaults_payload_budget.arguments if _defaults_payload_budget is not None else None
+
+    def serialize(value: YAMLValue, field_name: str) -> YAMLValue:
+        """Convert a policy field without silently weakening policy input.
+
+        Args:
+            value: Authored policy input.
+            field_name: Field path used only to identify a failed assessment.
+
+        Returns:
+            Complete JSON-compatible field value.
+
+        Raises:
+            OpaPayloadSerializationError: Conversion failed or exhausted a limit.
+        """
+        try:
+            return json_safe(value, _budget=work_budget)
+        except Exception as exc:
+            raise OpaPayloadSerializationError(
+                f"OPA policy assessment incomplete: cannot serialize {field_name} on {node.node_id} "
+                "within serialization limits"
+            ) from exc
 
     if opa_type == "playcall":
         d["name"] = node.name if node.name else None
@@ -645,19 +809,13 @@ def content_node_to_opa_dict(
             for bkey in ("become", "become_user", "become_method", "become_flags"):
                 bval = node.become.get(bkey)
                 if bval is not None:
-                    opts[bkey] = json_safe(bval)
+                    opts[bkey] = serialize(bval, f"options.{bkey}")
         for pkey in _PLAY_OPTION_KEYS:
             pval = node.options.get(pkey)
             if pval is not None:
-                try:
-                    opts[pkey] = json_safe(pval)
-                except Exception:
-                    logger.debug("json_safe failed for play option %s on %s", pkey, node.node_id)
+                opts[pkey] = serialize(pval, f"options.{pkey}")
         if node.variables:
-            try:
-                opts["vars"] = json_safe(node.variables)
-            except Exception:
-                logger.debug("json_safe failed for vars on %s", node.node_id)
+            opts["vars"] = serialize(node.variables, "options.vars")
         d["options"] = opts
 
         if graph is not None:
@@ -680,15 +838,21 @@ def content_node_to_opa_dict(
             if contexts is None:
                 contexts = _build_module_defaults_contexts(graph)
             defaults = contexts.get(node.node_id, _ModuleDefaultsContexts(incomplete=True))
-            try:
-                d["module_defaults_contexts"] = json_safe([list(values) for values in defaults.paths.values()])
-            except RecursionError:
+            if _defaults_payload_budget is not None and (
+                defaults.incomplete or not _defaults_payload_budget.fits(defaults)
+            ):
                 d["module_defaults_contexts"] = []
                 d["module_defaults_incomplete"] = True
-            if defaults.incomplete:
-                d["module_defaults_incomplete"] = True
-            elif not defaults.paths:
-                d["module_defaults_inactive"] = True
+            else:
+                try:
+                    d["module_defaults_contexts"] = json_safe([list(values) for values in defaults.paths.values()])
+                except RecursionError:
+                    d["module_defaults_contexts"] = []
+                    d["module_defaults_incomplete"] = True
+                if defaults.incomplete:
+                    d["module_defaults_incomplete"] = True
+                elif not defaults.paths:
+                    d["module_defaults_inactive"] = True
         else:
             try:
                 local_defaults = (
@@ -699,12 +863,7 @@ def content_node_to_opa_dict(
                 d["module_defaults_contexts"] = []
                 d["module_defaults_incomplete"] = True
         module_options = node.effective_module_options
-        try:
-            mo = cast(YAMLDict, json_safe(module_options))
-        except RecursionError:
-            mo = {}
-            d["args_templated"] = True
-            d["args_serialization_incomplete"] = True
+        mo = cast(YAMLDict, serialize(module_options, "module_options")) if module_options else {}
         d["module"] = node.module
         d["original_module"] = node.module
         d["name"] = node.name if node.name else None
@@ -718,22 +877,22 @@ def content_node_to_opa_dict(
             if getattr(an, "type", "") == "risk_annotation" and getattr(an, "risk_type", "") == "inbound_transfer":
                 has_inbound_annotation = True
             try:
-                anns.append(annotation_to_dict(cast(Annotation, an)))
-            except Exception:
-                logger.debug("annotation_to_dict failed on %s", node.node_id)
+                anns.append(annotation_to_dict(cast(Annotation, an), _budget=work_budget))
+            except Exception as exc:
+                raise OpaPayloadSerializationError(
+                    f"OPA policy assessment incomplete: cannot serialize annotations on {node.node_id} "
+                    "within serialization limits"
+                ) from exc
         if not has_inbound_annotation:
             inbound_annotation = _inbound_risk_annotation(node, mo)
             if inbound_annotation is not None:
-                anns.append(inbound_annotation)
+                anns.append(serialize(inbound_annotation, "annotations.inbound_transfer"))
         d["annotations"] = anns
 
         task_opts: YAMLDict = {}
         for key, val in node.options.items():
             if key in _TASK_OPTION_KEYS or key.startswith("with_"):
-                try:
-                    task_opts[key] = json_safe(val)
-                except Exception:
-                    logger.debug("json_safe failed for task option %s on %s", key, node.node_id)
+                task_opts[key] = serialize(val, f"options.{key}")
         d["options"] = task_opts
 
         if "_raw" in mo and "cmd" not in mo:
@@ -771,7 +930,8 @@ def build_hierarchy_from_graph(
 
     The hierarchy retains the established OPA payload shape, with additive
     task collection context for the Ansible validator. OPA Rego rules consume
-    the payload without modification.
+    the payload without modification. Unserializable policy input raises
+    ``OpaPayloadSerializationError`` instead of returning a partial hierarchy.
 
     Args:
         graph: ContentGraph to serialize.
@@ -783,6 +943,7 @@ def build_hierarchy_from_graph(
 
     Returns:
         Dict with scan_id, hierarchy, collection_set, and metadata.
+
     """
     if not scan_id:
         scan_id = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
@@ -818,6 +979,8 @@ def _limit_defaults_payload(payload: YAMLDict, remaining: list[int]) -> None:
     if payload.get("module_defaults_incomplete"):
         payload["module_defaults_contexts"] = []
         return
+    if all(context == [] for context in contexts):
+        return
     size = len(json.dumps(contexts))
     if size > remaining[0]:
         payload["module_defaults_contexts"] = []
@@ -829,18 +992,25 @@ def _limit_defaults_payload(payload: YAMLDict, remaining: list[int]) -> None:
 def content_nodes_to_opa_dicts(nodes: Iterable[ContentNode], graph: ContentGraph) -> list[YAMLDict]:
     """Serialize a node batch with one shared defaults-context calculation.
 
+    Unserializable policy input raises ``OpaPayloadSerializationError`` instead
+    of returning a partial batch.
+
     Args:
         nodes: Nodes selected for a full scan or incremental rescan.
         graph: Complete graph providing inherited invocation context.
 
     Returns:
         OPA-compatible dictionaries for the serializable nodes.
+
     """
     contexts = _build_module_defaults_contexts(graph)
     result: list[YAMLDict] = []
     remaining = [_HIERARCHY_DEFAULTS_BYTE_LIMIT]
+    defaults_budget = _DefaultsPayloadBudget(remaining)
     for node in nodes:
-        payload = content_node_to_opa_dict(node, graph=graph, _module_defaults_contexts=contexts)
+        payload = content_node_to_opa_dict(
+            node, graph=graph, _module_defaults_contexts=contexts, _defaults_payload_budget=defaults_budget
+        )
         if payload:
             _limit_defaults_payload(payload, remaining)
             result.append(payload)
@@ -859,6 +1029,7 @@ def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
     trees: list[YAMLDict] = []
     module_defaults_contexts = _build_module_defaults_contexts(graph)
     remaining = [_HIERARCHY_DEFAULTS_BYTE_LIMIT]
+    defaults_budget = _DefaultsPayloadBudget(remaining)
 
     roots: list[ContentNode] = []
     for node in graph.nodes():
@@ -875,7 +1046,12 @@ def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
             content_node = sub.get_node(nid)
             if content_node is None:
                 continue
-            d = content_node_to_opa_dict(content_node, graph=graph, _module_defaults_contexts=module_defaults_contexts)
+            d = content_node_to_opa_dict(
+                content_node,
+                graph=graph,
+                _module_defaults_contexts=module_defaults_contexts,
+                _defaults_payload_budget=defaults_budget,
+            )
             if d:
                 _limit_defaults_payload(d, remaining)
                 nodes_list.append(d)

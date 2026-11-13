@@ -1,10 +1,11 @@
-"""Integration tests: run engine + GraphRules on YAML from rule .md examples and assert expected violation/pass."""
+"""Run rule-doc examples through their graph, OPA, or native file validators."""
 
 from functools import lru_cache
 from pathlib import Path
 from typing import cast
 
 import pytest
+import yaml
 
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.scanner import (
@@ -13,9 +14,10 @@ from apme_engine.graph.scanner import (
 )
 from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.opa_client import opa_eval_unavailable_reason, run_opa_test
+from apme_engine.validators.native.molecule import MOLECULE_RULES, validate_molecule
 from apme_engine.validators.opa import OpaValidator
 from tests.rule_doc_harness import run_scan_playbook_yaml
-from tests.rule_doc_parser import discover_rule_docs
+from tests.rule_doc_parser import discover_rule_docs, parse_rule_doc
 
 _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
     "L034": "requires multi-scope variable precedence context; single-file harness lacks inventory/role scopes",
@@ -71,6 +73,38 @@ def _opa_bundle_dir() -> Path:
     import apme_engine.validators.opa as opa_pkg
 
     return Path(opa_pkg.__file__).parent / "bundle"
+
+
+def _native_file_rules_dir() -> Path:
+    """Return the native file-validator documentation directory.
+
+    Returns:
+        Path to file-rule docs, separate from the GraphRules directory.
+    """
+    import apme_engine.validators.native as native_pkg
+
+    return Path(native_pkg.__file__).parent / "rules"
+
+
+def _collect_molecule_violations(yaml_content: str) -> list[dict[str, object]]:
+    """Assess an explicit uploaded snapshot without wrapping it as a playbook.
+
+    Args:
+        yaml_content: YAML mapping of snapshot-relative paths to literal file contents.
+
+    Returns:
+        Native Molecule file findings.
+    """
+    files = yaml.safe_load(yaml_content)
+    assert isinstance(files, dict) and files, "File-rule examples must provide a non-empty snapshot mapping"
+    assert all(isinstance(path, str) and isinstance(content, str) for path, content in files.items()), (
+        "File-rule snapshots must map paths to literal file-content strings"
+    )
+    snapshot = {path: content.encode("utf-8") for path, content in files.items()}
+    assert any(Path(path).name in {"molecule.yml", "molecule.yaml"} for path in snapshot), (
+        "Molecule examples must supply a scenario config"
+    )
+    return cast(list[dict[str, object]], validate_molecule(snapshot))
 
 
 @lru_cache
@@ -199,6 +233,18 @@ def _rule_doc_params() -> tuple[list[tuple[str, dict[str, object]]], list[str]]:
         Tuple of (param_tuples, param_ids).
     """
     pairs = discover_rule_docs(_native_rules_dir(), _opa_bundle_dir())
+    # File validators do not expose GraphRules. Use their registered metadata
+    # so every registered Molecule rule gets executable documentation coverage.
+    for rule in MOLECULE_RULES:
+        path = _native_file_rules_dir() / f"{rule.rule_id}.md"
+        doc = parse_rule_doc(path)
+        assert doc is not None, f"Missing or invalid native file-rule documentation: {path}"
+        assert doc.get("rule_id") == rule.rule_id and doc.get("validator") == "native"
+        examples = cast(list[dict[str, object]], doc["examples"])
+        assert {example["expect_violation"] for example in examples} == {True, False}, (
+            f"{path} must provide executable violation and pass examples"
+        )
+        pairs.append((str(path), doc))
     if not pairs:
         return [], []
     return pairs, [Path(p[0]).name for p in pairs]
@@ -237,7 +283,10 @@ def test_rule_doc_examples(md_path: str, doc: dict[str, object], opa_validator: 
     for i, ex in enumerate(examples):
         expect_violation = bool(ex["expect_violation"])
         yaml_content = str(ex["yaml"])
-        violations = _collect_violations(yaml_content, opa_validator)
+        if Path(md_path).parent == _native_file_rules_dir():
+            violations = _collect_molecule_violations(yaml_content)
+        else:
+            violations = _collect_violations(yaml_content, opa_validator)
         matching = _violation_ids_for_rule(violations, rule_id, validator)
         if expect_violation:
             assert matching, (
@@ -254,3 +303,9 @@ def test_rule_doc_parser_smoke() -> None:
     l026 = [d for _, d in docs if d.get("rule_id") == "L026"]
     assert len(l026) >= 1, "Expected at least one doc for L026"
     assert l026[0].get("examples"), "Expected examples in L026 doc"
+
+
+def test_molecule_rule_docs_are_collected() -> None:
+    """Every native Molecule rule must enter the parametrized example test."""
+    actual = {doc["rule_id"] for path, doc in _param_tuples if Path(path).parent == _native_file_rules_dir()}
+    assert actual == {rule.rule_id for rule in MOLECULE_RULES}

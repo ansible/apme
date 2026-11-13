@@ -268,7 +268,10 @@ artifact type, translate it:
    membership checks should reuse an existing request-local index rather than
    rescan the full input for each reference.
    Bound expanded representations, including repeated shared references and
-   serialized bytes, at every downstream consumer. When combining graph paths,
+   serialized bytes, at every downstream consumer; account for repeated work
+   after an aggregate budget is exhausted. Trace distinct findings and explicit
+   remediation constraints through deduplication, storage, and routing.
+   When combining graph paths,
    distinguish inactive paths from paths with unavailable context so inactive
    metadata cannot affect an active invocation.
    Include requests disconnected during async authorization, shutdown while a

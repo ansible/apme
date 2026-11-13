@@ -1024,9 +1024,8 @@ def _resolve_dirty_violations(
 ) -> None:
     """Resolve violations on dirty nodes based on rescan results.
 
-    For each dirty node, computes which rule IDs are still present
-    and calls ``graph.resolve_violations`` so that absent violations
-    transition to *status* with the given attribution.
+    For each dirty node, forwards remaining rule IDs and diagnostic payloads
+    so absent argspec diagnostics can resolve independently of their peers.
 
     Args:
         graph: ContentGraph whose ledger to update.
@@ -1036,22 +1035,21 @@ def _resolve_dirty_violations(
         pass_number: Current convergence pass number.
         status: Target status (``"fixed"`` or ``"proposed"``).
     """
-    remaining_by_node: dict[str, set[str]] = defaultdict(set)
+    remaining_by_node: dict[str, list[ViolationDict]] = defaultdict(list)
     for v in rescan_violations:
         node_id = str(v.get("path", ""))
         if node_id:
-            remaining_by_node[node_id].add(
-                normalize_rule_id(str(v.get("rule_id", ""))),
-            )
+            remaining_by_node[node_id].append(v)
 
     for nid in dirty_ids:
-        remaining = remaining_by_node.get(nid, set())
+        remaining = remaining_by_node.get(nid, [])
         graph.resolve_violations(
             nid,
-            remaining,
+            {normalize_rule_id(str(v.get("rule_id", ""))) for v in remaining},
             fixed_by=fixed_by,
             pass_number=pass_number,
             status=status,
+            remaining_violations=remaining,
         )
 
 

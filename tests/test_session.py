@@ -1707,14 +1707,18 @@ class TestSessionRescanBridge:
     closure and passes it to GraphRemediationEngine as rescan_fn.
     """
 
-    async def test_bridge_passed_to_graph_engine_as_rescan_fn(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("argspec_rule", ["L058", "L059"])  # type: ignore[untyped-decorator]
+    async def test_bridge_passed_to_graph_engine_as_rescan_fn(self, tmp_path: Path, argspec_rule: str) -> None:
         """Bridge closure is constructed and passed into GraphRemediationEngine as rescan_fn.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
+            argspec_rule: Rule whose severity override must also apply on rescan.
         """
         from unittest.mock import MagicMock
 
+        from apme.v1.common_pb2 import SEVERITY_HIGH
+        from apme.v1.engine_pb2 import RuleConfig
         from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
@@ -1793,6 +1797,10 @@ class TestSessionRescanBridge:
                 _heartbeat=_noop_heartbeat,
                 format_content=_noop_format,
                 format_diffs=[],
+                rule_configs=[
+                    RuleConfig(rule_id=argspec_rule, enabled=True, severity=SEVERITY_HIGH),
+                    RuleConfig(rule_id="L001", enabled=False),
+                ],
             ):
                 events.append(event)
 
@@ -1845,8 +1853,21 @@ class TestSessionRescanBridge:
             patch("apme_engine.daemon.engine_server._call_validator", new_callable=AsyncMock) as call_validator,
             patch.object(graph_opa_payload, "_build_module_defaults_contexts", side_effect=record_context_builder),
         ):
-            call_validator.return_value = _ValidatorResult()
-            await captured_rescan_fn[0](graph, dirty_ids)
+            call_validator.return_value = _ValidatorResult(
+                violations=[
+                    {
+                        "rule_id": argspec_rule,
+                        "severity": "error",
+                        "path": "play.yml/plays[0]/tasks[0]",
+                        "message": "Missing required parameter 'path' for ansible.builtin.file",
+                    },
+                    {"rule_id": "L001", "severity": "error", "path": "play.yml/plays[0]/tasks[0]"},
+                ]
+            )
+            rescanned = await captured_rescan_fn[0](graph, dirty_ids)
+        assert rescanned
+        assert {finding["rule_id"] for finding in rescanned} == {argspec_rule}
+        assert all(finding["severity"] == "high" for finding in rescanned)
         assert len(serialization_threads) == 1
         assert serialization_threads[0] != event_loop_thread
         request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "ansible")

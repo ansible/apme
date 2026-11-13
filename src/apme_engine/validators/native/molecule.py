@@ -571,14 +571,14 @@ class _CollectionLookup:
 
 
 def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict]:
-    """Check defaults shapes at play, block, task, and include-apply scopes.
+    """Check defaults and task-section shapes in executable playbook scopes.
 
     Args:
         node: Play list already checked for safe YAML traversal bounds.
         file: Snapshot-relative source file.
 
     Returns:
-        L119 findings for provably malformed defaults, without resolving plugins.
+        L119 findings for malformed defaults or sections, without resolving plugins.
     """
     findings: list[ViolationDict] = []
     pending: list[tuple[yaml.Node, YamlPath]] = [(play, (index,)) for index, play in enumerate(node.value)]
@@ -636,8 +636,27 @@ def _playbook_defaults(node: yaml.SequenceNode, file: str) -> list[ViolationDict
                 pending.extend((role, (*path, "roles", index)) for index, role in enumerate(roles[1].value))
         for section in ("pre_tasks", "tasks", "post_tasks", "handlers", "block", "rescue", "always"):
             section_entry = entries.get(section)
-            if section_entry is not None and isinstance(section_entry[1], yaml.SequenceNode):
-                pending.extend((task, (*path, section, index)) for index, task in enumerate(section_entry[1].value))
+            if section_entry is None:
+                continue
+            section_key, section_value = section_entry
+            if isinstance(section_value, yaml.SequenceNode):
+                pending.extend((task, (*path, section, index)) for index, task in enumerate(section_value.value))
+            elif (
+                len(path) == 1
+                and section in {"pre_tasks", "tasks", "post_tasks", "handlers"}
+                and section_value.tag == "tag:yaml.org,2002:null"
+            ):
+                # Plays use load_list_of_blocks, which accepts None; nested block
+                # sections use load_list_of_tasks and require an actual list.
+                continue
+            else:
+                findings.append(
+                    _finding(
+                        "L119",
+                        _Location(file, section_key.start_mark.line + 1, (*path, section)),
+                        f"Scenario task section '{section}' must be a list",
+                    )
+                )
         include_actions = {
             prefix + action
             for prefix in ("", "ansible.builtin.", "ansible.legacy.")

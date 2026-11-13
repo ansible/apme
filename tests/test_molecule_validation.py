@@ -4,6 +4,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
+from ansible.errors import AnsibleParserError
+from ansible.playbook.play import Play
 
 from apme.v1 import common_pb2, validate_pb2
 from apme_engine.daemon.native_validator_server import _run_native
@@ -12,6 +15,128 @@ from apme_engine.validators.native.molecule import MOLECULE_RULES, validate_mole
 
 CONFIG = "molecule/default/molecule.yml"
 PLAYBOOK = b"- hosts: all\n  tasks: []\n"
+
+
+@pytest.mark.parametrize("section", ["pre_tasks", "tasks", "post_tasks", "handlers"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("value", ["{}", "wrong", "42", "false", "''"])  # type: ignore[untyped-decorator]
+def test_l119_rejects_nonlist_play_task_sections(section: str, value: str) -> None:
+    """Shared imported playbooks cannot hide malformed task sections.
+
+    Args:
+        section: Play-level task section rejected by Ansible when not a list.
+        value: Invalid mapping, scalar, or empty string section value.
+    """
+    source = f"- hosts: all\n  {section}: {value}\n".encode()
+    with pytest.raises(AnsibleParserError):
+        Play.load(yaml.safe_load(source)[0])
+    findings = _scan(
+        "",
+        {
+            "molecule/default/converge.yml": b"- import_playbook: ../../playbooks/shared.yml\n",
+            "playbooks/shared.yml": source,
+        },
+    )
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L119"
+    assert findings[0]["file"] == "playbooks/shared.yml"
+    assert findings[0]["line"] == 2
+    assert findings[0]["path"] == f"$[0].{section}"
+    assert "must be a list" in str(findings[0]["message"])
+
+
+@pytest.mark.parametrize("section", ["pre_tasks", "tasks", "post_tasks", "handlers"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("value", ["", "null", "~", "[]"])  # type: ignore[untyped-decorator]
+def test_l119_accepts_ansible_empty_play_task_sections(section: str, value: str) -> None:
+    """Null and empty-list play sections remain compatible with Ansible.
+
+    Args:
+        section: Play section accepting a list or YAML null.
+        value: Empty section spelling accepted by the installed Ansible loader.
+    """
+    source = f"- hosts: all\n  {section}: {value}\n".encode()
+    Play.load(yaml.safe_load(source)[0])
+    assert _scan("", {"molecule/default/converge.yml": source}) == []
+
+
+@pytest.mark.parametrize("section", ["block", "rescue", "always"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("value", ["{}", "wrong", "42", "false", "''", "", "null", "~"])  # type: ignore[untyped-decorator]
+def test_l119_rejects_nonlist_nested_task_sections(section: str, value: str) -> None:
+    """Nested block sections require lists, including when a value is empty.
+
+    Args:
+        section: Nested task section checked within a block.
+        value: Non-list section value, including YAML null.
+    """
+    if section == "block":
+        source = f"- hosts: all\n  tasks:\n    - block: {value}\n".encode()
+        line = 3
+    else:
+        source = f"- hosts: all\n  tasks:\n    - block: []\n      {section}: {value}\n".encode()
+        line = 4
+    with pytest.raises(AnsibleParserError):
+        Play.load(yaml.safe_load(source)[0])
+    findings = _scan("", {"molecule/default/converge.yml": source})
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L119"
+    assert findings[0]["line"] == line
+    assert findings[0]["path"] == f"$[0].tasks[0].{section}"
+
+
+@pytest.mark.parametrize("section", ["block", "rescue", "always"])  # type: ignore[untyped-decorator]
+def test_l119_accepts_empty_nested_task_lists(section: str) -> None:
+    """Empty nested lists retain Ansible's valid no-task behavior.
+
+    Args:
+        section: Block section with a valid empty list.
+    """
+    extra = f"      {section}: []\n" if section != "block" else ""
+    source = ("- hosts: all\n  tasks:\n    - block: []\n" + extra).encode()
+    Play.load(yaml.safe_load(source)[0])
+    assert _scan("", {"molecule/default/converge.yml": source}) == []
+
+
+def test_l119_reports_deep_sections_without_inspecting_task_data() -> None:
+    """Nested execution scopes are checked while task and role data stay inert."""
+    source = b"""- hosts: all
+  vars:
+    tasks: {}
+    block: null
+  roles:
+    - role: demo
+      tasks: {}
+  tasks:
+    - ansible.builtin.debug:
+        msg:
+          tasks: {}
+          rescue: null
+    - block: []
+      rescue:
+        - block: {}
+      always:
+        - block: []
+          always: false
+"""
+    findings = _scan("", {"molecule/default/converge.yml": source})
+    assert {(finding["path"], finding["line"]) for finding in findings} == {
+        ("$[0].tasks[1].rescue[0].block", 15),
+        ("$[0].tasks[1].always[0].always", 18),
+    }
+    assert all(finding["rule_id"] == "L119" for finding in findings)
+
+
+def test_l119_checks_yaml_merged_task_sections_at_their_source() -> None:
+    """Merged task sections keep the originating key's line number."""
+    source = b"""- hosts: all
+  vars:
+    inherited: &sections
+      tasks: {}
+  <<: *sections
+"""
+    findings = _scan("", {"molecule/default/converge.yml": source})
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "L119"
+    assert findings[0]["path"] == "$[0].tasks"
+    assert findings[0]["line"] == 4
 
 
 @pytest.mark.parametrize("action", ["import_playbook", "ansible.builtin.import_playbook"])  # type: ignore[untyped-decorator]

@@ -30,6 +30,8 @@ Apply the same correction to ordinary playbook argument checks.
 - Bound expanded JSON nodes and bytes across defaults serialization, contexts,
   and graph transport; report unsafe transport as an incomplete scan. Ignore
   inactive include paths when applying edge-specific context.
+- Preserve distinct coverage and argument findings through the ledger, rescans,
+  and output. Keep explicit manual-review findings out of remediation routing.
 
 ## Test Cases
 
@@ -47,8 +49,8 @@ Apply the same correction to ordinary playbook argument checks.
 
 - [x] Focused tests via `tox -e unit -- ... --no-cov`
 - [x] `tox -e lint`
-- [x] Full `tox -e unit` with local OPA and container-only skips: 5,513 passed,
-      52 skipped, 86.77% coverage
+- [x] Full `tox -e unit` with local OPA and container-only skips: 5,689 passed,
+      52 skipped, 86.89% coverage
 
 ## Completion Checklist
 
