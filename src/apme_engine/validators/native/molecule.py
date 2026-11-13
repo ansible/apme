@@ -54,6 +54,11 @@ _ACTIONS = frozenset(
     }
 )
 _STAGES = frozenset({"cleanup", "create", "converge", "destroy", "prepare", "side_effect", "verify"})
+# Repeated protobuf strings do not retain Python's shared-string identity.
+# Leave headroom below the validator's 50 MiB message limit for graph findings,
+# metadata, and diagnostics. Charge escaped JSON as well as UTF-8 wire content.
+_MAX_DIAGNOSTIC_BYTES = 32 * 1024 * 1024
+_DIAGNOSTIC_OVERHEAD_BYTES = 1024
 _NAMES = {
     "L115": "Molecule configuration does not match the supported profile",
     "L116": "Molecule file reference is unavailable in the scan",
@@ -79,6 +84,10 @@ YamlPath = tuple[str | int, ...]
 
 class _NeedsContext(ValueError):
     """Configuration structure depends on an unresolved substitution."""
+
+
+class MoleculeAssessmentLimitError(RuntimeError):
+    """Complete Molecule findings cannot be serialized within safe limits."""
 
 
 @dataclass(frozen=True)
@@ -207,6 +216,36 @@ def _source_excerpt(lines: list[str], line: int) -> str:
     while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) > indent):
         end += 1
     return "\n".join(lines[start:end])
+
+
+def _diagnostic_string_size(text: str) -> int:
+    """Count escaped diagnostic bytes without allocating a large encoding.
+
+    ASCII JSON escaping also bounds the UTF-8 strings copied into protobuf.
+    Work is bounded by the output allowance even for a single large source line.
+
+    Args:
+        text: Full diagnostic text or original source excerpt.
+
+    Returns:
+        Escaped JSON string size including quotes.
+
+    Raises:
+        MoleculeAssessmentLimitError: If the string alone exceeds the allowance.
+    """
+    size = len(text) + 2
+    if size > _MAX_DIAGNOSTIC_BYTES:
+        raise MoleculeAssessmentLimitError(
+            "Molecule diagnostics exceed safe serialization limits; assessment is incomplete"
+        )
+    size = 2
+    for offset in range(0, len(text), 4096):
+        size += len(json.encoder.encode_basestring_ascii(text[offset : offset + 4096])) - 2
+        if size > _MAX_DIAGNOSTIC_BYTES:
+            raise MoleculeAssessmentLimitError(
+                "Molecule diagnostics exceed safe serialization limits; assessment is incomplete"
+            )
+    return size
 
 
 def _locations(
@@ -1058,6 +1097,9 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
 
     Returns:
         Deterministically ordered file findings and resolved static playbook paths.
+
+    Raises:
+        MoleculeAssessmentLimitError: If complete diagnostics exceed safe serialization limits.
     """
     scenarios = sorted(file for file in files if PurePosixPath(file).name in {"molecule.yml", "molecule.yaml"})
     if not scenarios:
@@ -1222,22 +1264,43 @@ def _molecule_assessment(files: Mapping[str, bytes]) -> tuple[list[ViolationDict
     }
     result = [unique[key] for key in sorted(unique)]
     source_lines: dict[str, list[str]] = {}
+    excerpts: dict[tuple[str, int], tuple[str, int]] = {}
+    remaining = _MAX_DIAGNOSTIC_BYTES
     for finding in result:
         source_file = str(finding["file"])
         if source_file not in source_lines:
             source_lines[source_file] = files.get(source_file, b"").decode("utf-8", errors="replace").splitlines()
-        finding["original_yaml"] = _source_excerpt(source_lines[source_file], int(str(finding.get("line") or 1)))
+        line = int(str(finding.get("line") or 1))
+        key = (source_file, line)
+        if key not in excerpts:
+            excerpt = _source_excerpt(source_lines[source_file], line)
+            excerpts[key] = (excerpt, _diagnostic_string_size(excerpt))
+        excerpt, excerpt_bytes = excerpts[key]
+        # Charge every occurrence, even though Python findings share one string.
+        remaining -= _DIAGNOSTIC_OVERHEAD_BYTES + excerpt_bytes
+        for value in finding.values():
+            if isinstance(value, str):
+                remaining -= _diagnostic_string_size(value)
+        if remaining < 0:
+            raise MoleculeAssessmentLimitError(
+                "Molecule diagnostics exceed safe serialization limits; assessment is incomplete"
+            )
+        finding["original_yaml"] = excerpt
     return result, frozenset(file for file, _scenario in playbook_cache)
 
 
 def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
     """Validate supplied Molecule scenarios using only uploaded bytes.
 
+    Oversized diagnostics propagate ``MoleculeAssessmentLimitError`` rather
+    than returning partial findings or truncated suppression source.
+
     Args:
         files: Uploaded snapshot paths mapped to bytes.
 
     Returns:
         Deterministically ordered Native file findings.
+
     """
     return _molecule_assessment(files)[0]
 
@@ -1245,10 +1308,14 @@ def validate_molecule(files: Mapping[str, bytes]) -> list[ViolationDict]:
 def molecule_playbook_paths(files: Mapping[str, bytes]) -> frozenset[str]:
     """Identify resolved scenario references to exclude from runtime checks.
 
+    Oversized diagnostics propagate ``MoleculeAssessmentLimitError`` so failed
+    static assessment cannot silently fall back to runtime playbook execution.
+
     Args:
         files: Uploaded snapshot paths mapped to bytes.
 
     Returns:
         Snapshot-relative playbooks assessed statically, including shared files.
+
     """
     return _molecule_assessment(files)[1]

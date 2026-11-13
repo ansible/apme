@@ -17,6 +17,135 @@ CONFIG = "molecule/default/molecule.yml"
 PLAYBOOK = b"- hosts: all\n  tasks: []\n"
 
 
+def _aliased_invalid_plays(count: int, text: str, *, noqa: bool = False) -> bytes:
+    """Create repeated diagnostic paths sharing one full source location.
+
+    Args:
+        count: Number of plays referencing the same anchored mapping.
+        text: Literal scalar content of an invalid tasks section.
+        noqa: Whether the diagnostic line includes an inline suppression.
+
+    Returns:
+        Unexpanded playbook bytes containing one source excerpt.
+    """
+    marker = " # noqa: L119" if noqa else ""
+    return (f"- &bad\n  hosts: all\n  tasks: |{marker}\n    {text}\n" + "- *bad\n" * (count - 1)).encode()
+
+
+def test_aliased_findings_reuse_full_excerpts_and_preserve_suppression() -> None:
+    """Aliases retain distinct paths while sharing untruncated source strings."""
+    from apme_engine.daemon.engine_server import _filter_file_noqa
+    from apme_engine.fingerprint import compute_fingerprint
+    from apme_engine.validators.native import molecule
+
+    text = "x" * (128 * 1024) + "full-excerpt-tail"
+    source = _aliased_invalid_plays(12, text, noqa=True)
+    with patch.object(molecule, "_source_excerpt", wraps=molecule._source_excerpt) as excerpt:
+        findings = _scan("", {"molecule/default/converge.yml": source})
+    assert len(findings) == 12
+    assert len({finding["path"] for finding in findings}) == 12
+    assert {finding["line"] for finding in findings} == {3}
+    assert excerpt.call_count == 1
+    original = findings[0]["original_yaml"]
+    expected = f"  tasks: | # noqa: L119\n    {text}"
+    assert original == expected
+    assert all(finding["original_yaml"] is original for finding in findings)
+    assert compute_fingerprint("L119", str(original)) == compute_fingerprint("L119", expected)
+    assert _filter_file_noqa(findings) == []
+
+
+def test_excerpt_cache_keeps_different_source_files_distinct() -> None:
+    """Equal line numbers in separate source files must not share excerpts."""
+    from apme_engine.validators.native import molecule
+
+    with patch.object(molecule, "_source_excerpt", wraps=molecule._source_excerpt) as excerpt:
+        findings = _scan(
+            "",
+            {
+                "molecule/default/converge.yml": (
+                    b"- import_playbook: ../../playbooks/first.yml\n- import_playbook: ../../playbooks/second.yml\n"
+                ),
+                "playbooks/first.yml": _aliased_invalid_plays(2, "first"),
+                "playbooks/second.yml": _aliased_invalid_plays(2, "second"),
+            },
+        )
+    assert len(findings) == 4
+    assert excerpt.call_count == 2
+    originals = {str(finding["file"]): finding["original_yaml"] for finding in findings}
+    assert originals["playbooks/first.yml"] != originals["playbooks/second.yml"]
+
+
+def test_aliased_excerpts_cannot_expand_into_an_oversized_response() -> None:
+    """The reported sub-MiB upload fails before allocating GiB of proto strings."""
+    from apme_engine.validators.native import molecule
+
+    source = _aliased_invalid_plays(4000, "private-source-value-" + "x" * (512 * 1024))
+    assert len(source) < 1024 * 1024
+    with (
+        patch.object(molecule, "_source_excerpt", wraps=molecule._source_excerpt) as excerpt,
+        pytest.raises(molecule.MoleculeAssessmentLimitError, match="assessment is incomplete") as error,
+    ):
+        _scan("", {"molecule/default/converge.yml": source})
+    assert excerpt.call_count == 1
+    assert "private-source-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("text", ["ASCII", 'é🐍\n"\\'])  # type: ignore[untyped-decorator]
+def test_diagnostic_size_accounts_for_unicode_and_json_escaping(text: str) -> None:
+    """Both JSON and protobuf representation sizes fit within the allowance.
+
+    Args:
+        text: ASCII or Unicode text including JSON escape characters.
+    """
+    import json
+
+    from apme_engine.validators.native import molecule
+
+    assert molecule._diagnostic_string_size(text) == len(json.dumps(text))
+    assert molecule._diagnostic_string_size(text) >= len(text.encode())
+
+
+async def test_native_rpc_rejects_expanded_excerpts_before_proto_conversion() -> None:
+    """Oversized file diagnostics produce a bounded explicit infrastructure error."""
+    from apme_engine.daemon import native_validator_server
+    from apme_engine.daemon.validator_errors import RULE_VALIDATOR_FAILURE
+    from apme_engine.validators.native import molecule
+
+    source = _aliased_invalid_plays(30, "private-source-value-" + "x" * 1024)
+    request = validate_pb2.ValidateRequest(
+        request_id="excerpt-expansion",
+        files=[
+            common_pb2.File(path=CONFIG, content=b""),
+            common_pb2.File(path="molecule/default/converge.yml", content=source),
+        ],
+    )
+    with (
+        patch.object(molecule, "_MAX_DIAGNOSTIC_BYTES", 8192),
+        patch.object(native_validator_server, "violation_dict_to_proto", side_effect=AssertionError),
+    ):
+        response = await native_validator_server.NativeValidatorServicer().Validate(request, None)  # type: ignore[arg-type]
+    assert response.request_id == "excerpt-expansion"  # type: ignore[attr-defined]
+    assert len(response.violations) == 1  # type: ignore[attr-defined]
+    assert response.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+    assert response.violations[0].severity == common_pb2.SEVERITY_ERROR  # type: ignore[attr-defined]
+    assert response.violations[0].original_yaml == ""  # type: ignore[attr-defined]
+    assert response.ByteSize() < 8192  # type: ignore[attr-defined]
+    assert "private-source-value" not in str(response)
+
+
+def test_shared_excerpts_preserve_complete_protobuf_strings() -> None:
+    """Accepted aliases retain full suppression source in every wire finding."""
+    from apme_engine.daemon.violation_convert import violation_dict_to_proto
+
+    text = "é🐍" * 2000 + "full-excerpt-tail"
+    findings = _scan("", {"molecule/default/converge.yml": _aliased_invalid_plays(4, text)})
+    response = validate_pb2.ValidateResponse(violations=[violation_dict_to_proto(finding) for finding in findings])
+    restored = validate_pb2.ValidateResponse.FromString(response.SerializeToString())  # type: ignore[attr-defined]
+    assert len(restored.violations) == 4
+    assert all(finding.original_yaml == findings[0]["original_yaml"] for finding in restored.violations)
+    assert all(text in finding.original_yaml for finding in restored.violations)
+
+
 @pytest.mark.parametrize("section", ["pre_tasks", "tasks", "post_tasks", "handlers"])  # type: ignore[untyped-decorator]
 @pytest.mark.parametrize("value", ["{}", "wrong", "42", "false", "''"])  # type: ignore[untyped-decorator]
 def test_l119_rejects_nonlist_play_task_sections(section: str, value: str) -> None:

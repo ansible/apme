@@ -19,6 +19,7 @@ from apme_engine.validators.ansible.module_defaults import (
     apply_parameter_aliases,
     has_invalid_choice,
     is_dynamic,
+    may_omit_argument,
     resolve_module_defaults,
 )
 
@@ -128,7 +129,7 @@ def _check_tasks_against_specs(
                     valid_params.add(str(alias))
 
         # A dynamic value may become Ansible's ``omit`` sentinel.
-        unknown = {key for key in user_keys - valid_params if not is_dynamic(module_options[key])}
+        unknown = {key for key in user_keys - valid_params if not may_omit_argument(module_options[key])}
         if unknown:
             violations.append(
                 {

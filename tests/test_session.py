@@ -1904,6 +1904,53 @@ class TestSessionRescanBridge:
         }
         assert request.ByteSize() < 50 * 1024 * 1024
         assert set(request.dirty_node_ids) == dirty_ids
+        ansible_call = next(call for call in call_validator.call_args_list if call.args[0] == "ansible")
+        assert ansible_call.kwargs["stream_large_request"] is True
+        native_request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "native")
+        opa_request = next(call.args[1] for call in call_validator.call_args_list if call.args[0] == "opa")
+        assert native_request.content_graph_data and not native_request.hierarchy_payload
+        assert opa_request.hierarchy_payload and not opa_request.content_graph_data and not opa_request.files
+
+        if coverage_state == "complete" and argspec_rule == "L058":
+            from apme_engine.daemon.engine_server import GraphTransportError
+
+            for backend in ("native", "gitleaks"):
+
+                async def overflow(
+                    address: str, request: object, *, _backend: str = backend, **kwargs: object
+                ) -> _ValidatorResult:
+                    """Fail one rescan transport without inventing clean coverage.
+
+                    Args:
+                        address: Validator endpoint label.
+                        request: Complete rescan input.
+                        _backend: Endpoint whose transport limit is exceeded.
+                        **kwargs: Per-validator transport settings.
+
+                    Returns:
+                        An empty response from unaffected validators.
+
+                    Raises:
+                        GraphTransportError: The selected request cannot be sent.
+                    """
+                    if address == _backend:
+                        raise GraphTransportError("Complete request exceeds transport; validation is incomplete")
+                    return _ValidatorResult()
+
+                with (
+                    patch.dict(
+                        os.environ,
+                        {
+                            "NATIVE_GRPC_ADDRESS": "native",
+                            "OPA_GRPC_ADDRESS": "opa",
+                            "ANSIBLE_GRPC_ADDRESS": "ansible",
+                            "GITLEAKS_GRPC_ADDRESS": "gitleaks",
+                        },
+                    ),
+                    patch("apme_engine.daemon.engine_server._call_validator", side_effect=overflow),
+                    pytest.raises(GraphTransportError, match="validation is incomplete"),
+                ):
+                    await captured_rescan_fn[0](graph, dirty_ids)
 
     async def test_bridge_uses_correct_rules_dir(self, tmp_path: Path) -> None:
         """load_graph_rules is called with the native rules directory.

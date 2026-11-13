@@ -49,6 +49,10 @@ L057 leaves Molecule scenario content and resolved shared/imported references to
 checking can evaluate project lookups and requires Molecule context. Ordinary
 runtime discovery does not classify config mappings as plays merely because
 they contain `hosts` or `tasks` keys.
+
+L057 also excludes entrypoints that statically import scenario content. If an
+entrypoint's import or role closure cannot be established safely, L057 reports
+incomplete syntax assessment rather than dispatching that entrypoint.
 Test-content graph discovery covers both `molecule/` and collection
 `extensions/molecule/` layouts, including nested scenario directories.
 

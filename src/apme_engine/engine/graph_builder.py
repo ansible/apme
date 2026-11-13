@@ -896,7 +896,10 @@ class GraphBuilder:
             for index, dependency in enumerate(role_dependencies):
                 options = {"role": dependency} if isinstance(dependency, str) else dependency
                 if isinstance(options, dict):
-                    self._pending_role_dependencies.append((nid, _safe_dict(options), index))
+                    # Role dependencies run before the body. Reserve negative
+                    # positions for them without shifting task/handler inventory
+                    # positions or the static role positions on a play.
+                    self._pending_role_dependencies.append((nid, _safe_dict(options), index - len(role_dependencies)))
 
         return nid
 

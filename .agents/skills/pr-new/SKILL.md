@@ -269,7 +269,9 @@ artifact type, translate it:
    rescan the full input for each reference.
    Bound expanded representations, including repeated shared references and
    serialized bytes, at every downstream consumer; account for repeated work
-   after an aggregate budget is exhausted. Trace distinct findings and explicit
+   after an aggregate budget is exhausted and combined transport payloads.
+   Trace reachability through imports, execution ordering, and the outer value
+   containing nested dynamic values. Trace distinct findings and explicit
    remediation constraints through deduplication, storage, and routing. Treat
    missing results as evidence of a fix only when the relevant check actually
    assessed that input, including when findings are filtered or disabled.

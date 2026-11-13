@@ -756,8 +756,19 @@ async def _call_validator(
 
     Returns:
         _ValidatorResult with violations and optional diagnostics.
+
+    Raises:
+        GraphTransportError: The complete request exceeds its supported transport.
     """
     req_id = request.request_id or ""
+    request_size = request.ByteSize()
+    request_limit = _MAX_STREAMED_VALIDATE_REQUEST_BYTES if stream_large_request else _GRPC_MAX_MSG
+    if request_size > request_limit:
+        transport = "streamed" if stream_large_request else "unary"
+        raise GraphTransportError(
+            f"Validator request to {address} is {request_size} bytes, exceeding the {transport} request limit "
+            f"({request_limit} bytes); validation is incomplete"
+        )
     channel = grpc.aio.insecure_channel(
         address,
         options=[
@@ -767,16 +778,8 @@ async def _call_validator(
     )
     stub = validate_pb2_grpc.ValidatorStub(channel)  # type: ignore[no-untyped-call]
     try:
-        request_size = request.ByteSize()
         if stream_large_request and request_size > _GRPC_MAX_MSG:
-            if request_size > _MAX_STREAMED_VALIDATE_REQUEST_BYTES:
-                return _ValidatorResult(
-                    error=(
-                        "Ansible validation context exceeds the streamed request limit "
-                        f"({_MAX_STREAMED_VALIDATE_REQUEST_BYTES} bytes)"
-                    )
-                )
-            serialized_request = request.SerializeToString()
+            serialized_request = await asyncio.get_running_loop().run_in_executor(None, request.SerializeToString)
 
             async def request_chunks() -> AsyncIterator[ValidateRequestChunk]:
                 for offset in range(0, len(serialized_request), _GRPC_STREAM_CHUNK_BYTES):
@@ -797,6 +800,44 @@ async def _call_validator(
         return _ValidatorResult(error=str(e))
     finally:
         await channel.close(grace=None)
+
+
+def _validator_request(name: str, request: ValidateRequest) -> ValidateRequest:
+    """Select complete inputs consumed by one built-in validator.
+
+    Native and Gitleaks need files plus graph data; OPA only uses hierarchy
+    data. Ansible needs all three for syntax and node checks. Collection health
+    and dependency audit read the session venv. Never truncate a required input
+    to make a request fit its transport limit.
+
+    Args:
+        name: Built-in validator name.
+        request: Complete scan inputs and request metadata.
+
+    Returns:
+        A separate request retaining the validator's complete input fields.
+
+    Raises:
+        ValueError: The validator has no declared input requirements.
+    """
+    if name not in VALIDATOR_ENV_VARS:
+        raise ValueError(f"Unknown validator input requirements: {name}")
+    selected = ValidateRequest(
+        request_id=request.request_id,
+        project_root=request.project_root,
+        ansible_core_version=request.ansible_core_version,
+        collection_specs=request.collection_specs,
+        session_id=request.session_id,
+        venv_path=request.venv_path,
+        dirty_node_ids=request.dirty_node_ids,
+        graph_rule_opt_in=request.graph_rule_opt_in,
+    )
+    if name in {"native", "ansible", "gitleaks"}:
+        selected.files.extend(request.files)
+        selected.content_graph_data = request.content_graph_data
+    if name in {"opa", "ansible"}:
+        selected.hierarchy_payload = request.hierarchy_payload
+    return selected
 
 
 _REQUIREMENTS_PATHS = {"requirements.yml", "collections/requirements.yml"}
@@ -1330,6 +1371,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 could not be installed into the session venv.
             RequiredValidatorDependencyError: If a required validator
                 (native, opa, ansible) is not configured or its RPC fails.
+            GraphTransportError: A validator's complete input cannot be transported.
             ValueError: If ``rule_configs_complete`` is ``True`` and either
                 direction of the bidirectional audit fails (unknown IDs the
                 Engine cannot execute, or known IDs absent from the config).
@@ -1505,23 +1547,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         task_names = [name for name, _addr in validator_targets]
         task_coros: list[Awaitable[_ValidatorResult]] = []
         for name, addr in validator_targets:
-            request: ValidateRequest = validate_request
+            request = _validator_request(name, validate_request)
             if name == "ansible" and ansible_context_files:
                 files_by_path: dict[str, File] = {file.path: file for file in files}
                 files_by_path.update({file.path: file for file in ansible_context_files})
-                request = ValidateRequest(
-                    request_id=validate_request.request_id,
-                    project_root=validate_request.project_root,
-                    files=list(files_by_path.values()),
-                    hierarchy_payload=validate_request.hierarchy_payload,
-                    scandata=validate_request.scandata,
-                    ansible_core_version=validate_request.ansible_core_version,
-                    collection_specs=validate_request.collection_specs,
-                    session_id=validate_request.session_id,
-                    venv_path=validate_request.venv_path,
-                    content_graph_data=validate_request.content_graph_data,
-                    graph_rule_opt_in=validate_request.graph_rule_opt_in,
-                )
+                del request.files[:]
+                request.files.extend(files_by_path.values())
             task_coros.append(_call_validator(addr, request, stream_large_request=name == "ansible"))
 
         violations: list[ViolationDict] = []
@@ -1580,6 +1611,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             for vname, item in zip(task_names, named_results, strict=True):
                 if isinstance(item, BaseException):
                     logger.error("Validator %s raised (req=%s): %s", vname, scan_id, item)
+                    if isinstance(item, GraphTransportError):
+                        raise GraphTransportError(str(item)) from item
                     if vname in REQUIRED_VALIDATORS:
                         msg = f"Required validator {vname} failed: {item}"
                         raise RequiredValidatorDependencyError(msg) from item
@@ -2810,6 +2843,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             Raises:
                 RequiredValidatorDependencyError: If a required validator
                     (native, opa, ansible) is not configured or its RPC fails.
+                GraphTransportError: A validator's complete input cannot be transported.
             """
             from apme_engine.argspec_coverage import ARGSPEC_COVERAGE_KEY, decode_argspec_coverage
 
@@ -2965,6 +2999,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 results = await asyncio.gather(*ext_coros, return_exceptions=True)
                 for name, result in zip(ext_names, results, strict=True):
                     if isinstance(result, BaseException):
+                        if isinstance(result, GraphTransportError):
+                            raise GraphTransportError(str(result)) from result
                         if name in REQUIRED_VALIDATORS:
                             msg = f"Required validator {name} failed during rescan: {result}"
                             raise RequiredValidatorDependencyError(msg) from result

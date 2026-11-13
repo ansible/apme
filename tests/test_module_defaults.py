@@ -729,8 +729,51 @@ def test_literal_resource_limits_isolate_unassessable_tasks(tmp_path: Path, loca
 
 
 @pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("value", [{"child": "{{ omit }}"}, ["{{ value }}"]])  # type: ignore[untyped-decorator]
+def test_nested_templates_do_not_hide_unknown_argument(rule_id: str, value: object) -> None:
+    """Nested dynamic values leave their containing unsupported key present.
+
+    Args:
+        rule_id: Docstring or captured-spec argspec rule.
+        value: Dynamic mapping or list value.
+    """
+    rule = importlib.import_module(
+        "apme_engine.validators.ansible.rules." + ("L058_argspec_doc" if rule_id == "L058" else "L059_argspec_mock")
+    )
+    field = "options" if rule_id == "L058" else "argument_spec"
+    specs: dict[str, object] = {"ansible.builtin.file": {field: {"path": {}}}}
+    findings = rule._check_tasks_against_specs(specs, [_task([], arguments={"path": "/tmp/a", "bad": value})])
+    assert len(findings) == 1
+    assert "Unsupported parameters" in str(findings[0]["message"])
+
+
+@pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
+def test_nested_template_finding_retains_unassessed_coverage(rule_id: str, tmp_path: Path) -> None:
+    """Report definite unsupported keys while marking dynamic values unassessed.
+
+    Args:
+        rule_id: Docstring or captured-spec argspec rule.
+        tmp_path: Isolated runtime path for the mocked metadata lookup.
+    """
+    rule = importlib.import_module(
+        "apme_engine.validators.ansible.rules." + ("L058_argspec_doc" if rule_id == "L058" else "L059_argspec_mock")
+    )
+    field = "options" if rule_id == "L058" else "argument_spec"
+    task = _task([], arguments={"path": "/tmp/a", "bad": {"child": "{{ omit }}"}})
+    unassessed: set[str] = set()
+    with (
+        patch.object(rule, "plugin_cache", PluginCache()),
+        patch.object(rule, "_fetch_specs", return_value={"ansible.builtin.file": {field: {"path": {}}}}),
+    ):
+        findings = rule.run([task], tmp_path, unassessed_tasks=unassessed)
+    assert len(findings) == 1
+    assert "Unsupported parameters" in str(findings[0]["message"])
+    assert unassessed == {"task#defaults"}
+
+
+@pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
-    "case", ["unknown-omit", "exclusive-omit", "together-omit", "literal-unknown"]
+    "case", ["unknown-omit", "exclusive-omit", "together-omit", "literal-unknown", "nested-unknown"]
 )
 def test_omit_capable_values_do_not_prove_argument_violations(rule_id: str, case: str) -> None:
     """Potentially omitted values cannot prove unsupported or related-key errors.
@@ -759,18 +802,44 @@ def test_omit_capable_values_do_not_prove_argument_violations(rule_id: str, case
     elif case == "together-omit":
         arguments["username"] = "{{ omit }}"
         constraints["required_together"] = [["username", "password"]]
-    else:
+    elif case == "literal-unknown":
         arguments.update({"bogus": "literal", "content": "{{ omit }}"})
+    else:
+        arguments["bogus"] = {"child": "{{ value }}"}
     field = "options" if rule_id == "L058" else "argument_spec"
     findings = rule._check_tasks_against_specs(
         {"ansible.builtin.file": {field: parameters, **constraints}}, [_task([], arguments=arguments)]
     )
-    if case == "literal-unknown":
+    if case in {"literal-unknown", "nested-unknown"}:
         assert len(findings) == 1
         assert "Unsupported parameters" in str(findings[0]["message"])
         assert "bogus" in str(findings[0]["message"])
     else:
         assert findings == []
+
+
+@pytest.mark.parametrize("constraint", ["mutually_exclusive", "required_together"])  # type: ignore[untyped-decorator]
+def test_nested_template_does_not_omit_outer_argument(constraint: str) -> None:
+    """A nested template does not remove its containing argument from a group.
+
+    Args:
+        constraint: The argument relationship assessed by L059.
+    """
+    from apme_engine.validators.ansible.rules import L059_argspec_mock
+
+    options: dict[str, object] = {"path": "/tmp/example", "src": {"child": "{{ value }}"}}
+    if constraint == "mutually_exclusive":
+        options["content"] = "literal"
+        group = ["src", "content"]
+    else:
+        group = ["src", "content"]
+    specs: dict[str, object] = {
+        "ansible.builtin.file": {"argument_spec": {"path": {}, "src": {}, "content": {}}, constraint: [group]}
+    }
+    findings = L059_argspec_mock._check_tasks_against_specs(specs, [_task([], arguments=options)])
+    assert len(findings) == 1
+    expected = "mutually exclusive" if constraint == "mutually_exclusive" else "used together"
+    assert expected in str(findings[0]["message"])
 
 
 @pytest.mark.parametrize("rule_id", ["L058", "L059"])  # type: ignore[untyped-decorator]

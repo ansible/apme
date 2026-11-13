@@ -138,6 +138,18 @@ def is_dynamic(value: object) -> bool:
     return _literal_properties(value)[0]
 
 
+def may_omit_argument(value: object) -> bool:
+    """Return whether the whole argument value may resolve to Ansible omit.
+
+    Args:
+        value: Authored argument value.
+
+    Returns:
+        True for a dynamic scalar string that could evaluate to omit.
+    """
+    return isinstance(value, str) and is_dynamic(value)
+
+
 def _shape_error(layers: list[object]) -> bool:
     """Identify literal defaults that Ansible cannot interpret as mappings.
 

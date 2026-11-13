@@ -516,6 +516,95 @@ def test_parsed_nested_role_dependency_defaults_are_edge_local(tmp_path: Path) -
     ]
 
 
+@pytest.mark.parametrize("dependency_count", [2, 3])  # type: ignore[untyped-decorator]
+def test_role_dependencies_execute_before_body_without_shifting_inventory(
+    tmp_path: Path, dependency_count: int
+) -> None:
+    """Every dependency precedes the body while play and inventory order survive.
+
+    Args:
+        tmp_path: Parsed project containing static roles and role dependencies.
+        dependency_count: Several dependencies expose a position collision with
+            the role's task files and handlers.
+    """
+    sources = {
+        "parent/tasks/main.yml": "- debug: {msg: parent}\n",
+        "parent/tasks/other.yml": "- debug: {msg: other}\n",
+        "parent/handlers/main.yml": "- name: Main handler\n  debug: {msg: main-handler}\n",
+        "parent/handlers/other.yml": "- name: Other handler\n  debug: {msg: other-handler}\n",
+        "after/tasks/main.yml": "- debug: {msg: after}\n",
+        "parent/meta/main.yml": "dependencies:\n",
+    }
+    # Authored dependency order differs from both load and lexical order.
+    names = ["z_first", "b_second", "a_third"][:dependency_count]
+    for index, name in enumerate(names):
+        sources[f"{name}/tasks/main.yml"] = f"- debug: {{msg: {name}}}\n"
+        declaration = f"  - role: {name}\n" if index % 2 else f"  - {name}\n"
+        sources["parent/meta/main.yml"] += declaration
+    graph = _parse_role_defaults_graph(
+        tmp_path,
+        sources,
+        "- hosts: all\n"
+        "  pre_tasks:\n    - debug: {msg: before}\n"
+        "  roles: [parent, after]\n"
+        "  tasks:\n    - debug: {msg: task}\n"
+        "  post_tasks:\n    - debug: {msg: post}\n",
+    )
+    for current in (graph, ContentGraph.from_dict(graph.to_dict(slim=True))):
+        parent = next(node for node in current.nodes(NodeType.ROLE) if node.role_fqcn == "parent")
+        after = next(node for node in current.nodes(NodeType.ROLE) if node.role_fqcn == "after")
+        dependencies = current.edges_from(parent.node_id, EdgeType.DEPENDENCY)
+        role_ids = {node.role_fqcn: node.node_id for node in current.nodes(NodeType.ROLE)}
+        ordered = sorted(dependencies, key=lambda edge: int(str(edge[1]["position"])))
+        assert [node_id for node_id, _attrs in ordered] == [role_ids[name] for name in names]
+        assert all(int(str(attrs["position"])) < 0 for _node_id, attrs in ordered)
+        inventory = sorted(
+            current.edges_from(parent.node_id, EdgeType.CONTAINS),
+            key=lambda edge: int(str(edge[1]["position"])),
+        )
+        assert [(attrs["role_section"], attrs["role_file"], attrs["position"]) for _nid, attrs in inventory] == [
+            ("tasks", "main.yml", 0),
+            ("tasks", "other.yml", 1),
+            ("handlers", "main.yml", 2),
+            ("handlers", "other.yml", 3),
+        ]
+        play = next(current.nodes(NodeType.PLAY))
+        play_roles = sorted(
+            current.edges_from(play.node_id, EdgeType.DEPENDENCY),
+            key=lambda edge: int(str(edge[1]["position"])),
+        )
+        assert [(nid, attrs["position"]) for nid, attrs in play_roles] == [
+            (parent.node_id, 1),
+            (after.node_id, 2),
+        ]
+        expected_flow = [
+            "site.yml",
+            play.node_id,
+            f"{play.node_id}/tasks[0]",
+            parent.node_id,
+        ]
+        for name in names:
+            role_id = role_ids[name]
+            expected_flow.extend([role_id, f"{role_id}/tasks/main.yml", f"{role_id}/tasks/main.yml/tasks[0]"])
+        for node_id, _attrs in inventory:
+            children = current.edges_from(node_id, EdgeType.CONTAINS)
+            assert len(children) == 1
+            expected_flow.extend([node_id, children[0][0]])
+        expected_flow.extend(
+            [
+                after.node_id,
+                f"{after.node_id}/tasks/main.yml",
+                f"{after.node_id}/tasks/main.yml/tasks[0]",
+                f"{play.node_id}/tasks[3]",
+                f"{play.node_id}/tasks[4]",
+            ]
+        )
+        expected_edges = list(zip(expected_flow, expected_flow[1:], strict=False))
+        execution = current.to_dict()["execution_edges"]
+        assert isinstance(execution, list)
+        assert {(edge["source"], edge["target"]) for edge in execution} == set(expected_edges)
+
+
 def test_standalone_parsed_role_defaults_start_at_main_tasks_and_handlers(tmp_path: Path) -> None:
     """Standalone scans use main entries while keeping other files as inventory.
 
