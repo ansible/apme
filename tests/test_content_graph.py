@@ -517,8 +517,9 @@ def test_parsed_nested_role_dependency_defaults_are_edge_local(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("dependency_count", [2, 3])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("reverse_inventory", [False, True])  # type: ignore[untyped-decorator]
 def test_role_dependencies_execute_before_body_without_shifting_inventory(
-    tmp_path: Path, dependency_count: int
+    tmp_path: Path, dependency_count: int, reverse_inventory: bool
 ) -> None:
     """Every dependency precedes the body while play and inventory order survive.
 
@@ -526,6 +527,8 @@ def test_role_dependencies_execute_before_body_without_shifting_inventory(
         tmp_path: Parsed project containing static roles and role dependencies.
         dependency_count: Several dependencies expose a position collision with
             the role's task files and handlers.
+        reverse_inventory: Create files in the opposite order to exercise
+            filesystem-dependent inventory enumeration.
     """
     sources = {
         "parent/tasks/main.yml": "- debug: {msg: parent}\n",
@@ -543,13 +546,14 @@ def test_role_dependencies_execute_before_body_without_shifting_inventory(
         sources["parent/meta/main.yml"] += declaration
     graph = _parse_role_defaults_graph(
         tmp_path,
-        sources,
+        dict(reversed(list(sources.items()))) if reverse_inventory else sources,
         "- hosts: all\n"
         "  pre_tasks:\n    - debug: {msg: before}\n"
         "  roles: [parent, after]\n"
         "  tasks:\n    - debug: {msg: task}\n"
         "  post_tasks:\n    - debug: {msg: post}\n",
     )
+    original_inventory: list[tuple[object, object, object]] | None = None
     for current in (graph, ContentGraph.from_dict(graph.to_dict(slim=True))):
         parent = next(node for node in current.nodes(NodeType.ROLE) if node.role_fqcn == "parent")
         after = next(node for node in current.nodes(NodeType.ROLE) if node.role_fqcn == "after")
@@ -562,12 +566,19 @@ def test_role_dependencies_execute_before_body_without_shifting_inventory(
             current.edges_from(parent.node_id, EdgeType.CONTAINS),
             key=lambda edge: int(str(edge[1]["position"])),
         )
-        assert [(attrs["role_section"], attrs["role_file"], attrs["position"]) for _nid, attrs in inventory] == [
-            ("tasks", "main.yml", 0),
-            ("tasks", "other.yml", 1),
-            ("handlers", "main.yml", 2),
-            ("handlers", "other.yml", 3),
-        ]
+        inventory_order = [(attrs["role_section"], attrs["role_file"], attrs["position"]) for _nid, attrs in inventory]
+        assert [position for _section, _file, position in inventory_order] == [0, 1, 2, 3]
+        assert {(section, file) for section, file, _position in inventory_order} == {
+            ("tasks", "main.yml"),
+            ("tasks", "other.yml"),
+            ("handlers", "main.yml"),
+            ("handlers", "other.yml"),
+        }
+        assert [section for section, _file, _position in inventory_order] == ["tasks", "tasks", "handlers", "handlers"]
+        if original_inventory is None:
+            original_inventory = inventory_order
+        else:
+            assert inventory_order == original_inventory
         play = next(current.nodes(NodeType.PLAY))
         play_roles = sorted(
             current.edges_from(play.node_id, EdgeType.DEPENDENCY),
