@@ -108,3 +108,4 @@ changing service boundaries, transport fields, or the graph library dependency.
 | 2026-11-13 | Codex | Preserve import target whitespace and report caller-dependent nested import closures as incomplete |
 | 2026-11-13 | Codex | Bound YAML composition and shared assessment, propagate incomplete exclusions, refresh invocation context, and harden validator transport and choice conversion |
 | 2026-11-13 | Codex | Retry interrupted applied-file assessments on resume and restrict stale role context to reachable callers |
+| 2026-11-13 | Codex | Retain applied patches before temporary-file writes so resume can retry synchronization before reassessment |

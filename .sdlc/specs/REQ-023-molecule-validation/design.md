@@ -100,7 +100,8 @@ discovery to runtime dispatch. Refresh role invocation selectors after edits,
 and compare choices using the parameter type and supported Ansible conversions.
 Only reachable or uncertain callers can invalidate role contexts. If an applied
 file reassessment fails or is interrupted, resume retries it before completion
-or continuation to the AI gate.
+or continuation to the AI gate. Store pending applied patches before writing
+temporary files, and retry any interrupted writes before reassessing them.
 Preserve outer argument keys when only nested values
 are templated, and reuse source excerpts for repeated diagnostic locations.
 Native scenario validation also checks task-section shapes in referenced files;

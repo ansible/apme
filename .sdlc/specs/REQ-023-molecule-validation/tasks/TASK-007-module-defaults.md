@@ -55,7 +55,7 @@ Apply the same correction to ordinary playbook argument checks.
 
 - [x] Focused tests via `tox -e unit -- ... --no-cov`
 - [x] `tox -e lint`
-- [x] Full `tox -e unit` with local OPA and container-only skips: 5,895 passed,
+- [x] Full `tox -e unit` with local OPA and container-only skips: 5,898 passed,
       52 skipped, 87.20% coverage
 
 ## Completion Checklist

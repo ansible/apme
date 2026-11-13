@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from apme.v1.common_pb2 import ProgressUpdate
 from apme.v1.engine_pb2 import (
@@ -31,6 +32,9 @@ from apme.v1.engine_pb2 import (
 from apme_engine.config_env import get_env_float, get_env_int
 from apme_engine.daemon.deadline import operation_deadline_mono
 from apme_engine.engine.models import ViolationDict
+
+if TYPE_CHECKING:
+    from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +176,7 @@ class SessionState:
             gates until the next full file assessment.
         pending_file_reassessment: Continuation after a failed or interrupted
             applied-file assessment, either completion or the AI gate.
+        pending_file_patches: Applied patches awaiting temporary-file writes.
         approved_ids: Set of proposal IDs approved by the user.
         approved_proposals: Metadata snapshots of approved proposals.
         rejected_proposals: Metadata snapshots of rejected proposals retained
@@ -255,6 +260,7 @@ class SessionState:
     dep_health_violations: list[ViolationDict] = field(default_factory=list)
     file_violations: list[ViolationDict] = field(default_factory=list)
     pending_file_reassessment: str = ""
+    pending_file_patches: list[SplicedFilePatch] = field(default_factory=list)
 
     # Proposal IDs approved by the user (for FixCompletedEvent)
     approved_ids: set[str] = field(default_factory=set)
@@ -409,6 +415,7 @@ class SessionState:
         self.dep_health_violations = []
         self.file_violations = []
         self.pending_file_reassessment = ""
+        self.pending_file_patches = []
         self.awaiting_tier1_gate = False
         self.awaiting_assess = False
         self.awaiting_ai_triage = False

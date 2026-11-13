@@ -609,6 +609,22 @@ async def _refresh_session_file_violations(session: SessionState) -> None:
     session.file_violations = findings
 
 
+async def _finish_pending_file_reassessment(session: SessionState) -> None:
+    """Write pending patches and refresh findings before completing a session.
+
+    Args:
+        session: Session holding applied patches and the continuation to resume.
+    """
+    if session.temp_dir is not None and session.pending_file_patches:
+        await asyncio.get_running_loop().run_in_executor(
+            None, _write_patches_to_temp_dir, session.temp_dir, session.pending_file_patches
+        )
+    session.pending_file_patches = []
+    await _refresh_session_file_violations(session)
+    _sync_session_file_report(session)
+    session.pending_file_reassessment = ""
+
+
 def _sync_session_file_report(session: SessionState) -> None:
     """Replace file findings in an existing report after applied changes.
 
@@ -3664,18 +3680,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         run_ai_gate = was_tier1_gate and bool(session.fix_options and session.fix_options.enable_ai)
         applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=False)
         session.status = 2  # PROCESSING until applied bytes have been assessed
-        if session.temp_dir is not None and temp_patches:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                _write_patches_to_temp_dir,
-                session.temp_dir,
-                temp_patches,
-            )
         if applied or temp_patches:
             session.pending_file_reassessment = "ai" if run_ai_gate else "complete"
-            await _refresh_session_file_violations(session)
-            _sync_session_file_report(session)
-            session.pending_file_reassessment = ""
+            session.pending_file_patches = list(temp_patches or [])
+            await _finish_pending_file_reassessment(session)
         if not run_ai_gate:
             session.status = 3  # COMPLETE only after file assessment succeeds
         if was_tier1_gate:
@@ -4001,18 +4009,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 if getattr(fmt_result, "changed", False):
                     patch.patched = getattr(fmt_result, "formatted", patch.patched)
             _write_patches_to_session(session, patches)
-            if session.temp_dir is not None and patches:
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    _write_patches_to_temp_dir,
-                    session.temp_dir,
-                    patches,
-                )
             if patches:
                 session.pending_file_reassessment = "complete"
-                await _refresh_session_file_violations(session)
-                _sync_session_file_report(session)
-                session.pending_file_reassessment = ""
+                session.pending_file_patches = list(patches)
+                await _finish_pending_file_reassessment(session)
             session.status = 3
             async for event in self._session_build_result(session):
                 yield event
@@ -4341,9 +4341,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         """
         if session.pending_file_reassessment:
             continuation = session.pending_file_reassessment
-            await _refresh_session_file_violations(session)
-            _sync_session_file_report(session)
-            session.pending_file_reassessment = ""
+            await _finish_pending_file_reassessment(session)
             if continuation == "ai":
                 async for event in self._session_enter_ai_phase(session):
                     yield event

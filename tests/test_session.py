@@ -907,14 +907,81 @@ class TestSessionApprovalGates:
             assert [v.message for v in events[-1].result.remaining_violations] == ["new"]
             emit.assert_awaited_once()
 
-    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("run_ai", [False, True])  # type: ignore[untyped-decorator]
+    async def test_approval_retries_disk_writes_before_reassessment(self, tmp_path: Path, run_ai: bool) -> None:
+        """Repeated write failures keep applied patches available for resume.
+
+        Args:
+            tmp_path: Session directory for the applied playbook.
+            run_ai: Whether the continuation should enter the AI gate.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer, _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+
+        session = SessionState(session_id="retry-file-write", status=1, temp_dir=tmp_path)
+        session.awaiting_tier1_gate = run_ai
+        session.fix_options = FixOptions(enable_ai=run_ai)
+        session.report = FixReport()
+        patch_file = SplicedFilePatch(path="play.yml", original="old", patched="new", diff="")
+        session.working_files = {"play.yml": b"new"}
+        writes = 0
+
+        def write(root: Path, patches: list[SplicedFilePatch]) -> None:
+            nonlocal writes
+            writes += 1
+            if writes <= 2:
+                raise OSError("temporary write failure")
+            _write_patches_to_temp_dir(root, patches)
+
+        async def reassess(_session: SessionState) -> None:
+            assert (tmp_path / "play.yml").read_text(encoding="utf-8") == "new"
+            _session.file_violations = [{"rule_id": "L116", "path": "$.new", "message": "new"}]
+
+        async def enter_ai(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(progress=ProgressUpdate(message="AI gate"))
+
+        refresh = AsyncMock(side_effect=reassess)
+        servicer = EngineServicer()
+        with (
+            patch.object(EngineServicer, "_session_apply_approved", return_value=(1, [patch_file])) as apply,
+            patch("apme_engine.daemon.engine_server._write_patches_to_temp_dir", side_effect=write),
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", refresh),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+            patch.object(EngineServicer, "_session_enter_ai_phase", enter_ai),
+        ):
+            with pytest.raises(OSError, match="temporary write failure"):
+                _ = [event async for event in servicer._session_handle_approval(session, {"proposal"})]
+            assert session.pending_file_reassessment == ("ai" if run_ai else "complete")
+            assert session.pending_file_patches == [patch_file]
+            assert session.status != 3
+            refresh.assert_not_awaited()
+            with pytest.raises(OSError, match="temporary write failure"):
+                _ = [event async for event in servicer._session_replay_state(session)]
+            assert session.pending_file_patches == [patch_file]
+            refresh.assert_not_awaited()
+            events = [event async for event in servicer._session_replay_state(session)]
+
+        assert writes == 3
+        apply.assert_called_once()
+        refresh.assert_awaited_once_with(session)
+        assert not session.pending_file_patches and not session.pending_file_reassessment
+        if run_ai:
+            assert events[-1].progress.message == "AI gate"
+        else:
+            assert events[-1].WhichOneof("event") == "result"
+            assert [v.message for v in events[-1].result.remaining_violations] == ["new"]
+
+    @pytest.mark.parametrize("fail_write", [False, True])  # type: ignore[untyped-decorator]
+    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path, fail_write: bool) -> None:
         """Gate 2 drops stale t1-* pending IDs; no-proposal path may sync files.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
+            fail_write: Fail the first write and resume the pending work.
         """
-        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.daemon.engine_server import EngineServicer, _write_patches_to_temp_dir
         from apme_engine.graph.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 
         class _DummyGraphEngine:
             def __init__(self) -> None:
@@ -968,6 +1035,15 @@ class TestSessionApprovalGates:
             async for event in _self._session_serialize_result(_session):
                 yield event
 
+        writes = 0
+
+        def write(root: Path, patches: list[SplicedFilePatch]) -> None:
+            nonlocal writes
+            writes += 1
+            if fail_write and writes == 1:
+                raise OSError("temporary write failure")
+            _write_patches_to_temp_dir(root, patches)
+
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
             patch(
@@ -979,13 +1055,25 @@ class TestSessionApprovalGates:
                 return_value=SimpleNamespace(changed=True, formatted="- name: test\n  debug:\n    msg: hi there\n"),
             ),
             patch.object(EngineServicer, "_session_build_result", _fake_build_result),
+            patch("apme_engine.daemon.engine_server._write_patches_to_temp_dir", side_effect=write),
             patch(
                 "apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock
             ) as refresh,
         ):
-            events = [e async for e in servicer._session_run_ai_gate(session)]
+            events: list[SessionEvent] = []
+            if fail_write:
+                with pytest.raises(OSError, match="temporary write failure"):
+                    async for event in servicer._session_run_ai_gate(session):
+                        events.append(event)
+                assert session.pending_file_reassessment == "complete"
+                assert len(session.pending_file_patches) == 1
+                refresh.assert_not_awaited()
+                events.extend([event async for event in servicer._session_replay_state(session)])
+            else:
+                events = [e async for e in servicer._session_run_ai_gate(session)]
 
         refresh.assert_awaited_once_with(session)
+        assert writes == (2 if fail_write else 1)
         event_types = [e.WhichOneof("event") for e in events]
         assert event_types == ["progress", "result"]
         assert session.remaining_ai == []

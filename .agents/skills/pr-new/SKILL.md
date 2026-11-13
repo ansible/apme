@@ -275,7 +275,8 @@ artifact type, translate it:
    check that cached relationships and selectors reflect the current input.
    Validate values after the same type conversions used by their real consumer.
    When async work follows a state transition, trace failure and reconnect through
-   the actual continuation, including reporting side effects and updated results.
+   every awaited operation in order, including partial writes, retained inputs,
+   retries, reporting side effects, and updated results.
    Trace reachability through imports using the runtime's exact path and value
    semantics, including alternative caller bases and whitespace. Check execution
    ordering and the outer value containing nested dynamic values. Trace distinct findings and explicit
