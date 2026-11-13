@@ -111,6 +111,7 @@ async def create_project(
     branch: str = "main",
     scm_token: str | None = None,
     scm_provider: str | None = None,
+    requirements_token: str | None = None,
 ) -> Project:
     """Insert a new project.
 
@@ -122,6 +123,7 @@ async def create_project(
         branch: Target branch.
         scm_token: Per-project SCM token (ADR-050).
         scm_provider: Explicit SCM provider type (ADR-050).
+        requirements_token: Optional Git requirement credential override.
 
     Returns:
         The newly created Project.
@@ -134,6 +136,7 @@ async def create_project(
         normalized_repo_url=normalize_repo_url(repo_url),
         branch=branch,
         created_at=now,
+        requirements_token=requirements_token or None,
         scm_token=scm_token or None,
         scm_provider=scm_provider or None,
     )

@@ -645,6 +645,10 @@ def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[s
         if not isinstance(collections, list):
             continue
         for entry in collections:
+            from apme_engine.git_requirements import is_git_requirement
+
+            if is_git_requirement(entry):
+                continue
             if isinstance(entry, str):
                 specs.setdefault(entry, entry)
             elif isinstance(entry, dict) and entry.get("name"):
@@ -976,6 +980,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         files: list[File],
         scan_id: str,
         *,
+        dependency_files: Mapping[str, bytes] | None = None,
         ansible_context_files: Sequence[File] = (),
         ansible_core_version: str = "",
         collection_specs: list[str] | None = None,
@@ -1018,6 +1023,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             temp_dir: Directory containing the materialized files.
             files: Original File protos (for ValidateRequest).
             scan_id: Request ID for correlation.
+            dependency_files: Gateway-fetched Git dependency snapshot.
             ansible_context_files: Project config and local plugin files for Ansible.
             ansible_core_version: Ansible core version constraint.
             collection_specs: Collection specifiers (may be extended by discovery).
@@ -1058,6 +1064,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 temp_dir,
                 files,
                 scan_id,
+                dependency_files=dependency_files,
                 ansible_context_files=ansible_context_files,
                 ansible_core_version=ansible_core_version,
                 collection_specs=collection_specs,
@@ -1087,6 +1094,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         files: list[File],
         scan_id: str,
         *,
+        dependency_files: Mapping[str, bytes] | None = None,
         ansible_context_files: Sequence[File] = (),
         ansible_core_version: str = "",
         collection_specs: list[str] | None = None,
@@ -1115,6 +1123,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             temp_dir: Directory containing the materialized files.
             files: Original File protos (for ValidateRequest).
             scan_id: Request ID for correlation.
+            dependency_files: Gateway-fetched Git dependency snapshot.
             ansible_context_files: Project config and local plugin files for Ansible.
             ansible_core_version: Ansible core version constraint.
             collection_specs: Collection specifiers (may be extended by discovery).
@@ -1157,6 +1166,30 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         core_version = ansible_core_version or DEFAULT_VERSION
         sid = session_id or uuid.uuid4().hex[:12]
+
+        git_collections: set[str] = set()
+        if dependency_files:
+            from apme_engine.daemon.git_dependencies import install_git_dependencies
+
+            git_collections = {
+                ".".join(path.split("/")[1:3]) for path in dependency_files if path.startswith("ansible_collections/")
+            }
+            sid += "-git-" + engine_upload._hash_upload_files(dependency_files)[:16]
+            discovered_specs, _ = _discover_collection_specs(files)
+            initial_specs = merge_collection_specs(collection_specs, discovered_specs, [])
+            initial_specs = [spec for spec in initial_specs if spec.split(":")[0] not in git_collections]
+            async with limit_venv_builds() as release_on, self._activate_galaxy_proxy_config(galaxy_cfg_path):
+                loop = asyncio.get_running_loop()
+                acquire_future = loop.run_in_executor(
+                    None, lambda: self._get_venv_manager().acquire(sid, core_version, initial_specs)
+                )
+                release_on(cast(asyncio.Future[object], acquire_future))
+                git_venv = await asyncio.shield(acquire_future)
+            if git_venv.failed_collections:
+                raise CollectionDependencyError(git_venv.failed_collections)
+            await asyncio.get_running_loop().run_in_executor(
+                None, install_git_dependencies, git_venv.venv_root, dependency_files
+            )
 
         # Check for warm session venv so the loader can resolve pre-installed collections
         dependency_dir = ""
@@ -1203,6 +1236,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             discovered,
             hierarchy_collections,
         )
+        collection_specs = [spec for spec in collection_specs if spec.split(":")[0] not in git_collections]
         logger.info("Collection specs merged (req=%s): %s", scan_id, collection_specs)
 
         # 3. Venv acquire (always — creates or incrementally installs).
@@ -1469,7 +1503,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             fan_out_ms=fan_out_ms,
             total_ms=total_ms,
         )
-        specified_fqcns = {s.split(":")[0] for s in discovered}
+        specified_fqcns = {s.split(":")[0] for s in discovered} | git_collections
         learned_fqcns = {str(c) for c in hierarchy_collections if isinstance(c, str)}
 
         logger.info("Scan: pipeline done (%.0fms, %d violations, req=%s)", total_ms, len(violations), scan_id)
@@ -2203,6 +2237,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 temp_dir,
                 rel_files,
                 scan_id,
+                dependency_files=session.dependency_files,
                 ansible_context_files=_ansible_context_files(session.working_files),
                 ansible_core_version=ansible_core_version,
                 collection_specs=collection_specs,

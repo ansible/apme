@@ -434,6 +434,7 @@ class ProjectSummary(BaseModel):  # type: ignore[misc]
         scan_count: Number of completed runs (``scan_count`` / scans table).
         last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).
         scm_provider: Explicit SCM provider type (ADR-050), or None for auto-detect.
+        has_requirements_token: Whether a Git requirements override is configured.
         has_scm_token: Whether a project-level SCM token is configured (ADR-050).
         last_scanned_commit: Git SHA of the commit used in the most recent scan.
         has_new_commits: True when the remote branch HEAD is ahead of last_scanned_commit.
@@ -451,6 +452,7 @@ class ProjectSummary(BaseModel):  # type: ignore[misc]
     scan_count: int = 0
     last_scanned_at: str | None = None
     scm_provider: str | None = None
+    has_requirements_token: bool = False
     has_scm_token: bool = False
     last_scanned_commit: str = ""
     has_new_commits: bool = False
@@ -461,10 +463,12 @@ class ProjectDetail(ProjectSummary):
     """Full project representation with latest activity summary.
 
     Attributes:
+        git_requirements_enabled: Global Git policy exposed to authorized project readers.
         latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).
         severity_breakdown: Violation counts keyed by severity level.
     """
 
+    git_requirements_enabled: bool = False
     latest_scan: ActivitySummary | None = None
     severity_breakdown: dict[str, int] = Field(default_factory=dict)
 
@@ -478,6 +482,7 @@ class CreateProjectRequest(BaseModel):  # type: ignore[misc]
         branch: Branch to clone (default main). 1-100 chars; letters,
             digits, '.', '_', '/', '-'; must satisfy git check-ref-format
             component rules. Invalid names fail with 422.
+        requirements_token: Optional credential override for Git requirements.
         scm_token: Per-project SCM token for PR creation (ADR-050).
         scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if omitted.
     """
@@ -492,6 +497,9 @@ class CreateProjectRequest(BaseModel):  # type: ignore[misc]
             "letters, digits, '.', '_', '/', '-'; must satisfy git "
             "check-ref-format component rules. Invalid names fail with 422."
         ),
+    )
+    requirements_token: str | None = Field(
+        default=None, repr=False, description="Git requirements credential override; empty clears it"
     )
     scm_token: str | None = None
     scm_provider: str | None = None
@@ -526,6 +534,7 @@ class UpdateProjectRequest(BaseModel):  # type: ignore[misc]
         name: New display label.
         repo_url: New clone URL.
         branch: New branch.
+        requirements_token: Optional Git requirements credential; empty clears it.
         scm_token: New SCM token (ADR-050). Set to empty string to clear.
         scm_provider: Explicit provider type (ADR-050). Set to empty string to clear.
     """
@@ -540,6 +549,9 @@ class UpdateProjectRequest(BaseModel):  # type: ignore[misc]
             "letters, digits, '.', '_', '/', '-'; must satisfy git "
             "check-ref-format component rules. Invalid names fail with 422."
         ),
+    )
+    requirements_token: str | None = Field(
+        default=None, repr=False, description="Git requirements credential override; empty clears it"
     )
     scm_token: str | None = None
     scm_provider: str | None = None
