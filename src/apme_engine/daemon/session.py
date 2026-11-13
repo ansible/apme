@@ -170,6 +170,8 @@ class SessionState:
             final reporting.
         file_violations: Findings without graph nodes retained across approval
             gates until the next full file assessment.
+        pending_file_reassessment: Continuation after a failed or interrupted
+            applied-file assessment, either completion or the AI gate.
         approved_ids: Set of proposal IDs approved by the user.
         approved_proposals: Metadata snapshots of approved proposals.
         rejected_proposals: Metadata snapshots of rejected proposals retained
@@ -252,6 +254,7 @@ class SessionState:
     remaining_manual: list[ViolationDict] = field(default_factory=list)
     dep_health_violations: list[ViolationDict] = field(default_factory=list)
     file_violations: list[ViolationDict] = field(default_factory=list)
+    pending_file_reassessment: str = ""
 
     # Proposal IDs approved by the user (for FixCompletedEvent)
     approved_ids: set[str] = field(default_factory=set)
@@ -405,6 +408,7 @@ class SessionState:
         self.remaining_manual = []
         self.dep_health_violations = []
         self.file_violations = []
+        self.pending_file_reassessment = ""
         self.awaiting_tier1_gate = False
         self.awaiting_assess = False
         self.awaiting_ai_triage = False

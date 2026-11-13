@@ -274,6 +274,8 @@ artifact type, translate it:
    into every downstream decision that relies on the discovered set. After edits,
    check that cached relationships and selectors reflect the current input.
    Validate values after the same type conversions used by their real consumer.
+   When async work follows a state transition, trace failure and reconnect through
+   the actual continuation, including reporting side effects and updated results.
    Trace reachability through imports using the runtime's exact path and value
    semantics, including alternative caller bases and whitespace. Check execution
    ordering and the outer value containing nested dynamic values. Trace distinct findings and explicit

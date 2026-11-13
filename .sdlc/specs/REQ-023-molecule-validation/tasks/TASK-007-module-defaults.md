@@ -36,6 +36,8 @@ Apply the same correction to ordinary playbook argument checks.
   rescan does not mark unassessed arguments fixed, even when notices are filtered.
 - Refresh role invocation selectors after edits, and apply supported Ansible type
   conversion before checking scalar and list choices.
+- Restrict stale-role propagation to callers that are reachable or whose
+  reachability is incomplete.
 
 ## Test Cases
 
@@ -53,8 +55,8 @@ Apply the same correction to ordinary playbook argument checks.
 
 - [x] Focused tests via `tox -e unit -- ... --no-cov`
 - [x] `tox -e lint`
-- [x] Full `tox -e unit` with local OPA and container-only skips: 5,891 passed,
-      52 skipped, 87.18% coverage
+- [x] Full `tox -e unit` with local OPA and container-only skips: 5,895 passed,
+      52 skipped, 87.20% coverage
 
 ## Completion Checklist
 

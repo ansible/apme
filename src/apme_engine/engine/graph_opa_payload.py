@@ -248,7 +248,8 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
             for name in (node.name, node.role_fqcn, node.role_fqcn.rsplit(".", 1)[-1]):
                 if name:
                     role_names.setdefault(name, set()).add(nid)
-    stale_roles: set[str] = set()
+    stale_by_source: dict[str, set[str]] = {}
+    dynamic_sources: set[str] = set()
     for source, node in nodes.items():
         if node.node_type not in {NodeType.TASK, NodeType.HANDLER}:
             continue
@@ -257,6 +258,7 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
             for target, attrs in graph.edges_from(source)
             if target in role_ids and attrs.get("edge_type") in {EdgeType.INCLUDE.value, EdgeType.IMPORT.value}
         ]
+        stale_roles = stale_by_source.setdefault(source, set())
         if node.module not in _ROLE_CALL_MODULES:
             stale_roles.update(target for target, _attrs in role_edges)
             continue
@@ -264,7 +266,7 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
         role_name = arguments.get("name")
         dynamic_name = isinstance(role_name, str) and any(marker in role_name for marker in ("{{", "{%", "{#"))
         if dynamic_name:
-            stale_roles.update(role_ids)
+            dynamic_sources.add(source)
         elif isinstance(role_name, str) and role_name:
             candidates = role_names.get(role_name, set())
             targets = {target for target, _attrs in role_edges}
@@ -355,9 +357,7 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
         except RecursionError:
             local, local_signature, local_unknown = (), (), True
         state = _ModuleDefaultsContexts(
-            incomplete=(
-                local_unknown or nid in stale_roles or any(cache[parent].incomplete for parent, _attrs in parents[nid])
-            )
+            incomplete=local_unknown or any(cache[parent].incomplete for parent, _attrs in parents[nid])
         )
         if not parents[nid]:
             entries, incomplete = role_entries(nid, {}) if node.node_type == NodeType.ROLE else (None, False)
@@ -429,6 +429,30 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
                 ready.append(child)
     for nid in nodes.keys() - cache.keys():
         cache[nid] = _ModuleDefaultsContexts(incomplete=True)
+    # A stale edge matters only if its caller is reachable or its reachability
+    # could not be assessed. Propagate after path selection so inventory-only
+    # files cannot invalidate unrelated active role invocations.
+    stale = deque(
+        role
+        for source, roles in stale_by_source.items()
+        if cache[source].paths or cache[source].incomplete
+        for role in roles
+    )
+    all_roles_added = any(cache[source].paths or cache[source].incomplete for source in dynamic_sources)
+    if all_roles_added:
+        stale.extend(role_ids)
+    visited: set[str] = set()
+    while stale:
+        nid = stale.popleft()
+        if nid in visited:
+            continue
+        visited.add(nid)
+        cache[nid].incomplete = True
+        stale.extend(children[nid])
+        stale.extend(stale_by_source.get(nid, ()))
+        if nid in dynamic_sources and not all_roles_added:
+            stale.extend(role_ids)
+            all_roles_added = True
     return cache
 
 

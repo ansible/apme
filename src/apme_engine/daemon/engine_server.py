@@ -3662,7 +3662,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         """
         was_tier1_gate = session.awaiting_tier1_gate
         run_ai_gate = was_tier1_gate and bool(session.fix_options and session.fix_options.enable_ai)
-        applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=not run_ai_gate)
+        applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=False)
+        session.status = 2  # PROCESSING until applied bytes have been assessed
         if session.temp_dir is not None and temp_patches:
             await asyncio.get_event_loop().run_in_executor(
                 None,
@@ -3671,8 +3672,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 temp_patches,
             )
         if applied or temp_patches:
+            session.pending_file_reassessment = "ai" if run_ai_gate else "complete"
             await _refresh_session_file_violations(session)
             _sync_session_file_report(session)
+            session.pending_file_reassessment = ""
+        if not run_ai_gate:
+            session.status = 3  # COMPLETE only after file assessment succeeds
         if was_tier1_gate:
             files_touched = len(temp_patches) if temp_patches else 0
             report_fixed = session.report.fixed if session.report else applied
@@ -4004,8 +4009,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     patches,
                 )
             if patches:
+                session.pending_file_reassessment = "complete"
                 await _refresh_session_file_violations(session)
                 _sync_session_file_report(session)
+                session.pending_file_reassessment = ""
             session.status = 3
             async for event in self._session_build_result(session):
                 yield event
@@ -4332,6 +4339,19 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Yields:
             SessionEvent: Events reflecting the session's current state.
         """
+        if session.pending_file_reassessment:
+            continuation = session.pending_file_reassessment
+            await _refresh_session_file_violations(session)
+            _sync_session_file_report(session)
+            session.pending_file_reassessment = ""
+            if continuation == "ai":
+                async for event in self._session_enter_ai_phase(session):
+                    yield event
+                return
+            session.status = 3  # COMPLETE after a successful retry
+            async for event in self._session_build_result(session):
+                yield event
+            return
         if session.tier1_patches or session.format_diffs:
             yield SessionEvent(
                 tier1_complete=Tier1Summary(

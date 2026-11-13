@@ -851,6 +851,61 @@ class TestSessionApprovalGates:
             pytest.raises(RequiredValidatorDependencyError, match="native not configured"),
         ):
             _ = [event async for event in EngineServicer()._session_handle_approval(session, {"proposal"})]
+        assert session.status != 3
+        assert session.pending_file_reassessment == "complete"
+
+    @pytest.mark.parametrize("run_ai", [False, True])  # type: ignore[untyped-decorator]
+    async def test_approval_reassessment_retries_on_resume(self, run_ai: bool) -> None:
+        """Resume retries a failed assessment before completing or entering AI.
+
+        Args:
+            run_ai: Whether approval should continue to the AI gate.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer, RequiredValidatorDependencyError
+
+        session = SessionState(session_id="retry-file-assessment", status=1)
+        session.awaiting_tier1_gate = run_ai
+        session.fix_options = FixOptions(enable_ai=run_ai)
+        session.report = FixReport()
+        session.file_violations = [{"rule_id": "L115", "path": "$.old", "message": "old"}]
+        attempts = 0
+
+        async def reassess(current: SessionState) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RequiredValidatorDependencyError("unavailable")
+            current.file_violations = [{"rule_id": "L116", "path": "$.new", "message": "new"}]
+
+        refresh = AsyncMock(side_effect=reassess)
+        emit = AsyncMock()
+
+        async def enter_ai(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(progress=ProgressUpdate(message="AI gate"))
+
+        servicer = EngineServicer()
+        with (
+            patch.object(EngineServicer, "_session_apply_approved", return_value=(1, None)),
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", refresh),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", emit),
+            patch.object(EngineServicer, "_session_enter_ai_phase", enter_ai),
+        ):
+            with pytest.raises(RequiredValidatorDependencyError):
+                _ = [event async for event in servicer._session_handle_approval(session, {"proposal"})]
+            assert session.status != 3
+            assert session.pending_file_reassessment == ("ai" if run_ai else "complete")
+            events = [event async for event in servicer._session_replay_state(session)]
+
+        assert refresh.await_count == 2
+        assert not session.pending_file_reassessment
+        if run_ai:
+            assert events[-1].progress.message == "AI gate"
+            assert session.status != 3
+        else:
+            assert events[-1].WhichOneof("event") == "result"
+            assert session.status == 3
+            assert [v.message for v in events[-1].result.remaining_violations] == ["new"]
+            emit.assert_awaited_once()
 
     async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path) -> None:
         """Gate 2 drops stale t1-* pending IDs; no-proposal path may sync files.

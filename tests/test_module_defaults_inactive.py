@@ -199,6 +199,24 @@ def test_role_selector_metadata_only_affects_invoked_callers(tmp_path: Path, sel
         assert "module_defaults_inactive" not in payload
 
 
+@pytest.mark.parametrize("selected", [False, True])  # type: ignore[untyped-decorator]
+def test_dynamic_role_name_only_affects_reachable_callers(tmp_path: Path, selected: bool) -> None:
+    """A dynamic role target in an unused entry cannot suppress active checks.
+
+    Args:
+        tmp_path: Runtime root for checking incomplete-context reporting.
+        selected: Whether the dynamic caller belongs to the selected entry.
+    """
+    graph, _scope, caller, task = _shared_graph(NodeType.TASK, selected=selected, include_role=True)
+    caller.module_options = {"name": "{{ chosen_role }}"}
+    payload = content_node_to_opa_dict(task, graph)
+    if selected:
+        _assert_incomplete(payload, tmp_path)
+    else:
+        assert payload["module_defaults_contexts"] == [[]]
+        assert "module_defaults_incomplete" not in payload
+
+
 def test_unknown_source_role_entry_is_not_treated_as_proven_inactive(tmp_path: Path) -> None:
     """A role with unknown entry selection still needs conservative coverage.
 

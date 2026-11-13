@@ -98,6 +98,9 @@ caller-dependent nested imports as incomplete when their target is ambiguous.
 Enforce composition budgets while parsing and propagate incomplete scenario
 discovery to runtime dispatch. Refresh role invocation selectors after edits,
 and compare choices using the parameter type and supported Ansible conversions.
+Only reachable or uncertain callers can invalidate role contexts. If an applied
+file reassessment fails or is interrupted, resume retries it before completion
+or continuation to the AI gate.
 Preserve outer argument keys when only nested values
 are templated, and reuse source excerpts for repeated diagnostic locations.
 Native scenario validation also checks task-section shapes in referenced files;
