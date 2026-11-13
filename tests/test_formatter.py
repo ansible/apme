@@ -232,6 +232,39 @@ class TestKeyReorder:
         assert len(name_lines) >= 1
 
 
+class TestNamePreservation:
+    """Formatting preserves names used as identifiers, data, and labels."""
+
+    @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+        ("filename", "text"),
+        [
+            ("galaxy.yml", "namespace: acme\nname: my_collection\nversion: 1.0.0\n"),
+            ("galaxy.yaml", "namespace: acme\nname: my_collection\nversion: 1.0.0\n"),
+            ("<stdin>", "namespace: acme\nname: my_collection\nversion: 1.0.0\n"),
+            ("metadata.yml", "name: my_collection\n"),
+            ("group_vars/all.yml", "name: production\n"),
+            ("roles/web/defaults/main.yml", "name: web_server\n"),
+            ("roles/requirements.yml", "- name: geerlingguy.nginx\n  src: geerlingguy.nginx\n"),
+            (".github/workflows/ci.yml", "name: ci\njobs: {}\n"),
+            ("tasks/main.yml", "- name: install packages\n  ansible.builtin.package:\n    name: nginx\n"),
+            ("site.yml", "- name: deploy app\n  hosts: all\n  tasks: []\n"),
+        ],
+    )
+    def test_preserves_name_values(self, filename: str, text: str) -> None:
+        """Name casing belongs to L025 remediation, independent of filename.
+
+        Args:
+            filename: Source filename supplied to the formatter.
+            text: YAML with a lowercase name that must remain intact.
+        """
+        result = format_content(text, filename=filename)
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+
+        assert result.error is None
+        assert yaml.load(result.formatted) == yaml.load(text)
+        assert check_idempotent(result)
+
+
 # ---------------------------------------------------------------------------
 # Jinja spacing (L051)
 # ---------------------------------------------------------------------------

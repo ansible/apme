@@ -46,8 +46,11 @@ in-memory `ContentGraph` back to file content:
 1. **Identify modified nodes** — nodes with at least two progression entries
    where the original hash differs from the effective (approved) hash.
 
-2. **Group by file** — collect `(line_start, line_end, yaml_lines, rule_ids)`
-   edits per file.
+2. **Group changed spans by file** — compare each node's effective YAML
+   with its original progression state and collect only changed line spans.
+   This preserves independently modified children when a parent block or
+   play header is also edited. Header fragments replace only the source
+   lines they actually contain, rather than the full play span.
 
 3. **Bottom-up splice** — sort edits by `line_start` descending so that
    splicing one edit does not shift line numbers for edits above it. Replace

@@ -519,13 +519,16 @@ def search_taskfiles_for_playbooks(path: str, taskfile_dir_paths: list[str] | No
             if could_be_playbook(f):
                 continue
             d = None
+            body = ""
             with open(f) as file:
                 try:
-                    d = yaml.load(file, Loader=Loader)
+                    body = file.read()
+                    d = yaml.load(body, Loader=Loader)
                 except Exception as e:
                     logger.debug(f"failed to load this yaml file to search task files; {e.args[0]}")
-            # if d cannot be loaded as tasks yaml file, skip it
-            if d is None or not isinstance(d, list):
+            # Use the same source classification as individually discovered
+            # files; a list under playbooks/ may be dependency metadata.
+            if not could_be_taskfile(body=body, data=d, fpath=f):
                 continue
             candidates.append(f)
     return candidates
@@ -816,7 +819,30 @@ def could_be_taskfile(body: str = "", data: YAMLValue | None = None, fpath: str 
     if not isinstance(data[0], dict):
         return False
 
-    if "name" in data[0]:
+    # A role requirements list uses names as identifiers, not task labels.
+    # Check the schema too: tasks may legitimately be named requirements.yml.
+    in_task_directory = bool({"tasks", "handlers"}.intersection(Path(fpath).parts[:-1]))
+    if (
+        not in_task_directory
+        and Path(fpath).name.lower() in {"requirements.yml", "requirements.yaml"}
+        and all(
+            isinstance(item, str)
+            or isinstance(item, dict)
+            and item.keys() <= {"name", "src", "scm", "version", "include"}
+            for item in data
+        )
+    ):
+        return False
+
+    # A name alone is also valid data. Require an action or a task block.
+    if any(isinstance(data[0].get(key), list) for key in ("block", "rescue", "always")):
+        return True
+
+    if "action" in data[0] or "local_action" in data[0]:
+        return True
+
+    # Keep malformed tasks in known task directories visible to validation.
+    if "name" in data[0] and in_task_directory:
         return True
 
     module_name = find_module_name(data[0])

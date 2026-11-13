@@ -46,7 +46,7 @@ _effective_first(name) := first if {
 }
 
 name_casing(tree, node) := v if {
-	node.type == "taskcall"
+	node.type in {"taskcall", "blockcall"}
 	node.name != ""
 	first := _effective_first(node.name)
 	lower(first) == first
