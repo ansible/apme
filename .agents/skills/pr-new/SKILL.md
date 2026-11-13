@@ -270,8 +270,9 @@ artifact type, translate it:
    Bound expanded representations, including repeated shared references and
    serialized bytes, at every downstream consumer; account for repeated work
    after an aggregate budget is exhausted and combined transport payloads.
-   Trace reachability through imports, execution ordering, and the outer value
-   containing nested dynamic values. Trace distinct findings and explicit
+   Trace reachability through imports using the runtime's exact path and value
+   semantics, including alternative caller bases and whitespace. Check execution
+   ordering and the outer value containing nested dynamic values. Trace distinct findings and explicit
    remediation constraints through deduplication, storage, and routing. Treat
    missing results as evidence of a fix only when the relevant check actually
    assessed that input, including when findings are filtered or disabled.

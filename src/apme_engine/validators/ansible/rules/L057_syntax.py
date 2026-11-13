@@ -115,12 +115,14 @@ def _load_yaml(source: str, budget: list[int] | None = None) -> yaml.Node | None
         loader.dispose()
 
 
-def _static_imports(source: str, budget: list[int]) -> tuple[set[str], bool]:
+def _static_imports(source: str, budget: list[int], task_imports: set[str] | None = None) -> tuple[set[str], bool]:
     """Collect static imports only from executable YAML scopes.
 
     Args:
         source: Playbook or task-file YAML, with tags left inert.
         budget: Shared node allowance across all imported files.
+        task_imports: Optional output set identifying task imports, whose relative
+            resolution can depend on an invoking include stack.
 
     Returns:
         Literal import targets and whether any import cannot be assessed.
@@ -210,6 +212,10 @@ def _static_imports(source: str, budget: list[int]) -> tuple[set[str], bool]:
             if any(marker in value.value for marker in ("{{", "{%", "{#", "\\")):
                 unknown = True
                 return {}
+            if "=" not in value.value and not any(quote in value.value for quote in ("'", '"')):
+                # Ansible preserves raw filename spacing (including trailing
+                # and repeated spaces) after removing leading separator spaces.
+                return {"_raw_params": yaml.ScalarNode("tag:yaml.org,2002:str", value.value.lstrip(" "))}
             return words_args(shlex.split(value.value))
         unknown = True
         return {}
@@ -239,8 +245,10 @@ def _static_imports(source: str, budget: list[int]) -> tuple[set[str], bool]:
             )
         )
         selected = values.get("file") if raw_empty else raw
-        if isinstance(selected, yaml.ScalarNode) and selected.tag == "tag:yaml.org,2002:str" and selected.value.strip():
-            imports.add(selected.value.strip())
+        if isinstance(selected, yaml.ScalarNode) and selected.tag == "tag:yaml.org,2002:str" and selected.value:
+            imports.add(selected.value)
+            if task_imports is not None:
+                task_imports.add(selected.value)
         else:
             unknown = True
 
@@ -284,7 +292,8 @@ def _static_imports(source: str, budget: list[int]) -> tuple[set[str], bool]:
                         words = shlex.split(module.value)
                         if words and words[0] in _IMPORT_TASKS:
                             direct = {key: value for key, value in action_args.items() if key not in {"module", "args"}}
-                            direct.update(words_args(words[1:]))
+                            tail = module.value.lstrip(" ")[len(words[0]) :].lstrip(" ")
+                            direct.update(arguments(yaml.ScalarNode("tag:yaml.org,2002:str", tail)))
                             direct.update(arguments(action_args.get("args")))
                             target(direct, values.get("args"))
                         elif words and words[0] in _IMPORT_ROLES:
@@ -295,7 +304,8 @@ def _static_imports(source: str, budget: list[int]) -> tuple[set[str], bool]:
                         continue
                     words = shlex.split(action_node.value)
                     if words and words[0] in _IMPORT_TASKS:
-                        target(words_args(words[1:]), values.get("args"))
+                        tail = action_node.value.lstrip(" ")[len(words[0]) :].lstrip(" ")
+                        target(arguments(yaml.ScalarNode("tag:yaml.org,2002:str", tail)), values.get("args"))
                     elif words and words[0] in _IMPORT_ROLES:
                         unknown = True
             for section in _TASK_SECTIONS:
@@ -331,7 +341,10 @@ def _excluded_importers(
     parents: dict[str, set[str]] = defaultdict(set)
     blocked = set(static_paths)
     incomplete: set[str] = set()
-    pending = deque(path.absolute().relative_to(lexical_root).as_posix() for path in playbooks)
+    imported_task_files: set[str] = set()
+    relative_task_sources: set[str] = set()
+    entrypoints = {path.absolute().relative_to(lexical_root).as_posix() for path in playbooks}
+    pending = deque(sorted(entrypoints))
     visited: set[str] = set()
     remaining_bytes = _MAX_IMPORT_BYTES
     budget = [_MAX_IMPORT_NODES]
@@ -376,13 +389,21 @@ def _excluded_importers(
         if len(visited) > _MAX_IMPORT_FILES or remaining_bytes < 0 or len(source) > _MAX_SOURCE_BYTES:
             incomplete.add(name)
             continue
-        targets, unknown = _static_imports(source.decode("utf-8", errors="replace"), budget)
+        task_imports: set[str] = set()
+        targets, unknown = _static_imports(source.decode("utf-8", errors="replace"), budget, task_imports)
         if unknown:
             incomplete.add(name)
         for raw in targets:
             if any(marker in raw for marker in ("{{", "{%", "{#", "$", "~", "\\")):
                 incomplete.add(name)
                 continue
+            if raw in task_imports and not Path(raw).is_absolute():
+                relative_task_sources.add(name)
+                # Ansible resolves nested task imports using the invoking
+                # include stack, not necessarily this file's physical parent.
+                # Even an existing sibling or ancestor is insufficient proof.
+                if name not in entrypoints:
+                    incomplete.add(name)
             try:
                 candidate = Path(raw) if Path(raw).is_absolute() else root / posixpath.dirname(name) / raw
                 candidate = candidate.resolve()
@@ -395,6 +416,8 @@ def _excluded_importers(
             dependency = candidate.relative_to(root).as_posix()
             dependencies = {dependency}
             if dependency not in files and not Path(raw).is_absolute():
+                if raw in task_imports:
+                    incomplete.add(name)
                 # Ansible can fall back to enclosing include/playbook bases.
                 # Shared files lack invocation metadata here, so inspect each
                 # existing ancestor candidate rather than guessing one base.
@@ -416,8 +439,14 @@ def _excluded_importers(
                     continue
             for dependency in dependencies:
                 parents[dependency].add(name)
+                if raw in task_imports:
+                    imported_task_files.add(dependency)
                 if dependency in files or dependency in static_paths or scenario_content(dependency):
                     pending.append(dependency)
+    # Candidate discovery is heuristic: a task file can also look like a
+    # playbook. An incoming task-import edge still makes its relative imports
+    # caller-dependent, even if it was parsed earlier as a candidate.
+    incomplete.update(imported_task_files & relative_task_sources)
     for excluded in (blocked, incomplete):
         pending.extend(excluded)
         while pending:

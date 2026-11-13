@@ -104,3 +104,4 @@ changing service boundaries, transport fields, or the graph library dependency.
 | 2026-11-13 | Codex | Preserved separate defaults coverage and argument findings, manual-review routing, and bounded repeated defaults processing |
 | 2026-11-13 | Codex | Preserve same-line file findings and avoid resolving argument errors when rescans lack coverage |
 | 2026-11-13 | Codex | Bound validator requests and diagnostic excerpts, and protect scenario imports from runtime syntax dispatch |
+| 2026-11-13 | Codex | Preserve import target whitespace and report caller-dependent nested import closures as incomplete |

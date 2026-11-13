@@ -117,7 +117,7 @@ def test_mixed_imports_resolve_relative_extensionless_task_files(tmp_path: Path)
         "shared/bridge.ansible": b"- ansible.builtin.import_tasks: ../molecule/default/converge.yml\n",
         "ordinary.yml": _ORDINARY,
     }
-    assert _dispatch(tmp_path, files) == {"ordinary.yml"}
+    assert _dispatch(tmp_path, files, incomplete={"site.yml", "plays/main.yml"}) == {"ordinary.yml"}
 
 
 def test_nested_task_import_can_fall_back_to_enclosing_playbook_directory(tmp_path: Path) -> None:
@@ -134,7 +134,7 @@ def test_nested_task_import_can_fall_back_to_enclosing_playbook_directory(tmp_pa
         "plays/bridge.yml": b"- import_tasks: ../molecule/default/converge.yml\n",
         "ordinary.yml": _ORDINARY,
     }
-    assert _dispatch(tmp_path, files) == {"ordinary.yml"}
+    assert _dispatch(tmp_path, files, incomplete={"site.yml", "plays/main.yml"}) == {"ordinary.yml"}
 
 
 def test_cycles_propagate_exclusion_without_blocking_independent_cycles(tmp_path: Path) -> None:
@@ -240,9 +240,9 @@ def test_shared_import_graph_is_parsed_linearly(tmp_path: Path) -> None:
     counts: Counter[str] = Counter()
     original = L057_syntax._static_imports
 
-    def record(source: str, budget: list[int]) -> tuple[set[str], bool]:
+    def record(source: str, budget: list[int], task_imports: set[str] | None = None) -> tuple[set[str], bool]:
         counts[source] += 1
-        return original(source, budget)
+        return original(source, budget, task_imports)
 
     with patch.object(L057_syntax, "_static_imports", side_effect=record):
         assert _dispatch(tmp_path, files) == {"ordinary.yml"}
@@ -265,9 +265,15 @@ def test_yaml_merge_imports_respect_explicit_overrides(tmp_path: Path, override:
     - <<: *import
 """
     if override:
-        source += "      import_tasks: missing.yml\n"
+        source += "      import_tasks: ordinary_tasks.yml\n"
     expected = {"ordinary.yml", "site.yml"} if override else {"ordinary.yml"}
-    assert _dispatch(tmp_path, {**_SCENARIO, "site.yml": source.encode(), "ordinary.yml": _ORDINARY}) == expected
+    files = {
+        **_SCENARIO,
+        "site.yml": source.encode(),
+        "ordinary.yml": _ORDINARY,
+        "ordinary_tasks.yml": b"- ansible.builtin.debug: {msg: harmless}\n",
+    }
+    assert _dispatch(tmp_path, files) == expected
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -543,3 +549,114 @@ def test_incomplete_dependency_reports_coverage_for_its_callers(tmp_path: Path) 
         "ordinary.yml": _ORDINARY,
     }
     assert _dispatch(tmp_path, files, incomplete={"site.yml", "child.yml"}) == {"ordinary.yml"}
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("statement", "filename"),
+    [
+        ("import_tasks: {file: 'bridge.yml '}", "bridge.yml "),
+        ("import_tasks: {file: ' bridge.yml'}", " bridge.yml"),
+        ("import_tasks: {_raw_params: 'bridge.yml '}", "bridge.yml "),
+        ("import_tasks:\n      args: {file: 'bridge.yml '}", "bridge.yml "),
+        ("action: {module: import_tasks, file: 'bridge.yml '}", "bridge.yml "),
+        ('import_tasks: file="bridge.yml "', "bridge.yml "),
+        ('action: import_tasks file="bridge.yml "', "bridge.yml "),
+        ("import_tasks: 'bridge.yml '", "bridge.yml "),
+        ("action: 'import_tasks bridge.yml '", "bridge.yml "),
+        ("import_tasks: 'bridge  name.yml'", "bridge  name.yml"),
+    ],
+)
+def test_import_filename_whitespace_matches_ansible(tmp_path: Path, statement: str, filename: str) -> None:
+    """Significant filename whitespace cannot redirect assessment to a benign file.
+
+    Args:
+        tmp_path: Temporary uploaded project.
+        statement: Mapping or quoted key/value import arguments.
+        filename: Exact filename selected by installed Ansible.
+    """
+    source = f"- hosts: all\n  tasks:\n    - {statement}\n"
+    task = TaskInclude.load(yaml.safe_load(source)[0]["tasks"][0])
+    assert task.args["_raw_params"] == filename
+    files = {
+        **_SCENARIO,
+        "site.yml": source.encode(),
+        "ordinary.yml": _ORDINARY,
+        "bridge.yml": b"- ansible.builtin.debug: {msg: harmless}\n",
+        filename: b"- import_tasks: molecule/default/converge.yml\n",
+    }
+    targets, unknown = L057_syntax._static_imports(source, [50_000])
+    assert targets == {filename}
+    assert not unknown
+    assert _dispatch(tmp_path, files, incomplete={"site.yml"}) == {"ordinary.yml"}
+
+
+@pytest.mark.parametrize("ancestor_exists", [False, True])  # type: ignore[untyped-decorator]
+def test_invoking_playbook_base_remains_unknown_even_with_ancestor_match(tmp_path: Path, ancestor_exists: bool) -> None:
+    """Ansible can prefer an invoking playbook base outside the importer's ancestors.
+
+    Args:
+        tmp_path: Temporary uploaded project.
+        ancestor_exists: Whether a harmless ancestor file would mislead the index.
+    """
+    from ansible.parsing.dataloader import DataLoader
+
+    files = {
+        **_SCENARIO,
+        "site.yml": b"- import_playbook: plays/main.yml\n",
+        "plays/main.yml": b"- hosts: all\n  tasks:\n    - import_tasks: ../shared/outer.yml\n",
+        "shared/outer.yml": b"- import_tasks: bridge.yml\n",
+        "plays/bridge.yml": b"- import_tasks: ../molecule/default/converge.yml\n",
+        "ordinary.yml": _ORDINARY,
+    }
+    if ancestor_exists:
+        files["bridge.yml"] = b"- ansible.builtin.debug: {msg: harmless}\n"
+    assert _dispatch(tmp_path, files, incomplete={"site.yml", "plays/main.yml"}) == {"ordinary.yml"}
+    root = tmp_path / "project"
+    loader = DataLoader()
+    loader.set_basedir(str(root / "plays"))
+    actual = loader.path_dwim_relative(str(root / "plays"), "../shared", "bridge.yml")
+    assert Path(actual) == root / "plays/bridge.yml"
+
+
+def test_nested_include_stack_can_prefer_invoking_base_over_existing_sibling(tmp_path: Path) -> None:
+    """A physical sibling cannot establish a nested task import's actual target.
+
+    Args:
+        tmp_path: Temporary uploaded project.
+    """
+    from ansible.parsing.dataloader import DataLoader
+
+    files = {
+        **_SCENARIO,
+        "site.yml": b"- import_playbook: plays/main.yml\n",
+        "plays/main.yml": b"- hosts: all\n  tasks:\n    - import_tasks: ../shared/outer.yml\n",
+        "shared/outer.yml": b"- import_tasks: inner.yml\n",
+        "shared/inner.yml": b"- import_tasks: bridge.yml\n",
+        "shared/bridge.yml": b"- ansible.builtin.debug: {msg: harmless}\n",
+        "plays/bridge.yml": b"- import_tasks: ../molecule/default/converge.yml\n",
+        "ordinary.yml": _ORDINARY,
+    }
+    assert _dispatch(tmp_path, files, incomplete={"site.yml", "plays/main.yml"}) == {"ordinary.yml"}
+    root = tmp_path / "project"
+    assert (root / "shared/bridge.yml").is_file()
+    loader = DataLoader()
+    loader.set_basedir(str(root / "plays"))
+    # The nearest include was authored as `inner.yml`, whose dirname is empty.
+    actual = loader.path_dwim_relative(str(root / "plays"), "", "bridge.yml")
+    assert Path(actual) == root / "plays/bridge.yml"
+
+
+def test_playbook_like_task_candidate_still_has_unknown_caller_stack(tmp_path: Path) -> None:
+    """Discovery heuristics do not establish invocation context for imported tasks.
+
+    Args:
+        tmp_path: Temporary uploaded project.
+    """
+    files = {
+        **_SCENARIO,
+        "site.yml": b"- hosts: all\n  tasks:\n    - import_tasks: a_shared.yml\n",
+        "a_shared.yml": b"- tasks: {custom: data}\n- import_tasks: bridge.yml\n",
+        "bridge.yml": b"- ansible.builtin.debug: {msg: harmless}\n",
+        "ordinary.yml": _ORDINARY,
+    }
+    assert _dispatch(tmp_path, files, incomplete={"site.yml", "a_shared.yml"}) == {"ordinary.yml"}

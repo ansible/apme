@@ -92,7 +92,9 @@ the graph ledger, and retain manual-review routing for inherited defaults.
 Do not resolve prior argument errors solely because a rescan could not assess
 the associated invocation; preserve distinct same-line Molecule findings.
 Scenario exclusions also apply to syntax-check entrypoints that statically
-import scenario content. Preserve outer argument keys when only nested values
+import scenario content. Preserve authored import target whitespace and report
+caller-dependent nested imports as incomplete when their target is ambiguous.
+Preserve outer argument keys when only nested values
 are templated, and reuse source excerpts for repeated diagnostic locations.
 Native scenario validation also checks task-section shapes in referenced files;
 Ansible-compatible empty play sections remain valid.
