@@ -63,6 +63,7 @@ Inside `_session_process()`, the format phase runs as Phase 1:
 
 - Consistent indentation (2 spaces)
 - Key ordering within tasks and plays
+- Name capitalization for tasks and plays
 - Jinja2 spacing normalization
 - Trailing whitespace and newline cleanup
 - Quote style consistency

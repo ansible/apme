@@ -469,6 +469,94 @@ class TestAnsibleLintAlignment:
 
 
 # ---------------------------------------------------------------------------
+# Name capitalization (task/play only; not galaxy.yml)
+# ---------------------------------------------------------------------------
+
+
+class TestNameCapitalization:
+    """Name casing applies to plays and tasks, not collection metadata."""
+
+    def test_task_name_capitalized_in_sequence(self) -> None:
+        """Lowercase task names in a sequence are capitalized."""
+        text = textwrap.dedent("""\
+        - name: install packages
+          ansible.builtin.debug:
+            msg: hi
+        """)
+        result = format_content(text)
+        assert "name: Install packages" in result.formatted
+        assert result.changed
+
+    def test_play_name_capitalized_in_sequence(self) -> None:
+        """Lowercase play names in a playbook sequence are capitalized."""
+        text = textwrap.dedent("""\
+        - name: configure hosts
+          hosts: localhost
+          tasks:
+            - name: say hello
+              ansible.builtin.debug:
+                msg: hi
+        """)
+        result = format_content(text)
+        assert "name: Configure hosts" in result.formatted
+        assert "name: Say hello" in result.formatted
+        assert result.changed
+
+    def test_root_play_mapping_capitalizes_names(self) -> None:
+        """A root play mapping still capitalizes play and nested task names."""
+        text = textwrap.dedent("""\
+        name: configure hosts
+        hosts: localhost
+        tasks:
+          - name: say hello
+            ansible.builtin.debug:
+              msg: hi
+        """)
+        result = format_content(text)
+        assert "name: Configure hosts" in result.formatted
+        assert "name: Say hello" in result.formatted
+        assert result.changed
+
+    def test_galaxy_yml_name_stays_snake_case(self) -> None:
+        """Collection galaxy.yml metadata skips task transforms entirely.
+
+        Detected by required ``namespace`` / ``name`` / ``version`` keys.
+        Preserves snake_case name, key order, and flow-style tags.
+        """
+        text = textwrap.dedent("""\
+        ---
+        namespace: my_ns
+        name: my_collection
+        version: 1.0.0
+        tags: [linux, tools]
+        """)
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: my_collection" in result.formatted
+        assert "name: My_collection" not in result.formatted
+        content_lines = [
+            line
+            for line in result.formatted.splitlines()
+            if line.strip() and not line.strip().startswith("#") and line.strip() != "---"
+        ]
+        namespace_idx = next(i for i, line in enumerate(content_lines) if "namespace:" in line)
+        name_idx = next(i for i, line in enumerate(content_lines) if line.lstrip().startswith("name:"))
+        assert namespace_idx < name_idx, "namespace should stay before name"
+        tags_line = next(line for line in content_lines if "tags:" in line)
+        assert "[" in tags_line, "collection tags should stay flow-style"
+        assert check_idempotent(result)
+
+    def test_incomplete_galaxy_keys_still_get_name_casing(self) -> None:
+        """Missing a required galaxy key means the document is not collection metadata."""
+        text = textwrap.dedent("""\
+        name: my_collection
+        version: 1.0.0
+        """)
+        result = format_content(text)
+        assert "name: My_collection" in result.formatted
+        assert result.changed
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 

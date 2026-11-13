@@ -508,7 +508,24 @@ _TASK_LIST_KEYS = frozenset({"tasks", "pre_tasks", "post_tasks", "handlers", "bl
 _TASK_ITEM_RE = re.compile(r"^(\s*)- \S")
 
 
-_PLAY_KEYS = frozenset({"hosts", "import_playbook"})
+_PLAY_KEYS = frozenset({"hosts", "import_playbook", "ansible.builtin.import_playbook"})
+_COLLECTION_META_KEYS = frozenset({"namespace", "name", "version"})
+
+
+def _is_collection_metadata(data: CommentedMap) -> bool:
+    """Return True if a mapping looks like collection ``galaxy.yml`` metadata.
+
+    Matches the required identity keys from the Ansible collection Galaxy
+    metadata schema. Collection metadata has no task lists, so task-oriented
+    transforms must be skipped entirely for these documents.
+
+    Args:
+        data: Root CommentedMap.
+
+    Returns:
+        True when ``namespace``, ``name``, and ``version`` are all present.
+    """
+    return _COLLECTION_META_KEYS.issubset(data.keys())
 
 
 def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = None) -> bool:
@@ -1046,10 +1063,14 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
             _capitalize_name(item)
             _reorder_task_keys(item)
     elif isinstance(data, CommentedMap):
-        _expand_inline_kv_args(data)
-        _force_tags_block_style(data)
-        _capitalize_name(data)
-        _reorder_task_keys(data)
+        # Collection galaxy.yml has no task lists; skip task-oriented transforms
+        # so namespace/name/version stay snake_case identifiers with original key
+        # order and flow-style tags.
+        if not _is_collection_metadata(data):
+            _expand_inline_kv_args(data)
+            _force_tags_block_style(data)
+            _capitalize_name(data)
+            _reorder_task_keys(data)
         _normalize_min_ansible_version(data)
 
     try:
