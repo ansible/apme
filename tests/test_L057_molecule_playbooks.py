@@ -68,7 +68,7 @@ def test_L057_skips_parsing_documents_without_play_keys(tmp_path: Path) -> None:
         assert _find_playbooks(tmp_path) == []
 
 
-@pytest.mark.parametrize(
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     "source",
     [
         "- hosts: all\n  tasks: []\n",

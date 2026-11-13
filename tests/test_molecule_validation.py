@@ -1646,7 +1646,7 @@ def test_equivalent_snapshot_spellings_resolve_shared_configuration() -> None:
     ]
 
 
-@pytest.mark.parametrize(
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     ("path", "expected"),
     [
         ("$", True),
