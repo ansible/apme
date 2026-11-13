@@ -37,6 +37,8 @@ historical aliases, and extended groups follow Ansible's own metadata resolution
 When a collection, group, templated mapping, or bounded invocation context cannot
 be assessed, L058 reports incomplete argument validation and excludes that context
 from both argument checks. No templates, lookups, or Molecule actions are run.
+If the complete graph exceeds transport limits or contains a cycle, the scan
+fails with an incomplete-validation error instead of returning partial results.
 Native-only requests provide defaults structure checks; module argument checks
 require the Ansible service and its selected environment.
 

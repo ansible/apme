@@ -27,6 +27,9 @@ Apply the same correction to ordinary playbook argument checks.
 - Update rule documentation and the documented parity gap.
 - Keep defaults-related findings as manual review; omit uploaded values from
   choice diagnostics. Reuse one executor-based context pass during rescans.
+- Bound expanded JSON nodes and bytes across defaults serialization, contexts,
+  and graph transport; report unsafe transport as an incomplete scan. Ignore
+  inactive include paths when applying edge-specific context.
 
 ## Test Cases
 
@@ -44,8 +47,8 @@ Apply the same correction to ordinary playbook argument checks.
 
 - [x] Focused tests via `tox -e unit -- ... --no-cov`
 - [x] `tox -e lint`
-- [x] Full `tox -e unit` with local OPA and container-only skips: 5,475 passed,
-      52 skipped, 86.72% coverage
+- [x] Full `tox -e unit` with local OPA and container-only skips: 5,513 passed,
+      52 skipped, 86.77% coverage
 
 ## Completion Checklist
 

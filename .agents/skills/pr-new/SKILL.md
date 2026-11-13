@@ -267,6 +267,10 @@ artifact type, translate it:
    a mismatched value must not disappear through a missing branch. Repeated
    membership checks should reuse an existing request-local index rather than
    rescan the full input for each reference.
+   Bound expanded representations, including repeated shared references and
+   serialized bytes, at every downstream consumer. When combining graph paths,
+   distinguish inactive paths from paths with unavailable context so inactive
+   metadata cannot affect an active invocation.
    Include requests disconnected during async authorization, shutdown while a
    dependency lookup is pending, simultaneous large bodies across distinct
    resources, and edits that preserve versus clear an existing optional value.

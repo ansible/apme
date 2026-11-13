@@ -11,6 +11,7 @@ import asyncio
 import configparser
 import contextlib
 import contextvars
+import datetime
 import difflib
 import json
 import logging
@@ -21,7 +22,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import TypeVar, cast
 
 import grpc
@@ -129,6 +130,173 @@ _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ENGINE_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
 _GRPC_STREAM_CHUNK_BYTES = 8 * 1024 * 1024
 _MAX_STREAMED_VALIDATE_REQUEST_BYTES = 512 * 1024 * 1024
+
+# These budgets apply to the expanded wire representation, not graph node count.
+# A normal graph can contain tens of thousands of nodes, each with many fields.
+_TRANSPORT_JSON_MAX_BYTES = _GRPC_MAX_MSG
+_TRANSPORT_JSON_MAX_VALUES = 5_000_000
+_TRANSPORT_JSON_MAX_DEPTH = 256
+
+
+class GraphTransportError(ValueError):
+    """Graph content cannot be transported safely; validation is incomplete."""
+
+
+def _bounded_transport_json(value: object) -> bytes:
+    """Convert and bound an expanded JSON document before encoding it.
+
+    Memoized subtree costs charge every alias occurrence while avoiding alias
+    expansion during conversion. Shared containers retain their ordered values;
+    cycles, excessive depth, and oversized output abort without truncation.
+    Unsafe or unsupported content raises ``GraphTransportError``.
+
+    Args:
+        value: Graph or hierarchy data containing inert YAML values.
+
+    Returns:
+        Compact ASCII JSON bytes preserving accepted document values.
+
+    """
+    memo: dict[int, tuple[object, int, int, int]] = {}
+    active: set[int] = set()
+
+    def check(values: int, size: int, depth: int) -> None:
+        """Reject unsafe costs before allocating the expanded document.
+
+        Args:
+            values: Expanded value and key occurrences.
+            size: Expanded JSON bytes.
+            depth: Container nesting depth.
+
+        Raises:
+            GraphTransportError: If any transport budget is exceeded.
+        """
+        if values > _TRANSPORT_JSON_MAX_VALUES or size > _TRANSPORT_JSON_MAX_BYTES:
+            raise GraphTransportError("Graph transport exceeds assessment limits; validation is incomplete")
+        if depth > _TRANSPORT_JSON_MAX_DEPTH:
+            raise GraphTransportError("Graph transport is excessively nested; validation is incomplete")
+
+    def string_size(text: str) -> int:
+        """Count escaped ASCII JSON bytes using bounded temporary chunks.
+
+        Args:
+            text: Literal string or normalized scalar key.
+
+        Returns:
+            Exact JSON string size including quotes.
+        """
+        check(1, len(text) + 2, 0)
+        size = 2
+        for offset in range(0, len(text), 4096):
+            size += len(json.encoder.encode_basestring_ascii(text[offset : offset + 4096])) - 2
+            check(1, size, 0)
+        return size
+
+    def convert(current: object, nesting: int = 0) -> tuple[object, int, int, int]:
+        """Normalize one subtree and calculate its expanded transport costs.
+
+        Args:
+            current: Source subtree, whose container identity may be shared.
+            nesting: Parent container count.
+
+        Returns:
+            Normalized value, occurrence count, JSON bytes, and subtree depth.
+
+        Raises:
+            GraphTransportError: If source content cannot be represented safely.
+        """
+        check(1, 0, nesting)
+        identity = id(current)
+        if identity in active:
+            raise GraphTransportError("Graph transport contains cyclic content; validation is incomplete")
+        if identity in memo:
+            cached = memo[identity]
+            check(cached[1], cached[2], nesting + cached[3])
+            return cached
+        if current is None:
+            result: tuple[object, int, int, int] = (None, 1, 4, 0)
+        elif isinstance(current, bool):
+            result = (current, 1, 4 if current else 5, 0)
+        elif isinstance(current, str):
+            result = (current, 1, string_size(current), 0)
+        elif isinstance(current, int | float):
+            try:
+                number = json.dumps(current)
+            except ValueError:
+                raise GraphTransportError(
+                    "Graph transport contains an oversized number; validation is incomplete"
+                ) from None
+            result = (current, 1, len(number), 0)
+        elif isinstance(current, datetime.date | datetime.time | PurePath):
+            text = str(current)
+            result = (text, 1, string_size(text), 0)
+        elif isinstance(current, bytes):
+            # Python's bytes representation may use four characters per byte.
+            # Bound the conversion itself before creating that representation.
+            check(1, len(current) * 4 + 3, nesting)
+            text = str(current)
+            result = (text, 1, string_size(text), 0)
+        elif isinstance(current, dict | list | tuple):
+            check(len(current) + 1, 2 + max(0, len(current) - 1), nesting + 1)
+            active.add(identity)
+            count, size, height = 1, 2 + max(0, len(current) - 1), 1
+            mapping: dict[str, object] = {}
+            sequence: list[object] = []
+            items = current.items() if isinstance(current, dict) else enumerate(current)
+            for key, item in items:
+                if isinstance(current, dict):
+                    if isinstance(key, str):
+                        name = key
+                    elif key is None or isinstance(key, bool | int | float):
+                        try:
+                            name = json.dumps(key)
+                        except ValueError:
+                            raise GraphTransportError(
+                                "Graph transport contains an oversized key; validation is incomplete"
+                            ) from None
+                    else:
+                        raise GraphTransportError(
+                            "Graph transport contains an unsupported key; validation is incomplete"
+                        )
+                    size += string_size(name) + 1
+                    count += 1
+                    check(count, size, nesting + height)
+                converted, child_count, child_size, child_depth = convert(item, nesting + 1)
+                count += child_count
+                size += child_size
+                height = max(height, child_depth + 1)
+                check(count, size, nesting + height)
+                if isinstance(current, dict):
+                    mapping[name] = converted
+                else:
+                    sequence.append(converted)
+            active.remove(identity)
+            result = (mapping if isinstance(current, dict) else sequence, count, size, height)
+        else:
+            raise GraphTransportError("Graph transport contains an unsupported value; validation is incomplete")
+        check(result[1], result[2], nesting + result[3])
+        memo[identity] = result
+        return result
+
+    normalized, _count, _size, _depth = convert(value)
+    return json.dumps(normalized, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+
+
+def _serialize_graph_transport(graph: ContentGraph, *, slim: bool = True) -> bytes:
+    """Serialize a complete graph without truncating authored data.
+
+    Unsafe content raises ``GraphTransportError``.
+
+    Args:
+        graph: Graph supplying the public transport representation.
+        slim: Whether to omit progression and state history.
+
+    Returns:
+        Bounded JSON bytes for validator transport or reporting.
+
+    """
+    return _bounded_transport_json(graph.to_dict(slim=slim))
+
 
 _ANSIBLE_PLUGIN_DIR_NAMES = frozenset({"action_plugins", "library", "module_utils", "modules", "plugins"})
 _ANSIBLE_COLLECTION_PART = "ansible_collections"
@@ -1286,7 +1454,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 loop = asyncio.get_event_loop()
                 content_graph_data = await loop.run_in_executor(
                     None,
-                    lambda: json.dumps(cg.to_dict(slim=True), default=str).encode(),
+                    lambda: _serialize_graph_transport(cg),
                 )
                 logger.debug(
                     "ContentGraph serialized: %d bytes (req=%s)",
@@ -1294,11 +1462,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     scan_id,
                 )
 
+        hierarchy_data = await asyncio.get_event_loop().run_in_executor(
+            None, _bounded_transport_json, context_obj.hierarchy_payload
+        )
         validate_request = ValidateRequest(
             request_id=scan_id,
             project_root="",
             files=files,
-            hierarchy_payload=json.dumps(context_obj.hierarchy_payload, default=str).encode(),
+            hierarchy_payload=hierarchy_data,
             ansible_core_version=core_version,
             collection_specs=collection_specs,
             session_id=sid,
@@ -2655,7 +2826,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             if native_addr:
                 graph_data = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda: json.dumps(g.to_dict(slim=True), default=str).encode(),
+                    lambda: _serialize_graph_transport(g),
                 )
                 ext_coros.append(
                     _call_validator(
@@ -2724,12 +2895,15 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         "collection_set": [],
                         "metadata": {},
                     }
+                    opa_data = await asyncio.get_event_loop().run_in_executor(
+                        None, _bounded_transport_json, opa_payload
+                    )
                     ext_coros.append(
                         _call_validator(
                             opa_addr,
                             ValidateRequest(
                                 request_id=f"{scan_id}-rescan",
-                                hierarchy_payload=json.dumps(opa_payload, default=str).encode(),
+                                hierarchy_payload=opa_data,
                             ),
                         )
                     )
@@ -2759,12 +2933,15 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         "metadata": {},
                     }
                     ans_opts = session.fix_options or session.scan_options
+                    ans_data = await asyncio.get_event_loop().run_in_executor(
+                        None, _bounded_transport_json, ans_payload
+                    )
                     ext_coros.append(
                         _call_validator(
                             ans_addr,
                             ValidateRequest(
                                 request_id=f"{scan_id}-rescan",
-                                hierarchy_payload=json.dumps(ans_payload, default=str).encode(),
+                                hierarchy_payload=ans_data,
                                 files=_ansible_context_files(session.working_files),
                                 dirty_node_ids=sorted(dirty_ids),
                                 venv_path=session.venv_path,

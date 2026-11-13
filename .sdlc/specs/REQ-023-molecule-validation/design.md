@@ -76,6 +76,12 @@ shared roles/task files and report incomplete assessment if the bound is reached
 Role call edges retain invocation defaults and entry selectors separately from
 role file inventory. Reuse one executor-based context calculation during
 incremental rescans; OPA and Ansible share its serialized node dictionaries.
+Bound expanded JSON nodes and bytes, including repeated YAML aliases and the complete
+per-task defaults payload. An exceeded budget marks the affected context
+incomplete. Inactive parent paths cannot introduce new coverage failures into
+an independently active include; existing incomplete ancestry still propagates.
+Graph and hierarchy transport also reject cyclic or excessive expanded input
+with an explicit incomplete-validation error instead of sending truncated data.
 The Ansible argument checks resolve module aliases and action groups using the
 session runtime's metadata without running plays or templating values. Merge
 defaults by module/group entry in scope order, then groups, the module entry,

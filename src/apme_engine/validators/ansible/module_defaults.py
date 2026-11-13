@@ -296,6 +296,11 @@ def resolve_module_defaults(
             continue
         if task.get("module_defaults_inactive"):
             continue
+        if task.get("args_serialization_incomplete"):
+            result.violations.append(
+                _finding(task, "Task arguments exceed serialization limits; argument checks are incomplete")
+            )
+            continue
         if not _literal_properties(task.get("module_options"))[1]:
             result.violations.append(
                 _finding(task, "Task arguments exceed literal assessment limits; argument checks are incomplete")

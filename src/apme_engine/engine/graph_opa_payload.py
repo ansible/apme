@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 _MODULE_DEFAULTS_CONTEXT_LIMIT = 64
 _MODULE_DEFAULTS_LAYER_LIMIT = 256
+_JSON_SAFE_NODE_LIMIT = 20_000
+_JSON_SAFE_BYTE_LIMIT = 8 * 1024 * 1024
+_DEFAULTS_CACHE_NODE_LIMIT = 200_000
+_HIERARCHY_DEFAULTS_BYTE_LIMIT = 32 * 1024 * 1024
 _DEFAULTS_SCOPE_TYPES = frozenset({NodeType.PLAY, NodeType.BLOCK, NodeType.TASK, NodeType.HANDLER})
 _APPLY_INCLUDE_MODULES = frozenset(
     f"{prefix}{name}"
@@ -66,11 +70,14 @@ class _ModuleDefaultsContexts:
     incomplete: bool = False
 
 
-def _include_apply_defaults(node: ContentNode) -> tuple[tuple[YAMLValue, ...], bool]:
+def _include_apply_defaults(
+    node: ContentNode, *, _budget: list[int] | None = None
+) -> tuple[tuple[YAMLValue, ...], bool]:
     """Read the synthetic block defaults applied only to an include's descendants.
 
     Args:
         node: Include task retaining its authored module arguments.
+        _budget: Shared remaining node and byte allowance for cached defaults.
 
     Returns:
         Raw applied layer, if present, and whether apply cannot be inspected.
@@ -81,7 +88,7 @@ def _include_apply_defaults(node: ContentNode) -> tuple[tuple[YAMLValue, ...], b
         return (), True
     if "module_defaults" in apply:
         try:
-            return (json_safe(apply["module_defaults"]),), False
+            return (json_safe(apply["module_defaults"], _budget=_budget),), False
         except RecursionError:
             return (), True
     if isinstance(node.options.get("args"), str):
@@ -119,6 +126,7 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
     cache: dict[str, _ModuleDefaultsContexts] = {}
     layers: dict[str, int] = {}
     applied_layers: dict[str, tuple[tuple[YAMLValue, ...], bool]] = {}
+    defaults_budget = [_DEFAULTS_CACHE_NODE_LIMIT, _HIERARCHY_DEFAULTS_BYTE_LIMIT]
 
     def role_entries(role_id: str, options: dict[str, object]) -> tuple[tuple[str | None, str | None] | None, bool]:
         """Select role entry files without treating the full inventory as execution.
@@ -172,8 +180,12 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
         local: tuple[YAMLValue, ...] = ()
         local_unknown = False
         try:
-            if node.node_type in _DEFAULTS_SCOPE_TYPES and "module_defaults" in node.options:
-                local = (json_safe(node.options["module_defaults"]),)
+            if (
+                (not parents[nid] or any(cache[parent].paths for parent, _attrs in parents[nid]))
+                and node.node_type in _DEFAULTS_SCOPE_TYPES
+                and "module_defaults" in node.options
+            ):
+                local = (json_safe(node.options["module_defaults"], _budget=defaults_budget),)
             local_signature = signature(local)
         except RecursionError:
             local, local_signature, local_unknown = (), (), True
@@ -185,20 +197,22 @@ def _build_module_defaults_contexts(graph: ContentGraph) -> dict[str, _ModuleDef
             state.paths[_ModuleDefaultsPath(local_signature, entries)] = local
             state.incomplete |= incomplete
         for parent, attrs in sorted(parents[nid], key=lambda item: (item[0], int(str(item[1].get("position", 0))))):
+            if not cache[parent].paths:
+                continue
             applied: tuple[YAMLValue, ...] = ()
             applies = (
                 attrs.get("edge_type") == EdgeType.INCLUDE.value and nodes[parent].module in _APPLY_INCLUDE_MODULES
             )
             if applies:
                 if parent not in applied_layers:
-                    applied_layers[parent] = _include_apply_defaults(nodes[parent])
+                    applied_layers[parent] = _include_apply_defaults(nodes[parent], _budget=defaults_budget)
                 applied, unknown_apply = applied_layers[parent]
                 state.incomplete |= unknown_apply
             invocation = attrs.get("role_invocation", {})
             invocation_options = cast(dict[str, object], invocation) if isinstance(invocation, dict) else {}
             try:
                 edge_defaults = (
-                    (json_safe(cast(YAMLValue, invocation_options["module_defaults"])),)
+                    (json_safe(cast(YAMLValue, invocation_options["module_defaults"]), _budget=defaults_budget),)
                     if "module_defaults" in invocation_options
                     else ()
                 )
@@ -436,24 +450,65 @@ def _is_scp_style_remote_source(source: str) -> bool:
     )
 
 
-def json_safe(v: YAMLValue) -> YAMLValue:
+def json_safe(v: YAMLValue, *, _budget: list[int] | None = None) -> YAMLValue:
     """Coerce value to a JSON-serializable form.
 
     Args:
         v: Value to coerce (str, int, float, bool, list, dict, or other).
+        _budget: Optional shared remaining node and byte allowance, charged even
+            when conversion stops before completing a value.
 
     Returns:
         JSON-serializable value; non-primitives are stringified.
+
+    Nesting or expanded aliases exceeding safe limits raise ``RecursionError``.
     """
-    if v is None:
-        return None
-    if isinstance(v, str | int | float | bool):
-        return v
-    if isinstance(v, list | tuple):
-        return [json_safe(x) for x in v]
-    if isinstance(v, dict):
-        return {str(k): json_safe(x) for k, x in v.items()}
-    return str(v)
+    node_allowance = min(_JSON_SAFE_NODE_LIMIT, _budget[0]) if _budget is not None else _JSON_SAFE_NODE_LIMIT
+    byte_allowance = min(_JSON_SAFE_BYTE_LIMIT, _budget[1]) if _budget is not None else _JSON_SAFE_BYTE_LIMIT
+    remaining = node_allowance
+    remaining_bytes = byte_allowance
+
+    def count_string(value: str) -> None:
+        nonlocal remaining_bytes
+        if len(value) > remaining_bytes:
+            raise RecursionError("Expanded JSON exceeds the byte limit")
+        remaining_bytes -= len(json.dumps(value))
+        if remaining_bytes < 0:
+            raise RecursionError("Expanded JSON exceeds the byte limit")
+
+    def convert(value: YAMLValue) -> YAMLValue:
+        nonlocal remaining, remaining_bytes
+        remaining -= 1
+        remaining_bytes -= 2  # delimiters and separators
+        if remaining < 0 or remaining_bytes < 0:
+            raise RecursionError("Expanded JSON exceeds the assessment limit")
+        if isinstance(value, str):
+            count_string(value)
+            return value
+        if value is None or isinstance(value, int | float | bool):
+            remaining_bytes -= len(str(value))
+            if remaining_bytes < 0:
+                raise RecursionError("Expanded JSON exceeds the byte limit")
+            return value
+        if isinstance(value, list | tuple):
+            return [convert(item) for item in value]
+        if isinstance(value, dict):
+            result: YAMLDict = {}
+            for key, item in value.items():
+                name = str(key)
+                count_string(name)
+                result[name] = convert(item)
+            return result
+        text = str(value)
+        count_string(text)
+        return text
+
+    try:
+        return convert(v)
+    finally:
+        if _budget is not None:
+            _budget[0] -= node_allowance - max(0, remaining)
+            _budget[1] -= byte_allowance - max(0, remaining_bytes)
 
 
 def _location_to_dict(loc: Location | None) -> YAMLDict | None:
@@ -625,7 +680,11 @@ def content_node_to_opa_dict(
             if contexts is None:
                 contexts = _build_module_defaults_contexts(graph)
             defaults = contexts.get(node.node_id, _ModuleDefaultsContexts(incomplete=True))
-            d["module_defaults_contexts"] = [list(values) for values in defaults.paths.values()]
+            try:
+                d["module_defaults_contexts"] = json_safe([list(values) for values in defaults.paths.values()])
+            except RecursionError:
+                d["module_defaults_contexts"] = []
+                d["module_defaults_incomplete"] = True
             if defaults.incomplete:
                 d["module_defaults_incomplete"] = True
             elif not defaults.paths:
@@ -640,6 +699,12 @@ def content_node_to_opa_dict(
                 d["module_defaults_contexts"] = []
                 d["module_defaults_incomplete"] = True
         module_options = node.effective_module_options
+        try:
+            mo = cast(YAMLDict, json_safe(module_options))
+        except RecursionError:
+            mo = {}
+            d["args_templated"] = True
+            d["args_serialization_incomplete"] = True
         d["module"] = node.module
         d["original_module"] = node.module
         d["name"] = node.name if node.name else None
@@ -657,7 +722,7 @@ def content_node_to_opa_dict(
             except Exception:
                 logger.debug("annotation_to_dict failed on %s", node.node_id)
         if not has_inbound_annotation:
-            inbound_annotation = _inbound_risk_annotation(node, module_options)
+            inbound_annotation = _inbound_risk_annotation(node, mo)
             if inbound_annotation is not None:
                 anns.append(inbound_annotation)
         d["annotations"] = anns
@@ -671,12 +736,6 @@ def content_node_to_opa_dict(
                     logger.debug("json_safe failed for task option %s on %s", key, node.node_id)
         d["options"] = task_opts
 
-        mo: YAMLDict = {}
-        for k, v in module_options.items():
-            try:
-                mo[str(k)] = json_safe(v)
-            except Exception:
-                logger.debug("json_safe failed for module_option %s on %s", k, node.node_id)
         if "_raw" in mo and "cmd" not in mo:
             raw_val = mo.get("_raw")
             if isinstance(raw_val, str):
@@ -746,6 +805,27 @@ def build_hierarchy_from_graph(
     )
 
 
+def _limit_defaults_payload(payload: YAMLDict, remaining: list[int]) -> None:
+    """Bound defaults across a hierarchy while preserving explicit coverage gaps.
+
+    Args:
+        payload: One serialized node, updated if its defaults exceed the budget.
+        remaining: Mutable remaining byte budget shared by the hierarchy.
+    """
+    contexts = payload.get("module_defaults_contexts")
+    if not isinstance(contexts, list):
+        return
+    if payload.get("module_defaults_incomplete"):
+        payload["module_defaults_contexts"] = []
+        return
+    size = len(json.dumps(contexts))
+    if size > remaining[0]:
+        payload["module_defaults_contexts"] = []
+        payload["module_defaults_incomplete"] = True
+    else:
+        remaining[0] -= size
+
+
 def content_nodes_to_opa_dicts(nodes: Iterable[ContentNode], graph: ContentGraph) -> list[YAMLDict]:
     """Serialize a node batch with one shared defaults-context calculation.
 
@@ -757,11 +837,14 @@ def content_nodes_to_opa_dicts(nodes: Iterable[ContentNode], graph: ContentGraph
         OPA-compatible dictionaries for the serializable nodes.
     """
     contexts = _build_module_defaults_contexts(graph)
-    return [
-        payload
-        for node in nodes
-        if (payload := content_node_to_opa_dict(node, graph=graph, _module_defaults_contexts=contexts))
-    ]
+    result: list[YAMLDict] = []
+    remaining = [_HIERARCHY_DEFAULTS_BYTE_LIMIT]
+    for node in nodes:
+        payload = content_node_to_opa_dict(node, graph=graph, _module_defaults_contexts=contexts)
+        if payload:
+            _limit_defaults_payload(payload, remaining)
+            result.append(payload)
+    return result
 
 
 def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
@@ -775,6 +858,7 @@ def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
     """
     trees: list[YAMLDict] = []
     module_defaults_contexts = _build_module_defaults_contexts(graph)
+    remaining = [_HIERARCHY_DEFAULTS_BYTE_LIMIT]
 
     roots: list[ContentNode] = []
     for node in graph.nodes():
@@ -793,6 +877,7 @@ def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
                 continue
             d = content_node_to_opa_dict(content_node, graph=graph, _module_defaults_contexts=module_defaults_contexts)
             if d:
+                _limit_defaults_payload(d, remaining)
                 nodes_list.append(d)
 
         root_key = root.node_id
