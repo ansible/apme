@@ -352,6 +352,8 @@ def _migrate_projects_table(conn: Connection) -> None:
         return
     existing = {c["name"] for c in insp.get_columns("projects")}
 
+    if "requirements_token" not in existing:
+        conn.execute(text("ALTER TABLE projects ADD COLUMN requirements_token TEXT DEFAULT NULL"))
     if "normalized_repo_url" not in existing:
         conn.execute(text("ALTER TABLE projects ADD COLUMN normalized_repo_url TEXT NOT NULL DEFAULT ''"))
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_normalized_repo_url ON projects (normalized_repo_url)"))

@@ -403,6 +403,24 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   );
 
   router.get(
+    "/apme/settings/git-requirements",
+    requireApmeSettingsView,
+    async (_req, res) => {
+      res.json(await apmeService.getGitRequirementsPolicy());
+    },
+  );
+  router.put(
+    "/apme/settings/git-requirements",
+    jsonBody,
+    requireApmeSettingsManage,
+    async (req, res) => {
+      if (typeof req.body?.enabled !== "boolean")
+        throw new InputError("enabled must be a boolean");
+      res.json(await apmeService.setGitRequirementsPolicy(req.body.enabled));
+    },
+  );
+
+  router.get(
     "/apme/settings/galaxy-servers",
     requireApmeSettingsView,
     async (_req, res) => {

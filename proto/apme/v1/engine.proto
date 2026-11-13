@@ -35,6 +35,9 @@ message ScanChunk {
   string project_root = 2;
   ScanOptions options = 3;      // scan/format: only used from first chunk
   repeated File files = 4;
+  // Gateway-fetched dependencies, in ansible_collections/ns/name or roles/name layout.
+  // Kept separate from project files and never remediated. No credentials.
+  repeated File dependency_files = 7;
   bool last = 5;
   FixOptions fix_options = 6;   // FixSession: only used from first chunk
 }

@@ -505,6 +505,7 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
                 branch=body.branch,
                 scm_token=body.scm_token.strip() or None if body.scm_token else None,
                 scm_provider=scm_provider,
+                requirements_token=body.requirements_token.strip() or None if body.requirements_token else None,
             )
     except IntegrityError:
         raise HTTPException(status_code=409, detail=f"Project named '{body.name}' already exists") from None
@@ -516,6 +517,7 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
         created_at=proj.created_at,
         health_score=proj.health_score,
         scm_provider=proj.scm_provider,
+        has_requirements_token=bool(proj.requirements_token),
         has_scm_token=bool(proj.scm_token),
         last_scanned_commit=proj.last_scanned_commit,
     )
@@ -613,6 +615,7 @@ async def list_projects(
                     scan_count=scan_cnt,
                     last_scanned_at=last_scan_at,
                     scm_provider=proj.scm_provider,
+                    has_requirements_token=bool(proj.requirements_token),
                     has_scm_token=bool(proj.scm_token),
                     last_scanned_commit=proj.last_scanned_commit,
                     active_operation=active_op_summary,
@@ -713,6 +716,7 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
         scan_count=scan_cnt,
         last_scanned_at=last_scan_at,
         scm_provider=proj.scm_provider,
+        has_requirements_token=bool(proj.requirements_token),
         has_scm_token=bool(proj.scm_token),
         last_scanned_commit=proj.last_scanned_commit,
         has_new_commits=has_new,
@@ -746,6 +750,8 @@ async def update_project(
         updates["repo_url"] = body.repo_url
     if body.branch is not None:
         updates["branch"] = body.branch
+    if body.requirements_token is not None:
+        updates["requirements_token"] = body.requirements_token.strip() or None
     if body.scm_token is not None:
         scm_token = body.scm_token.strip()
         updates["scm_token"] = scm_token or None
@@ -773,6 +779,7 @@ async def update_project(
         created_at=proj.created_at,
         health_score=proj.health_score,
         scm_provider=proj.scm_provider,
+        has_requirements_token=bool(proj.requirements_token),
         has_scm_token=bool(proj.scm_token),
         last_scanned_commit=proj.last_scanned_commit,
     )

@@ -1,7 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { ApmeButton as Button } from "./layout";
 import "./layout.css";
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 import {
   Alert,
   Checkbox,
@@ -12,12 +12,14 @@ import {
   TextField,
 } from "@backstage/ui";
 import {
+  getGitRequirementsPolicy,
   updateProject,
   type ProjectDetail,
   type ProjectSummary,
   type UpdateProjectRequest,
 } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
+import { useLoad } from "./useLoad";
 import { useMutation } from "./useMutation";
 import { DeleteProject } from "./DeleteProject";
 import { adapterIdentity } from "./adapterIdentity";
@@ -70,6 +72,13 @@ function ProjectSettingsForm({
   const [removeToken, setRemoveToken] = useState(false);
   const [saved, setSaved] = useState(false);
   const mutation = useMutation(adapter);
+  const loadPolicy = useCallback(
+    () => getGitRequirementsPolicy(adapter),
+    [adapter],
+  );
+  const policy = useLoad(loadPolicy);
+  const [requirementsToken, setRequirementsToken] = useState("");
+  const [removeRequirementsToken, setRemoveRequirementsToken] = useState(false);
 
   const changes: UpdateProjectRequest = {};
   if (name.trim() !== baseline.name) changes.name = name.trim();
@@ -79,6 +88,11 @@ function ProjectSettingsForm({
     changes.scm_provider = provider || null;
   if (removeToken) changes.scm_token = "";
   else if (token.trim()) changes.scm_token = token.trim();
+  if (policy.value?.enabled) {
+    if (removeRequirementsToken) changes.requirements_token = "";
+    else if (requirementsToken.trim())
+      changes.requirements_token = requirementsToken.trim();
+  }
   const dirty = Object.keys(changes).length > 0;
 
   function change<T>(setter: (value: T) => void, value: T) {
@@ -103,6 +117,8 @@ function ProjectSettingsForm({
           setBranch(updated.branch);
           setProvider(updated.scm_provider ?? "");
         }
+        setRequirementsToken("");
+        setRemoveRequirementsToken(false);
         setToken("");
         setRemoveToken(false);
         setSaved(true);
@@ -191,6 +207,33 @@ function ProjectSettingsForm({
           >
             Remove the stored SCM token
           </Checkbox>
+        )}
+        {policy.value?.enabled && (
+          <>
+            <PasswordField
+              label={
+                baseline.has_requirements_token
+                  ? "Git requirements credential (configured)"
+                  : "Git requirements credential"
+              }
+              value={requirementsToken}
+              onChange={(value) => change(setRequirementsToken, value)}
+              isDisabled={mutation.saving || removeRequirementsToken}
+              description="Optional override used only for Git collections and roles. Defaults to the project SCM token. Leave blank to keep the saved credential."
+            />
+            {baseline.has_requirements_token && (
+              <Checkbox
+                isSelected={removeRequirementsToken}
+                onChange={(value) => {
+                  change(setRemoveRequirementsToken, value);
+                  if (value) setRequirementsToken("");
+                }}
+                isDisabled={mutation.saving}
+              >
+                Remove requirements credential and use project SCM token
+              </Checkbox>
+            )}
+          </>
         )}
         <Button
           type="submit"

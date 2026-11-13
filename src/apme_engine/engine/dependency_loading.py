@@ -35,6 +35,7 @@ def make_target_path(
             parts.append("")
         dep_dir_target_path_candidates = [
             os.path.join(dep_dir, target_name),
+            os.path.join(dep_dir, "roles", target_name),
             os.path.join(dep_dir, parts[0], parts[1]),
             os.path.join(dep_dir, "ansible_collections", parts[0], parts[1]),
         ]

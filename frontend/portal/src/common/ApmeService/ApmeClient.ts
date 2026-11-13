@@ -389,6 +389,19 @@ export class ApmeClient {
     return this.executeRequest<Suppression[]>(`/api/v1/suppressions${query}`);
   }
 
+  async getGitRequirementsPolicy(): Promise<{ enabled: boolean }> {
+    return this.executeRequest("/api/v1/settings/git-requirements");
+  }
+
+  async setGitRequirementsPolicy(
+    enabled: boolean,
+  ): Promise<{ enabled: boolean }> {
+    return this.executeRequest("/api/v1/settings/git-requirements", {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   async listGalaxyServers(): Promise<GalaxyServer[]> {
     return this.executeRequest<GalaxyServer[]>(
       "/api/v1/settings/galaxy-servers",
@@ -635,6 +648,8 @@ export type IApmeService = Pick<
   | "createSuppression"
   | "deleteSuppression"
   | "getSuppressions"
+  | "getGitRequirementsPolicy"
+  | "setGitRequirementsPolicy"
   | "listGalaxyServers"
   | "createGalaxyServer"
   | "updateGalaxyServer"

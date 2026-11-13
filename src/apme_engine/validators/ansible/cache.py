@@ -47,15 +47,20 @@ def _collection_version(venv_root: str, namespace: str, name: str) -> str:
     Returns:
         Version string, or ``""`` if the manifest cannot be read.
     """
+    git_marker = os.path.join(venv_root, ".git-dependencies-ready")
+    git_suffix = ""
+    if os.path.isfile(git_marker):
+        with open(git_marker) as marker:
+            git_suffix = "+git." + marker.read().strip()
     pattern = f"{venv_root}/lib/python*/site-packages/ansible_collections/{namespace}/{name}/MANIFEST.json"
     for path in sorted(_glob.glob(pattern)):
         try:
             with open(path) as fh:
                 manifest = json.load(fh)
-            return str(manifest.get("collection_info", {}).get("version", ""))
+            return str(manifest.get("collection_info", {}).get("version", "")) + git_suffix
         except (OSError, json.JSONDecodeError, KeyError):
             continue
-    return ""
+    return git_suffix
 
 
 def _ansible_core_version(venv_root: str) -> str:
@@ -217,6 +222,10 @@ class PluginCache:
             except OSError:
                 inventory.update(b"unreadable")
         inventory_suffix = f"|collections:{inventory.hexdigest()}" if manifests else ""
+        git_marker = os.path.join(venv_root, ".git-dependencies-ready")
+        if os.path.isfile(git_marker):
+            with open(git_marker) as marker:
+                inventory_suffix += "|git:" + marker.read().strip()
         env_fp = _collection_search_fingerprint(env_extra)
         if env_fp:
             return f"core:{core_version}{inventory_suffix}|{env_fp}"

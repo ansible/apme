@@ -29,6 +29,7 @@ class Project(Base):
         branch: Branch to clone (default ``main``).
         created_at: ISO 8601 creation timestamp.
         health_score: Computed 0-100 health score from latest scan.
+        requirements_token: Optional Git requirements credential override.
         scm_token: Per-project SCM token (ADR-050). Overrides global fallback.
         scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if unset.
         last_scanned_commit: Git SHA of the commit used in the most recent scan.
@@ -44,6 +45,7 @@ class Project(Base):
     branch: Mapped[str] = mapped_column(Text, nullable=False, default="main")
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     health_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    requirements_token: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     scm_token: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     scm_provider: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     last_scanned_commit: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -654,3 +656,16 @@ class Notification(Base):
     link: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class GitRequirementsSettings(Base):
+    """Singleton global policy for Git requirement fetching.
+
+    Attributes:
+        id: Singleton identifier (1).
+        enabled: Whether project operations may fetch Git requirements.
+    """
+
+    __tablename__ = "git_requirements_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

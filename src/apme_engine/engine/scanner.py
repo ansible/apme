@@ -6,6 +6,7 @@ import datetime
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 import jsonpickle
@@ -339,6 +340,18 @@ class AnsibleProjectLoader:
 
         if not loaded:
             scandata.load_definitions_root(target_path=scandata.target_path)
+
+        # Preinstalled dependencies are context, kept outside root project definitions.
+        if dependency_dir and not skip_dependency:
+            dep_root = Path(dependency_dir)
+            for collection in sorted(dep_root.glob("ansible_collections/*/*")):
+                if collection.is_dir() and ((collection / "plugins").is_dir() or (collection / "roles").is_dir()):
+                    scandata.load_definition_ext(
+                        LoadType.COLLECTION, f"{collection.parent.name}.{collection.name}", str(collection)
+                    )
+            for role in sorted(dep_root.glob("roles/*")):
+                if role.is_dir():
+                    scandata.load_definition_ext(LoadType.ROLE, role.name, str(role))
 
         scandata.set_target_object()
 
