@@ -63,9 +63,22 @@ Inside `_session_process()`, the format phase runs as Phase 1:
 
 - Consistent indentation (2 spaces)
 - Key ordering within tasks and plays
+- Name capitalization for tasks and plays
 - Jinja2 spacing normalization
 - Trailing whitespace and newline cleanup
 - Quote style consistency
+
+A file whose basename is exactly `galaxy.yml` or `galaxy.yaml` skips
+name capitalization, task key ordering, inline `key=value` expansion, and
+flow-style `tags` rewriting when its root is a mapping with no play or task
+structure. Structure includes `hosts`, `roles`, task-list keys (`tasks`,
+`handlers`, `block`, and the related keys), and `import_playbook` in short or
+fully qualified form. `Galaxy.yml` is a different basename and is formatted
+like any other YAML file. A play saved as `galaxy.yml` still gets the
+task-oriented transforms. Other filenames do too, including files that happen
+to contain `namespace`, `name`, and `version`. Indentation, Jinja spacing,
+and whitespace cleanup still apply. The written collection `name` text is
+left as loaded.
 
 The formatter uses `ruamel.yaml` for comment-preserving round-trips.
 

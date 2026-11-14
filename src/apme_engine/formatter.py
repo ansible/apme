@@ -509,6 +509,88 @@ _TASK_ITEM_RE = re.compile(r"^(\s*)- \S")
 
 
 _PLAY_KEYS = frozenset({"hosts", "import_playbook"})
+_GALAXY_FILENAMES = frozenset({"galaxy.yml", "galaxy.yaml"})
+_PLAYBOOK_STRUCTURE_KEYS = _PLAY_KEYS | _TASK_LIST_KEYS | frozenset({"roles"})
+
+
+def _short_yaml_key(key: str) -> str:
+    """Return the name after the last dot in a YAML key.
+
+    Args:
+        key: Mapping key, possibly a fully qualified module name.
+
+    Returns:
+        ``import_playbook`` for ``ansible.builtin.import_playbook``.
+    """
+    return key.rsplit(".", 1)[-1]
+
+
+def _is_import_playbook_key(key: str) -> bool:
+    """Return True when ``key`` is an ``import_playbook`` directive.
+
+    Args:
+        key: Mapping key from a play or task document.
+
+    Returns:
+        True for the short name and any collection-qualified form.
+    """
+    return _short_yaml_key(key) == "import_playbook"
+
+
+def _is_galaxy_filename(filename: str) -> bool:
+    """Return True when ``filename`` is a collection Galaxy metadata basename.
+
+    The comparison is case-sensitive and uses ``Path.name`` only. It uses the
+    same two basenames as the collection health scanner, not the scanner's
+    collection-root lookup.
+
+    Args:
+        filename: Source path or basename passed to ``format_content``.
+
+    Returns:
+        True for exactly ``galaxy.yml`` or ``galaxy.yaml``.
+    """
+    return Path(filename).name in _GALAXY_FILENAMES
+
+
+def _mapping_has_play_or_task_structure(data: CommentedMap) -> bool:
+    """Return True when a root mapping is a play or contains task lists.
+
+    Args:
+        data: Root CommentedMap.
+
+    Returns:
+        True when a play directive, ``roles``, a task-list key, or any
+        ``import_playbook`` module name is present.
+    """
+    for key in data:
+        if not isinstance(key, str):
+            continue
+        if key in _PLAYBOOK_STRUCTURE_KEYS or _is_import_playbook_key(key):
+            return True
+    return False
+
+
+def _is_collection_metadata(data: CommentedMap, filename: str = "") -> bool:
+    """Return True when task-oriented transforms must not run on this mapping.
+
+    A root mapping is collection metadata when its basename is ``galaxy.yml``
+    or ``galaxy.yaml`` and it has no play or task structure. A play saved
+    under that basename keeps task formatting. Other filenames keep task
+    formatting even when they contain ``namespace``, ``name``, and ``version``.
+
+    Args:
+        data: Root CommentedMap.
+        filename: Source path or basename.
+
+    Returns:
+        True when name casing, task key order, inline ``key=value`` expansion,
+        and flow-style ``tags`` rewriting should be skipped. Indentation,
+        Jinja spacing, and whitespace cleanup still run afterward.
+    """
+    if not _is_galaxy_filename(filename):
+        return False
+    return not _mapping_has_play_or_task_structure(data)
 
 
 def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = None) -> bool:
@@ -516,7 +598,8 @@ def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = Non
 
     Bare task lists start with ``---`` followed by ``- name:`` or ``- module:``
     at indent 0, typical of role ``tasks/main.yml`` or included task files.
-    Returns False for playbooks (first list item has ``hosts:``).
+    Returns False for playbooks (first list item has ``hosts:`` or
+    ``import_playbook``, including a fully qualified module name).
 
     Args:
         lines: Split lines of the YAML file.
@@ -548,7 +631,7 @@ def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = Non
 
     for fl in first_item_lines:
         key = fl.lstrip("- ").split(":")[0].strip()
-        if key in _PLAY_KEYS:
+        if key in _PLAY_KEYS or _is_import_playbook_key(key):
             return False
     return True
 
@@ -1006,7 +1089,8 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
 
     Args:
         text: Raw YAML content.
-        filename: Filename for diff output (default: "<stdin>").
+        filename: Path or basename used in the diff and to recognize
+            ``galaxy.yml`` / ``galaxy.yaml`` (default: "<stdin>").
 
     Returns:
         FormatResult with original, formatted, diff.
@@ -1046,10 +1130,13 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
             _capitalize_name(item)
             _reorder_task_keys(item)
     elif isinstance(data, CommentedMap):
-        _expand_inline_kv_args(data)
-        _force_tags_block_style(data)
-        _capitalize_name(data)
-        _reorder_task_keys(data)
+        # galaxy.yml / galaxy.yaml mappings skip task-oriented transforms.
+        # Written name text, key order, and flow-style tags stay as loaded.
+        if not _is_collection_metadata(data, filename):
+            _expand_inline_kv_args(data)
+            _force_tags_block_style(data)
+            _capitalize_name(data)
+            _reorder_task_keys(data)
         _normalize_min_ansible_version(data)
 
     try:

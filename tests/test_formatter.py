@@ -469,6 +469,223 @@ class TestAnsibleLintAlignment:
 
 
 # ---------------------------------------------------------------------------
+# Name capitalization (task/play only; not galaxy.yml)
+# ---------------------------------------------------------------------------
+
+
+class TestNameCapitalization:
+    """Name casing applies to plays and tasks, not collection metadata."""
+
+    def test_task_name_capitalized_in_sequence(self) -> None:
+        """Lowercase task names in a sequence are capitalized."""
+        text = textwrap.dedent("""\
+        - name: install packages
+          ansible.builtin.debug:
+            msg: hi
+        """)
+        result = format_content(text)
+        assert "name: Install packages" in result.formatted
+        assert result.changed
+
+    def test_play_name_capitalized_in_sequence(self) -> None:
+        """Lowercase play names in a playbook sequence are capitalized."""
+        text = textwrap.dedent("""\
+        - name: configure hosts
+          hosts: localhost
+          tasks:
+            - name: say hello
+              ansible.builtin.debug:
+                msg: hi
+        """)
+        result = format_content(text)
+        assert "name: Configure hosts" in result.formatted
+        assert "name: Say hello" in result.formatted
+        assert result.changed
+
+    def test_root_play_mapping_capitalizes_names(self) -> None:
+        """A root play mapping still capitalizes play and nested task names."""
+        text = textwrap.dedent("""\
+        name: configure hosts
+        hosts: localhost
+        tasks:
+          - name: say hello
+            ansible.builtin.debug:
+              msg: hi
+        """)
+        result = format_content(text)
+        assert "name: Configure hosts" in result.formatted
+        assert "name: Say hello" in result.formatted
+        assert result.changed
+
+    def test_galaxy_yml_preserves_written_name(self) -> None:
+        """A galaxy.yml mapping keeps the written name, key order, and flow tags.
+
+        Detection uses the basename. The identity keys in this fixture are
+        sample content, not the detection rule. Dump post-processing still runs.
+        """
+        text = textwrap.dedent("""\
+        ---
+        namespace: my_ns
+        name: my_collection
+        version: 1.0.0
+        tags: [linux, tools]
+        """)
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: my_collection" in result.formatted
+        assert "name: My_collection" not in result.formatted
+        content_lines = [
+            line
+            for line in result.formatted.splitlines()
+            if line.strip() and not line.strip().startswith("#") and line.strip() != "---"
+        ]
+        namespace_idx = next(i for i, line in enumerate(content_lines) if "namespace:" in line)
+        name_idx = next(i for i, line in enumerate(content_lines) if line.lstrip().startswith("name:"))
+        assert namespace_idx < name_idx, "namespace should stay before name"
+        tags_line = next(line for line in content_lines if "tags:" in line)
+        assert "[" in tags_line, "collection tags should stay flow-style"
+        assert check_idempotent(result)
+
+    def test_nested_galaxy_path_preserves_written_name(self) -> None:
+        """Detection uses the basename, so a nested ``galaxy.yml`` path still matches."""
+        text = "name: my_collection\nversion: 1.0.0\n"
+        result = format_content(text, filename="collections/acme/galaxy.yml")
+        assert "name: my_collection" in result.formatted
+        assert "name: My_collection" not in result.formatted
+
+    def test_galaxy_yml_skips_inline_key_value_expansion(self) -> None:
+        """Inline module ``key=value`` text stays literal in galaxy.yml."""
+        text = textwrap.dedent("""\
+        name: my_collection
+        ansible.builtin.file: path=/tmp/a state=directory
+        """)
+        skipped = format_content(text, filename="galaxy.yml")
+        expanded = format_content(text, filename="playbook.yml")
+        assert "path=/tmp/a state=directory" in skipped.formatted
+        assert "path: /tmp/a" in expanded.formatted
+
+    def test_galaxy_yml_with_roles_still_capitalizes(self) -> None:
+        """``roles`` is play structure, so a galaxy.yml basename does not skip casing."""
+        text = textwrap.dedent("""\
+        name: configure hosts
+        roles:
+          - name: web
+        """)
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: Configure hosts" in result.formatted
+        assert result.changed
+
+    def test_galaxy_yml_with_handlers_still_capitalizes(self) -> None:
+        """A task-list key keeps galaxy.yml on the play/task formatting path."""
+        text = textwrap.dedent("""\
+        name: configure hosts
+        handlers:
+          - name: restart service
+            ansible.builtin.debug:
+              msg: hi
+        """)
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: Configure hosts" in result.formatted
+        assert "name: Restart service" in result.formatted
+        assert result.changed
+
+    def test_non_galaxy_filename_still_gets_name_casing(self) -> None:
+        """A file that is not named galaxy.yml still gets task name casing."""
+        text = textwrap.dedent("""\
+        name: my_collection
+        version: 1.0.0
+        """)
+        result = format_content(text)
+        assert "name: My_collection" in result.formatted
+        assert result.changed
+
+    def test_galaxy_yaml_basename_preserves_written_name(self) -> None:
+        """``galaxy.yaml`` uses the same basename rule as ``galaxy.yml``."""
+        text = "name: my_collection\n"
+        result = format_content(text, filename="galaxy.yaml")
+        assert "name: my_collection" in result.formatted
+        assert "name: My_collection" not in result.formatted
+
+    def test_galaxy_yml_still_normalizes_jinja_spacing(self) -> None:
+        """Whitespace cleanup still runs on collection metadata."""
+        text = textwrap.dedent("""\
+        namespace: my_ns
+        name: my_collection
+        version: 1.0.0
+        description: "{{foo}}"
+        """)
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: my_collection" in result.formatted
+        assert "{{ foo }}" in result.formatted
+        assert result.changed
+
+    def test_galaxy_filename_match_is_case_sensitive(self) -> None:
+        """``Galaxy.yml`` is not the collection metadata basename."""
+        text = "name: my_collection\n"
+        result = format_content(text, filename="Galaxy.yml")
+        assert "name: My_collection" in result.formatted
+        assert result.changed
+
+    def test_identity_keys_without_galaxy_filename_still_capitalize(self) -> None:
+        """``namespace`` / ``name`` / ``version`` do not mark an arbitrary file as galaxy metadata."""
+        text = textwrap.dedent("""\
+        namespace: my_ns
+        name: my_collection
+        version: 1.0.0
+        """)
+        result = format_content(text, filename="metadata.yml")
+        assert "name: My_collection" in result.formatted
+        assert result.changed
+
+    def test_galaxy_filename_with_play_structure_still_capitalizes(self) -> None:
+        """A play saved as galaxy.yml keeps task and play name casing."""
+        text = textwrap.dedent("""\
+        name: configure hosts
+        hosts: localhost
+        tasks:
+          - name: say hello
+            ansible.builtin.debug:
+              msg: hi
+        """)
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: Configure hosts" in result.formatted
+        assert "name: Say hello" in result.formatted
+        assert result.changed
+
+    def test_galaxy_filename_with_qualified_import_playbook_still_capitalizes(self) -> None:
+        """A qualified import_playbook key keeps the file on the play path."""
+        text = textwrap.dedent("""\
+        name: configure hosts
+        ansible.legacy.import_playbook: other.yml
+        """)
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: Configure hosts" in result.formatted
+        assert result.changed
+
+    def test_galaxy_filename_sequence_is_formatted_as_tasks(self) -> None:
+        """A sequence is not collection metadata, even when named galaxy.yml."""
+        text = "- name: my_collection\n"
+        result = format_content(text, filename="galaxy.yml")
+        assert "name: My_collection" in result.formatted
+        assert result.changed
+
+    def test_fqcn_import_playbook_is_not_spaced_as_a_task_list(self) -> None:
+        """Qualified import_playbook entries are plays, so task spacing does not apply."""
+        for module_key in (
+            "ansible.builtin.import_playbook",
+            "ansible.legacy.import_playbook",
+            "some.collection.import_playbook",
+        ):
+            text = textwrap.dedent(f"""\
+            ---
+            - {module_key}: a.yml
+            - {module_key}: b.yml
+            """)
+            result = format_content(text, filename="site.yml")
+            assert f"\n\n- {module_key}: b.yml" not in result.formatted
+            assert check_idempotent(result)
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 
