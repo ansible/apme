@@ -508,24 +508,89 @@ _TASK_LIST_KEYS = frozenset({"tasks", "pre_tasks", "post_tasks", "handlers", "bl
 _TASK_ITEM_RE = re.compile(r"^(\s*)- \S")
 
 
-_PLAY_KEYS = frozenset({"hosts", "import_playbook", "ansible.builtin.import_playbook"})
-_COLLECTION_META_KEYS = frozenset({"namespace", "name", "version"})
+_PLAY_KEYS = frozenset({"hosts", "import_playbook"})
+_GALAXY_FILENAMES = frozenset({"galaxy.yml", "galaxy.yaml"})
+_PLAYBOOK_STRUCTURE_KEYS = _PLAY_KEYS | _TASK_LIST_KEYS | frozenset({"roles"})
 
 
-def _is_collection_metadata(data: CommentedMap) -> bool:
-    """Return True if a mapping looks like collection ``galaxy.yml`` metadata.
+def _short_yaml_key(key: str) -> str:
+    """Return the name after the last dot in a YAML key.
 
-    Matches the required identity keys from the Ansible collection Galaxy
-    metadata schema. Collection metadata has no task lists, so task-oriented
-    transforms must be skipped entirely for these documents.
+    Args:
+        key: Mapping key, possibly a fully qualified module name.
+
+    Returns:
+        ``import_playbook`` for ``ansible.builtin.import_playbook``.
+    """
+    return key.rsplit(".", 1)[-1]
+
+
+def _is_import_playbook_key(key: str) -> bool:
+    """Return True when ``key`` is an ``import_playbook`` directive.
+
+    Args:
+        key: Mapping key from a play or task document.
+
+    Returns:
+        True for the short name and any collection-qualified form.
+    """
+    return _short_yaml_key(key) == "import_playbook"
+
+
+def _is_galaxy_filename(filename: str) -> bool:
+    """Return True when ``filename`` is a collection Galaxy metadata basename.
+
+    The comparison is case-sensitive and uses ``Path.name`` only. It uses the
+    same two basenames as the collection health scanner, not the scanner's
+    collection-root lookup.
+
+    Args:
+        filename: Source path or basename passed to ``format_content``.
+
+    Returns:
+        True for exactly ``galaxy.yml`` or ``galaxy.yaml``.
+    """
+    return Path(filename).name in _GALAXY_FILENAMES
+
+
+def _mapping_has_play_or_task_structure(data: CommentedMap) -> bool:
+    """Return True when a root mapping is a play or contains task lists.
 
     Args:
         data: Root CommentedMap.
 
     Returns:
-        True when ``namespace``, ``name``, and ``version`` are all present.
+        True when a play directive, ``roles``, a task-list key, or any
+        ``import_playbook`` module name is present.
     """
-    return _COLLECTION_META_KEYS.issubset(data.keys())
+    for key in data:
+        if not isinstance(key, str):
+            continue
+        if key in _PLAYBOOK_STRUCTURE_KEYS or _is_import_playbook_key(key):
+            return True
+    return False
+
+
+def _is_collection_metadata(data: CommentedMap, filename: str = "") -> bool:
+    """Return True when task-oriented transforms must not run on this mapping.
+
+    A root mapping is collection metadata when its basename is ``galaxy.yml``
+    or ``galaxy.yaml`` and it has no play or task structure. A play saved
+    under that basename keeps task formatting. Other filenames keep task
+    formatting even when they contain ``namespace``, ``name``, and ``version``.
+
+    Args:
+        data: Root CommentedMap.
+        filename: Source path or basename.
+
+    Returns:
+        True when name casing, task key order, inline ``key=value`` expansion,
+        and flow-style ``tags`` rewriting should be skipped. Indentation,
+        Jinja spacing, and whitespace cleanup still run afterward.
+    """
+    if not _is_galaxy_filename(filename):
+        return False
+    return not _mapping_has_play_or_task_structure(data)
 
 
 def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = None) -> bool:
@@ -533,7 +598,8 @@ def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = Non
 
     Bare task lists start with ``---`` followed by ``- name:`` or ``- module:``
     at indent 0, typical of role ``tasks/main.yml`` or included task files.
-    Returns False for playbooks (first list item has ``hosts:``).
+    Returns False for playbooks (first list item has ``hosts:`` or
+    ``import_playbook``, including a fully qualified module name).
 
     Args:
         lines: Split lines of the YAML file.
@@ -1063,9 +1129,6 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
             _capitalize_name(item)
             _reorder_task_keys(item)
     elif isinstance(data, CommentedMap):
-        # Collection galaxy.yml has no task lists; skip task-oriented transforms
-        # so namespace/name/version stay snake_case identifiers with original key
-        # order and flow-style tags.
         if not _is_collection_metadata(data):
             _expand_inline_kv_args(data)
             _force_tags_block_style(data)
