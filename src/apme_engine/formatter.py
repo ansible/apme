@@ -631,7 +631,7 @@ def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = Non
 
     for fl in first_item_lines:
         key = fl.lstrip("- ").split(":")[0].strip()
-        if key in _PLAY_KEYS:
+        if key in _PLAY_KEYS or _is_import_playbook_key(key):
             return False
     return True
 
@@ -1089,7 +1089,8 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
 
     Args:
         text: Raw YAML content.
-        filename: Filename for diff output (default: "<stdin>").
+        filename: Path or basename used in the diff and to recognize
+            ``galaxy.yml`` / ``galaxy.yaml`` (default: "<stdin>").
 
     Returns:
         FormatResult with original, formatted, diff.
@@ -1129,7 +1130,9 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
             _capitalize_name(item)
             _reorder_task_keys(item)
     elif isinstance(data, CommentedMap):
-        if not _is_collection_metadata(data):
+        # galaxy.yml / galaxy.yaml mappings skip task-oriented transforms.
+        # Written name text, key order, and flow-style tags stay as loaded.
+        if not _is_collection_metadata(data, filename):
             _expand_inline_kv_args(data)
             _force_tags_block_style(data)
             _capitalize_name(data)
