@@ -63,11 +63,41 @@ Inside `_session_process()`, the format phase runs as Phase 1:
 
 - Consistent indentation (2 spaces)
 - Key ordering within tasks and plays
+- Block-style task/play containers so graph nodes have separate source lines
 - Jinja2 spacing normalization
 - Trailing whitespace and newline cleanup
 - Quote style consistency
 
 The formatter uses `ruamel.yaml` for comment-preserving round-trips.
+
+Formatting preserves the casing of every `name` value, including play and task
+labels. Capitalization is handled by the L025 rule and deterministic remediation
+for identified plays, tasks, handlers, and task blocks. Thus `apme format` preserves
+name casing, while `apme remediate` corrects it when L025 is enabled. Metadata and
+variable values keep their original casing regardless of filename.
+
+Block-style container expansion is limited to identified play/task sources;
+other data lists retain their flow style. Collection-qualified
+`import_playbook` directives are plays and do not receive task-list spacing.
+Check output can now include enabled L025 findings that the formatter previously
+silently corrected. CI jobs that relied on `apme format` for L025 compliance
+must run `apme remediate` explicitly.
+
+Source discovery and formatting share bounded task-source context, including
+conventional role `includes/` and test sources. Data/fixture directories remain
+excluded from task transforms. Inline sibling tasks are expanded before graph
+construction so each independently remediated node has its own source lines.
+Directory formatting carries its selected root into classification. Upload
+batches infer standalone roles from the same canonical `tasks/main.*` and
+`meta/main.*` entry points used by loading, without probing client filesystem
+paths. Enclosing role directories outside the selected root grant no context.
+The first data/source boundary owns its subtree: a deeper directory named
+`tasks` or `includes` cannot turn a test fixture or role variable file into a
+task source. Selecting a task directory retains that directory's own context.
+Complete requirements-shaped lists, including unnamed includes and plain role
+entries, remain data in role test sources even when those roots permit custom
+modules. Classification uses entry structure;
+executable task files named `requirements.yml` remain eligible.
 
 ## Format Diffs in the Pipeline
 

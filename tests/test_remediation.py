@@ -1250,6 +1250,19 @@ class TestL020OctalMode:
 class TestL025NameCasing:
     """Tests for fix_name_casing L025 transform."""
 
+    def test_uncased_prefix_does_not_report_a_change(self) -> None:
+        """Numbers, punctuation and templates cannot be fixed by uppercasing."""
+        for name in ("123 configure", "! configure", "role | 123 configure", "{{ label }}"):
+            task = CommentedMap({"name": name})
+            assert not fix_name_casing(task, {})
+            assert task["name"] == name
+
+    def test_trailing_pipe_matches_policy_fallback(self) -> None:
+        """An empty pipe suffix capitalizes the full name as L025 expects."""
+        task = CommentedMap({"name": "file | "})
+        assert fix_name_casing(task, {})
+        assert task["name"] == "File | "
+
     def test_capitalizes_task_name(self) -> None:
         """Verifies task name capitalized (first letter uppercase)."""
         content = textwrap.dedent("""\

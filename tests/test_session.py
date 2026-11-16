@@ -630,6 +630,766 @@ class TestWritePatchesToTempDir:
 class TestSessionApprovalGates:
     """Unit tests for multi-gate approval sequencing and proposal isolation."""
 
+    async def test_restarted_processing_rotates_pending_gate_token(self) -> None:
+        """A failed processing run cannot reuse its pending gate identity on retry."""
+        from apme_engine.daemon import engine_server as server
+
+        session = SessionState(session_id="retry-processing", status=1)
+        proposal = Proposal(id="p1", file="tasks.yml")
+        session.proposals = {"p1": proposal}
+        old_token = server._current_approval_token(session)
+        session.reset_partial_run_state()
+        session.proposals = {"p1": proposal}
+        session.status = 1
+        new_token = server._current_approval_token(session)
+        assert new_token != old_token
+        servicer = server.EngineServicer()
+        events = [
+            event
+            async for event in servicer._session_handle_approval(
+                session,
+                set(),
+                approval_token=old_token,
+            )
+        ]
+        assert len(events) == 1
+        assert events[0].error.code == "stale_approval_gate"
+        assert set(session.proposals) == {"p1"}
+        assert not session.approval_decisions
+
+    @pytest.mark.parametrize(
+        "stale_mode", ["token", "legacy", "different", "unknown", "current_foreign", "current_mixed", "current_unknown"]
+    )  # type: ignore[untyped-decorator]
+    async def test_empty_gate1_retry_cannot_decide_gate2(self, stale_mode: str) -> None:
+        """Delayed Gate 1 decisions cannot consume any Gate 2 proposal.
+
+        Args:
+            stale_mode: Exact token retry, unscoped legacy retry, changed decision, or unknown token.
+        """
+        from apme.v1.engine_pb2 import AiEscalateRequest, AiEscalateTarget
+        from apme_engine.daemon import engine_server as server
+
+        servicer = server.EngineServicer()
+        store = servicer._get_session_store()
+        session = store.create()
+        session.status = 1
+        session.current_tier = 1
+        session.awaiting_tier1_gate = True
+        session.fix_options = FixOptions(enable_ai=True)
+        session.proposals = {"t1-0000": Proposal(id="t1-0000", file="tasks.yml", tier=1)}
+        stream = AsyncCommandStream()
+        stream.send(SessionCommand(resume=ResumeRequest(session_id=session.session_id)))
+        first_token = ""
+        second_token = ""
+        retry_sent = False
+        stale_checked = False
+        expected_error = {
+            "legacy": "approval_token_required",
+            "different": "approval_already_decided",
+            "unknown": "stale_approval_gate",
+            "current_foreign": "invalid_approval_ids",
+            "current_mixed": "invalid_approval_ids",
+            "current_unknown": "invalid_approval_ids",
+        }
+
+        async def ai_gate(_state: SessionState) -> AsyncIterator[SessionEvent]:
+            _state.proposals = {"ai-0000": Proposal(id="ai-0000", file="tasks.yml", tier=2)}
+            _state.current_tier = 2
+            _state.status = 1
+            yield SessionEvent(
+                proposals=ProposalsReady(
+                    proposals=list(_state.proposals.values()),
+                    tier=2,
+                    status=1,
+                    approval_token=server._current_approval_token(_state),
+                )
+            )
+
+        def check_and_decline_gate2() -> None:
+            nonlocal stale_checked
+            assert set(session.proposals) == {"ai-0000"}
+            assert session.status == 1
+            assert "ai-0000" not in session.rejected_proposals
+            assert second_token not in session.approval_decisions
+            stale_checked = True
+            stream.send(SessionCommand(approve=ApprovalRequest(approval_token=second_token)))
+
+        events = []
+        try:
+            with (
+                patch.object(
+                    server,
+                    "_collect_ai_triage_candidates",
+                    return_value=[
+                        {
+                            "rule_id": "L999",
+                            "path": "tasks.yml/tasks[0]",
+                            "file": "tasks.yml",
+                        }
+                    ],
+                ),
+                patch.object(servicer, "_session_run_ai_gate", side_effect=ai_gate),
+            ):
+                async for event in servicer.FixSession(stream, FakeGrpcContext()):  # type: ignore[arg-type]
+                    events.append(event)
+                    if event.HasField("proposals") and event.proposals.tier == 1:
+                        first_token = event.proposals.approval_token
+                        assert first_token
+                        replay = [item async for item in servicer._session_replay_state(session)]
+                        assert replay[-1].proposals.approval_token == first_token
+                        stream.send(SessionCommand(approve=ApprovalRequest(approval_token=first_token)))
+                    elif event.HasField("ai_triage"):
+                        stream.send(
+                            SessionCommand(
+                                ai_escalate=AiEscalateRequest(
+                                    targets=[AiEscalateTarget(path="tasks.yml/tasks[0]")],
+                                )
+                            )
+                        )
+                    elif event.HasField("proposals"):
+                        if not retry_sent:
+                            second_token = event.proposals.approval_token
+                            assert second_token and second_token != first_token
+                            retry_sent = True
+                            stream.send(
+                                SessionCommand(
+                                    approve=ApprovalRequest(
+                                        approval_token=""
+                                        if stale_mode == "legacy"
+                                        else (
+                                            "unknown-token"
+                                            if stale_mode == "unknown"
+                                            else (second_token if stale_mode.startswith("current_") else first_token)
+                                        ),
+                                        approved_ids=(
+                                            ["ai-0000"]
+                                            if stale_mode == "different"
+                                            else ["t1-0000"]
+                                            if stale_mode == "current_foreign"
+                                            else ["ai-0000", "t1-0000"]
+                                            if stale_mode == "current_mixed"
+                                            else ["unknown"]
+                                            if stale_mode == "current_unknown"
+                                            else []
+                                        ),
+                                    )
+                                )
+                            )
+                        else:
+                            assert stale_mode == "token"
+                            assert event.proposals.approval_token == second_token
+                            check_and_decline_gate2()
+                    elif event.HasField("error"):
+                        assert event.error.code == expected_error[stale_mode]
+                        assert event.error.recoverable
+                        check_and_decline_gate2()
+                    elif event.HasField("result"):
+                        assert stale_checked
+                        stream.send(SessionCommand(close=CloseRequest()))
+            assert events[-1].HasField("closed")
+            assert session.approval_decisions[first_token] == frozenset()
+            assert session.approval_decisions[second_token] == frozenset()
+            assert set(session.rejected_proposals) == {"t1-0000", "ai-0000"}
+        finally:
+            store.remove(session.session_id)
+
+    async def test_legacy_ids_may_include_offered_declined_rows(self) -> None:
+        """A legacy nonempty request can include every offered row without rejecting a valid fix."""
+        from apme_engine.daemon import engine_server as server
+
+        session = SessionState(session_id="legacy-offer", status=1)
+        session.proposals = {
+            "ai-0000": Proposal(
+                id="ai-0000",
+                file="tasks.yml",
+                before_text="before",
+                after_text="after",
+            )
+        }
+        session.review_declined_proposals = {
+            "ai-declined-0001": Proposal(
+                id="ai-declined-0001",
+                file="tasks.yml",
+                status="declined",
+            )
+        }
+        session.working_files = {"tasks.yml": b"before"}
+        session.approval_decisions = {"old-token": frozenset()}
+        events = [
+            event
+            async for event in server.EngineServicer()._session_handle_approval(
+                session,
+                {"ai-0000", "ai-declined-0001"},
+                approval_token="",
+            )
+        ]
+        assert not any(event.HasField("error") for event in events)
+        assert events[0].approval_ack.applied_count == 1
+        assert session.working_files["tasks.yml"] == b"after"
+        assert session.status == 3
+
+    @pytest.mark.parametrize("disconnect", [False, True])  # type: ignore[untyped-decorator]
+    async def test_reporting_does_not_hold_close_or_disconnect(self, disconnect: bool) -> None:
+        """Reporting stays owned without delaying the result-to-close RPC handshake.
+
+        Args:
+            disconnect: Whether the client disconnects instead of closing normally.
+        """
+        from apme_engine.daemon import engine_server as server
+
+        servicer = server.EngineServicer()
+        store = servicer._get_session_store()
+        session = store.create()
+        session.status = 1
+        session.upload_sealed = True
+        session.proposals = {"p1": Proposal(id="p1", file="tasks.yml")}
+        session.original_files = {"tasks.yml": b"before"}
+        session.working_files = {"tasks.yml": b"after"}
+        reporting = asyncio.Event()
+        release = asyncio.Event()
+        result_seen = asyncio.Event()
+        stream = AsyncCommandStream()
+        stream.send(SessionCommand(resume=ResumeRequest(session_id=session.session_id)))
+
+        async def slow_report(_session: SessionState, _result: SessionResult) -> None:
+            reporting.set()
+            await release.wait()
+
+        async def consume() -> list[SessionEvent]:
+            events = []
+            async for event in servicer.FixSession(stream, FakeGrpcContext()):  # type: ignore[arg-type]
+                events.append(event)
+                if event.HasField("proposals"):
+                    stream.send(SessionCommand(approve=ApprovalRequest(approved_ids=["p1"])))
+                elif event.HasField("result"):
+                    assert event.result.patches[0].patched == b"after"
+                    result_seen.set()
+                    if not disconnect:
+                        stream.send(SessionCommand(close=CloseRequest()))
+            return events
+
+        with patch.object(servicer, "_session_report_result", side_effect=slow_report):
+            client = asyncio.create_task(consume())
+            try:
+                await asyncio.wait_for(reporting.wait(), 5)
+                await asyncio.wait_for(result_seen.wait(), 5)
+                assert not session.approval_in_flight
+                assert session.approval_tasks
+                if disconnect:
+                    client.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await client
+                    assert store.get(session.session_id) is session
+                else:
+                    events = await asyncio.wait_for(client, 5)
+                    assert events[-1].HasField("closed")
+                    assert store.get(session.session_id) is None
+                # Close/cancellation must leave completion reporting running.
+                assert session.approval_tasks
+            finally:
+                pending = list(session.approval_tasks)
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*pending), 5)
+                if not client.done():
+                    client.cancel()
+                await asyncio.gather(client, return_exceptions=True)
+                store.remove(session.session_id)
+        assert not session.approval_tasks
+
+    @pytest.mark.parametrize("enable_ai", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("accept", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("retry_accept", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("restore_snapshot", [False, True])  # type: ignore[untyped-decorator]
+    async def test_failed_approval_persistence_is_retryable(
+        self, tmp_path: Path, enable_ai: bool, accept: bool, retry_accept: bool, restore_snapshot: bool
+    ) -> None:
+        """Retry the full disk batch without losing proposals or doubling decisions.
+
+        Args:
+            tmp_path: Session working directory.
+            enable_ai: Whether approval should continue to AI triage.
+            accept: Whether to accept or reject on the failed first attempt.
+            retry_accept: Approval choices on retry, which may differ from the first attempt.
+            restore_snapshot: Whether Gate 2 snapshot bytes also need restoration.
+        """
+        from apme.v1.common_pb2 import Violation
+        from apme.v1.engine_pb2 import AiTriageReady
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        original = "- name: Task\n  debug: {}\n"
+        graph = ContentGraph()
+        session = SessionState(session_id="retry-write", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {}
+        for index in range(2):
+            path = f"tasks{index}.yml"
+            node = ContentNode(
+                identity=NodeIdentity(path=f"{path}/tasks[0]", node_type=NodeType.TASK),
+                file_path=path,
+                line_start=1,
+                line_end=2,
+                yaml_lines=original,
+            )
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+            node.update_from_yaml(original.replace("debug:", "ansible.builtin.debug:"))
+            node.record_state(1, "transformed", source="deterministic")
+            session.graph_originals[path] = original
+            session.working_files[path] = original.encode()
+            session.proposals[f"t1-{index:04d}"] = Proposal(id=f"t1-{index:04d}", path=node.node_id, file=path, tier=1)
+            (tmp_path / path).write_text(original)
+        # Gate 2 also needs to restore bytes not represented by changed nodes.
+        if restore_snapshot:
+            session.pre_gate2_files = dict(session.working_files)
+            session.pre_gate2_files["restore.yml"] = b"original: value\n"
+            session.pre_gate2_files["template.j2"] = b"caf\xe9\n"
+            (tmp_path / "restore.yml").write_text("pending: value\n")
+            (tmp_path / "template.j2").write_bytes(b"caf\xe9\n")
+        session.awaiting_tier1_gate = True
+        session.fix_options = FixOptions(enable_ai=enable_ai)
+        pending = dict(session.proposals)
+        progressions = {node.node_id: list(node.progression) for node in graph.nodes()}
+        working = dict(session.working_files)
+        choices = set(pending) if accept else set()
+        write_fn = server._write_files_to_temp_dir
+        attempts = 0
+
+        def flaky_write(root: Path, files: dict[str, bytes]) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                write_fn(root, dict(list(files.items())[:1]))
+                raise OSError("simulated disk failure after first file")
+            write_fn(root, files)
+
+        async def enter_ai(
+            _self: server.EngineServicer, state: SessionState, *, report_completion: bool = True
+        ) -> AsyncIterator[SessionEvent]:
+            state.awaiting_ai_triage = True
+            state.status = 4
+            state.ai_triage_candidates = [Violation(rule_id="L999", file="tasks0.yml")]
+            yield SessionEvent(ai_triage=AiTriageReady(status=4))
+
+        servicer = server.EngineServicer()
+        gate_token = server._current_approval_token(session)
+        with (
+            patch.object(server, "_write_files_to_temp_dir", side_effect=flaky_write),
+            patch.object(server.EngineServicer, "_session_enter_ai_phase", enter_ai),
+        ):
+            failed = [event async for event in servicer._session_handle_approval(session, choices)]
+            assert [event.WhichOneof("event") for event in failed] == ["error"]
+            assert failed[0].error.code == "remediation_failed"
+            assert session.status == 1
+            assert session.awaiting_tier1_gate
+            assert session.proposals == pending
+            assert server._current_approval_token(session) == gate_token
+            assert not session.approval_decisions
+            assert not session.approved_ids
+            assert not session.approved_proposals
+            assert not session.rejected_proposals
+            assert session.working_files == working
+            assert {node.node_id: node.progression for node in graph.nodes()} == progressions
+            assert not session.approval_in_flight
+            replay = [event async for event in servicer._session_replay_state(session)]
+            assert set(p.id for event in replay for p in event.proposals.proposals) == set(pending)
+            choices = set(pending) if retry_accept else set()
+            retried = [event async for event in servicer._session_handle_approval(session, choices)]
+            assert not any(event.HasField("error") for event in retried)
+            assert next(event for event in retried if event.HasField("approval_ack")).approval_ack.applied_count == (
+                2 if retry_accept else 0
+            )
+            assert any(event.HasField("ai_triage" if enable_ai else "result") for event in retried)
+            duplicate = [event async for event in servicer._session_handle_approval(session, choices)]
+            assert duplicate[0].approval_ack.applied_count == 0
+        assert attempts == 2
+        assert len(session.approved_proposals) == (2 if retry_accept else 0)
+        assert len(session.rejected_proposals) == (0 if retry_accept else 2)
+        assert session.status == (4 if enable_ai else 3)
+        assert not session.proposals
+        if restore_snapshot:
+            assert (tmp_path / "restore.yml").read_text() == "original: value\n"
+            assert (tmp_path / "template.j2").read_bytes() == b"caf\xe9\n"
+            assert session.working_files["template.j2"] == b"caf\xe9\n"
+        for path in ("tasks0.yml", "tasks1.yml"):
+            expected = original.replace("debug:", "ansible.builtin.debug:") if retry_accept else original
+            assert session.working_files[path].decode().removeprefix("---\n") == expected
+            assert (tmp_path / path).read_bytes() == session.working_files[path]
+
+    async def test_disconnect_during_persistence_finishes_ai_transition(self, tmp_path: Path) -> None:
+        """A disconnected approval persists before committing and exposes durable triage on resume.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        import threading
+
+        from apme.v1.common_pb2 import Violation
+        from apme.v1.engine_pb2 import AiTriageReady
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        original = "- name: Task\n  debug: {}\n"
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path="tasks.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="tasks.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines=original,
+        )
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(original.replace("debug:", "ansible.builtin.debug:"))
+        node.record_state(1, "transformed", source="deterministic")
+        session = SessionState(session_id="post-commit", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"tasks.yml": original}
+        session.working_files = {"tasks.yml": original.encode()}
+        session.proposals = {"t1-0000": Proposal(id="t1-0000", path=node.node_id, file="tasks.yml", tier=1)}
+        session.awaiting_tier1_gate = True
+        session.fix_options = FixOptions(enable_ai=True)
+        servicer = server.EngineServicer()
+        loop = asyncio.get_running_loop()
+        writing = asyncio.Event()
+        release_write = threading.Event()
+        write_fn = server._write_files_to_temp_dir
+
+        def slow_write(root: Path, files: dict[str, bytes]) -> None:
+            loop.call_soon_threadsafe(writing.set)
+            assert release_write.wait(5), "write was never released"
+            write_fn(root, files)
+
+        async def enter_ai(
+            _self: server.EngineServicer, state: SessionState, *, report_completion: bool = True
+        ) -> AsyncIterator[SessionEvent]:
+            state.awaiting_ai_triage = True
+            state.status = 4
+            state.ai_triage_candidates = [Violation(rule_id="L999", file="tasks.yml", path=node.node_id)]
+            yield SessionEvent(ai_triage=AiTriageReady(status=4))
+
+        async def approve() -> list[SessionEvent]:
+            return [event async for event in servicer._session_handle_approval(session, {"t1-0000"})]
+
+        async def replay() -> list[SessionEvent]:
+            return [event async for event in servicer._session_replay_state(session)]
+
+        with (
+            patch.object(server, "_write_files_to_temp_dir", side_effect=slow_write) as writer,
+            patch.object(server.EngineServicer, "_session_enter_ai_phase", enter_ai),
+        ):
+            first = asyncio.create_task(approve())
+            resumed: asyncio.Task[list[SessionEvent]] | None = None
+            try:
+                await asyncio.wait_for(writing.wait(), 5)
+                assert session.proposals
+                assert not session.approved_ids
+                first.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await first
+                assert session.approval_in_flight
+                resumed = asyncio.create_task(replay())
+                await asyncio.sleep(0)
+                assert not resumed.done()
+                busy = await approve()
+                assert busy[0].error.code == "approval_in_progress"
+                release_write.set()
+                events = await asyncio.wait_for(resumed, 5)
+                assert any(event.HasField("ai_triage") for event in events)
+                assert session.awaiting_ai_triage and session.status == 4
+                duplicate = await approve()
+                assert duplicate[0].approval_ack.applied_count == 0
+                assert any(event.HasField("ai_triage") for event in duplicate)
+                assert session.awaiting_ai_triage and session.status == 4
+                assert writer.call_count == 1
+            finally:
+                release_write.set()
+                if not first.done():
+                    first.cancel()
+                await asyncio.gather(first, return_exceptions=True)
+                if resumed is not None and not resumed.done():
+                    await asyncio.wait_for(resumed, 5)
+        assert not session.approval_in_flight
+        assert len(session.approved_proposals) == 1
+        assert b"ansible.builtin.debug" in (tmp_path / "tasks.yml").read_bytes()
+
+    @pytest.mark.parametrize("gate", ["initial", "approval", "ai"])  # type: ignore[untyped-decorator]
+    async def test_gates_format_the_same_role_include_patch(self, tmp_path: Path, gate: str) -> None:
+        """All gates expand identical role-include patches with identical context.
+
+        Args:
+            tmp_path: Session working directory.
+            gate: Remediation gate receiving the flow-style source patch.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.graph_engine import FilePatch as SourcePatch
+        from apme_engine.remediation.graph_engine import GraphFixReport
+        from apme_engine.remediation.transforms import build_default_registry
+
+        class DummyEngine:
+            """Supply a completed engine run so this test isolates gate assembly."""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                """Accept the production engine constructor's inputs.
+
+                Args:
+                    *args: Positional engine options.
+                    **kwargs: Named engine options.
+                """
+                self._registry = build_default_registry()
+                self._max_ai_attempts = 2
+                self._ai_provider = None
+                self.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=1, nodes_modified=1))
+
+        relative = "roles/web/includes/setup.yml"
+        original = "- name: Original\n  debug: {}\n"
+        flow = "[{name: first task, custom_module: {}}, {name: second task, custom_module: {}}]\n"
+        expected = "---\n- name: first task\n  custom_module: {}\n\n- name: second task\n  custom_module: {}\n"
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True)
+        path.write_text(original)
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path=f"{relative}/tasks[0]", node_type=NodeType.TASK),
+            file_path=relative,
+            yaml_lines=original,
+            line_start=1,
+            line_end=2,
+        )
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.record_state(1, "transformed", source="deterministic")
+        session = SessionState(session_id=f"format-{gate}", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_engine = DummyEngine()
+        session.graph_originals = {relative: original}
+        session.working_files = {relative: original.encode()}
+        session.original_files = dict(session.working_files)
+        session.fix_options = FixOptions(enable_ai=gate == "ai")
+        servicer = server.EngineServicer()
+
+        async def result_event(_self: server.EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        async def scan(_paths: list[str]) -> list[ViolationDict]:
+            return []
+
+        with (
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", DummyEngine),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_modifications",
+                return_value=[SourcePatch(path=relative, original=original, patched=flow, diff="")],
+            ),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
+            patch.object(server.EngineServicer, "_session_build_result", result_event),
+        ):
+            if gate == "initial":
+                from apme_engine.formatter import format_content
+
+                events = [
+                    event
+                    async for event in servicer._session_graph_remediate(
+                        session=session,
+                        scan_id="gate-format",
+                        registry=MagicMock(),
+                        scan_fn=scan,
+                        captured_graph=[graph],
+                        yaml_paths=[str(path)],
+                        temp_dir=tmp_path,
+                        max_passes=1,
+                        progress_queue=asyncio.Queue(),
+                        progress_callback=lambda *args: None,
+                        _heartbeat=_noop_heartbeat,
+                        format_content=format_content,
+                        format_diffs=[],
+                    )
+                ]
+            elif gate == "approval":
+                session.proposals = {"t1-0000": Proposal(id="t1-0000", path=node.node_id, file=relative, tier=1)}
+                events = [event async for event in servicer._session_handle_approval(session, {"t1-0000"})]
+            else:
+                events = [event async for event in servicer._session_run_ai_gate(session)]
+        assert not any(event.HasField("error") for event in events)
+        assert session.working_files[relative].decode() == expected
+        assert path.read_text() == expected
+
+    @pytest.mark.parametrize("cancel_first", [False, True])  # type: ignore[untyped-decorator]
+    async def test_resumed_approvals_do_not_race_preview(self, tmp_path: Path, cancel_first: bool) -> None:
+        """Concurrent approval and replay see stable state, including after disconnect.
+
+        Args:
+            tmp_path: Session working directory.
+            cancel_first: Whether the first approving stream disconnects during preview.
+        """
+        import threading
+
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        original = "- name: Task\n  debug: {}\n"
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path="tasks.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="tasks.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines=original,
+        )
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(original.replace("debug:", "ansible.builtin.debug:"))
+        node.record_state(1, "transformed", source="deterministic")
+        session = SessionState(session_id="resumed-approval", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"tasks.yml": original}
+        session.working_files = {"tasks.yml": original.encode()}
+        session.proposals = {"t1-0000": Proposal(id="t1-0000", path=node.node_id, file="tasks.yml", tier=1)}
+        pending = dict(session.proposals)
+        servicer = server.EngineServicer()
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        released = threading.Event()
+        preview_fn = server._preview_graph_approvals
+        apply_fn = server._apply_node_approval_decisions
+        mutation_threads: list[int] = []
+
+        def slow_preview(
+            s: SessionState, g: ContentGraph, originals: dict[str, str], choices: set[str]
+        ) -> server._GraphApprovalPreview:
+            loop.call_soon_threadsafe(entered.set)
+            assert released.wait(5), "preview was never released"
+            return preview_fn(s, g, originals, choices)
+
+        def record_mutations(
+            g: ContentGraph, decisions: tuple[tuple[str, str], ...], choices: frozenset[str]
+        ) -> tuple[set[str], set[str]]:
+            mutation_threads.append(threading.get_ident())
+            return apply_fn(g, decisions, choices)
+
+        async def consume() -> list[SessionEvent]:
+            return [event async for event in servicer._session_handle_approval(session, {"t1-0000"})]
+
+        async def result_event(_self: server.EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        async def preview_finished() -> None:
+            while session.approval_in_flight:
+                await asyncio.sleep(0.001)
+
+        with (
+            patch.object(server, "_preview_graph_approvals", side_effect=slow_preview),
+            patch.object(server, "_apply_node_approval_decisions", side_effect=record_mutations),
+            patch.object(server.EngineServicer, "_session_build_result", result_event),
+        ):
+            first = asyncio.create_task(consume())
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                assert session.approval_in_flight
+                replay = [event async for event in servicer._session_replay_state(session)]
+                assert [proposal.id for event in replay for proposal in event.proposals.proposals] == ["t1-0000"]
+                busy = await consume()
+                assert [event.WhichOneof("event") for event in busy] == ["error"]
+                assert busy[0].error.code == "approval_in_progress"
+                assert session.proposals == pending
+                assert not session.approved_proposals
+                assert session.working_files == {"tasks.yml": original.encode()}
+                if cancel_first:
+                    first.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await first
+                    assert session.approval_in_flight
+                released.set()
+                if cancel_first:
+                    await asyncio.wait_for(preview_finished(), 5)
+                    assert session.proposals == pending
+                    assert not session.approved_proposals
+                    events = await consume()
+                else:
+                    events = await asyncio.wait_for(first, 5)
+                assert next(event for event in events if event.HasField("approval_ack")).approval_ack.applied_count == 1
+            finally:
+                released.set()
+                if not first.done():
+                    first.cancel()
+                await asyncio.gather(first, return_exceptions=True)
+        assert not session.approval_in_flight
+        assert len(session.approved_proposals) == 1
+        assert not session.proposals
+        assert mutation_threads[-1] == threading.get_ident()
+        assert all(thread != threading.get_ident() for thread in mutation_threads[:-1])
+        assert b"ansible.builtin.debug" in session.working_files["tasks.yml"]
+
+    async def test_conflicting_approval_emits_session_error(self, tmp_path: Path) -> None:
+        """A real splice conflict remains a session error and cannot write partial patches.
+
+        Args:
+            tmp_path: Temporary session working directory.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        original = "- name: Parent\n  block:\n    - debug: {}\n"
+        graph = ContentGraph()
+        session = SessionState(session_id="conflict")
+        session.temp_dir = tmp_path
+        session.status = 1
+        session.working_files = {"tasks.yml": original.encode()}
+        session.pre_gate2_files = {"tasks.yml": b"must not replace working files\n"}
+        session.graph_originals = {"tasks.yml": original}
+        session.content_graph = graph
+        for index, (before, after, start, node_type) in enumerate(
+            (
+                (original, original.replace("debug: {}", "ansible.builtin.command: echo hello"), 1, NodeType.BLOCK),
+                ("    - debug: {}\n", "    - ansible.builtin.debug: {}\n", 3, NodeType.TASK),
+            )
+        ):
+            node = ContentNode(
+                identity=NodeIdentity(path=f"tasks.yml/tasks[{index}]", node_type=node_type),
+                file_path="tasks.yml",
+                line_start=start,
+                line_end=3,
+                yaml_lines=before,
+            )
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+            node.update_from_yaml(after)
+            node.record_state(1, "transformed", source="deterministic")
+            pid = f"t1-{index:04d}"
+            session.proposals[pid] = Proposal(id=pid, path=node.node_id, file="tasks.yml", tier=1)
+        servicer = EngineServicer()
+        pending = dict(session.proposals)
+        progressions = {node.node_id: list(node.progression) for node in graph.nodes()}
+        events = [event async for event in servicer._session_handle_approval(session, set(session.proposals))]
+        assert [event.WhichOneof("event") for event in events] == ["error"]
+        assert events[0].error.code == "remediation_failed"
+        assert "Conflicting remediation edits" in events[0].error.message
+        assert session.working_files == {"tasks.yml": original.encode()}
+        assert not (tmp_path / "tasks.yml").exists()
+        assert session.status != 3
+        assert session.proposals == pending
+        assert not session.approved_ids
+        assert not session.approved_proposals
+        assert not session.rejected_proposals
+        assert {node.node_id: node.progression for node in graph.nodes()} == progressions
+
+        async def result_event(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        with patch.object(EngineServicer, "_session_build_result", result_event):
+            retry = [event async for event in servicer._session_handle_approval(session, {"t1-0001"})]
+        assert [event.WhichOneof("event") for event in retry] == ["approval_ack", "result"]
+        assert retry[0].approval_ack.applied_count == 1
+        expected = "---\n" + original.replace("- debug:", "- ansible.builtin.debug:")
+        assert session.working_files["tasks.yml"] == expected.encode()
+        assert (tmp_path / "tasks.yml").read_text() == expected
+
     def test_partial_graph_tier1_approval_reverts_declined_nodes(self) -> None:
         """Approving 1 of 2 Tier 1 proposals keeps only that node's edits.
 
@@ -718,8 +1478,9 @@ class TestSessionApprovalGates:
         assert n0.yaml_lines == fixed
         assert n1.yaml_lines == original
         assert len(patches) == 1
-        assert Path(patches[0].path).name == "a.yml" or patches[0].path.endswith("a.yml")
+        assert patches[0].path == "a.yml"
         assert "ansible.builtin.apt" in patches[0].patched
+        assert session.working_files["b.yml"] == original.encode()
         assert all(s.approved for s in n0.progression)
         assert len(n1.progression) == 1
 
@@ -744,14 +1505,17 @@ class TestSessionApprovalGates:
         assert "Applied 0 approved Tier 1 proposal" in (events[0].progress.message or "")
         assert session.status == 3  # COMPLETE
 
-    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("splice_conflict", [False, True])  # type: ignore[untyped-decorator]
+    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path, splice_conflict: bool) -> None:
         """Gate 2 drops stale t1-* pending IDs; no-proposal path may sync files.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
+            splice_conflict: Whether source assembly reports conflicting edits.
         """
         from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import SpliceConflictError
 
         class _DummyGraphEngine:
             def __init__(self) -> None:
@@ -798,6 +1562,7 @@ class TestSessionApprovalGates:
             patch(
                 "apme_engine.remediation.graph_engine.splice_modifications",
                 return_value=[SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: hi\n")],
+                side_effect=SpliceConflictError("conflicting gate edits") if splice_conflict else None,
             ),
             patch(
                 "apme_engine.formatter.format_content",
@@ -808,6 +1573,14 @@ class TestSessionApprovalGates:
             events = [e async for e in servicer._session_run_ai_gate(session)]
 
         event_types = [e.WhichOneof("event") for e in events]
+        if splice_conflict:
+            assert event_types == ["progress", "error"]
+            assert events[-1].error.code == "remediation_failed"
+            assert events[-1].error.message == "conflicting gate edits"
+            assert session.working_files["play.yml"] == session.pre_gate2_files["play.yml"]
+            assert not (tmp_path / "play.yml").exists()
+            assert session.status != 3
+            return
         assert event_types == ["progress", "result"]
         assert session.proposals == {}
         assert "t1-0000" in session.rejected_proposals
@@ -1101,17 +1874,23 @@ class TestSessionApprovalGates:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.engine_server import EngineServicer, _apply_graph_approvals
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
 
         baseline = b"- hosts: all\n  tasks:\n    - debug: msg=keep\n"
         leaked = b"- hosts: all\n  become: true\n  tasks: []\n"
-        session = SessionState(session_id="decline-restore")
+        binary = b"caf\xe9\n"
+        template = "roles/web/templates/message.j2"
+        session = SessionState(session_id="decline-restore", status=1)
         session.content_graph = ContentGraph()
-        session.pre_gate2_files = {"play.yml": baseline}
-        session.working_files = {"play.yml": leaked}
+        session.graph_originals = {"play.yml": baseline.decode()}
+        session.original_files = {"play.yml": baseline, template: binary}
+        session.pre_gate2_files = dict(session.original_files)
+        session.working_files = {"play.yml": leaked, template: binary}
         session.temp_dir = tmp_path
         (tmp_path / "play.yml").write_bytes(leaked)
+        (tmp_path / template).parent.mkdir(parents=True)
+        (tmp_path / template).write_bytes(binary)
         session.proposals = {
             "ai-0000": Proposal(
                 id="ai-0000",
@@ -1122,25 +1901,15 @@ class TestSessionApprovalGates:
                 source="ai",
             )
         }
-        session.ai_proposals = []
-
-        from apme_engine.daemon.engine_server import _write_patches_to_temp_dir
-
-        applied, rejected, approved, patches = _apply_graph_approvals(
-            session,
-            session.content_graph,
-            {"play.yml": baseline.decode()},
-            set(),
-        )
-        assert applied == 0
-        assert approved == set()
-        assert "play.yml/plays[0]" in rejected
-        assert session.working_files["play.yml"] == baseline
-        # Disk sync is async-path responsibility (ADR-007); mirror the handler.
-        assert patches
-        _write_patches_to_temp_dir(tmp_path, patches)
-        assert (tmp_path / "play.yml").read_bytes() == baseline
-        assert EngineServicer is not None  # approval path uses same helpers
+        events = [event async for event in EngineServicer()._session_handle_approval(session, set())]
+        assert [event.WhichOneof("event") for event in events] == ["approval_ack", "result"]
+        assert events[0].approval_ack.applied_count == 0
+        assert not events[1].result.patches
+        assert session.status == 3
+        assert session.working_files == session.pre_gate2_files
+        assert not session.proposals
+        for path, content in session.pre_gate2_files.items():
+            assert (tmp_path / path).read_bytes() == content
 
     def test_build_fix_event_includes_rejected_telemetry_store(self) -> None:
         """FixCompletedEvent includes rejected outcomes from telemetry snapshots."""
@@ -1292,18 +2061,20 @@ class TestSessionGraphRemediate:
     results to disk, and graph-authoritative reporting of remaining violations.
     """
 
-    async def test_happy_path_produces_patches_and_events(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("splice_conflict", [False, True])  # type: ignore[untyped-decorator]
+    async def test_happy_path_produces_patches_and_events(self, tmp_path: Path, splice_conflict: bool) -> None:
         """Graph engine fixes violations, splices files, and emits correct events.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
+            splice_conflict: Whether source assembly reports conflicting edits.
         """
         from unittest.mock import MagicMock
 
         from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
-        from apme_engine.remediation.graph_engine import GraphFixReport
+        from apme_engine.remediation.graph_engine import GraphFixReport, SpliceConflictError
 
         servicer = EngineServicer.__new__(EngineServicer)
 
@@ -1354,7 +2125,11 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_modifications",
+                return_value=mock_patches,
+                side_effect=SpliceConflictError("conflicting graph edits") if splice_conflict else None,
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
@@ -1385,6 +2160,16 @@ class TestSessionGraphRemediate:
         assert callable(gre_kwargs["rescan_fn"])
 
         event_types = [e.WhichOneof("event") for e in events]
+        if splice_conflict:
+            assert event_types[-1] == "error"
+            assert "tier1_complete" not in event_types
+            assert "result" not in event_types
+            assert events[-1].error.code == "remediation_failed"
+            assert events[-1].error.message == "conflicting graph edits"
+            assert session.working_files["play.yml"] == yaml_content.encode()
+            assert play_file.read_text() == yaml_content
+            assert session.status != 3
+            return
         assert "progress" in event_types
         assert "tier1_complete" in event_types
         assert "result" in event_types
@@ -2254,18 +3039,30 @@ class TestFixSessionRPC:
         assert store.count == before + 1
         assert store.get(session_id) is not None
 
-    async def test_client_cancel_removes_created_session(self) -> None:
-        """Client cancellation removes only sessions created by this stream.
+    @pytest.mark.parametrize(
+        "phase,preserve",
+        [  # type: ignore[untyped-decorator]
+            ("upload", False),
+            ("processing", False),
+            ("approval", True),
+            ("review", True),
+            ("complete", True),
+            ("triage", True),
+        ],
+    )
+    async def test_client_cancel_removes_created_session(self, phase: str, preserve: bool) -> None:
+        """Client cancellation discards incomplete work and retains resumable phases.
 
-        A CancelledError from the request stream bypasses the explicit
-        close path; created sessions must still be removed so repeated
-        client retries cannot exhaust _MAX_SESSIONS.
+        Args:
+            phase: Session phase active when the client disconnects.
+            preserve: Whether the session has a durable or owned resumable phase.
         """
         from apme_engine.daemon.engine_server import EngineServicer
 
         servicer = EngineServicer()
         store = servicer._get_session_store()
         before = store.count
+        created_session_id: str | None = None
 
         class _CancellingStream:
             """Yield one upload, then raise CancelledError like a dead client."""
@@ -2296,6 +3093,12 @@ class TestFixSessionRPC:
                     return SessionCommand(
                         upload=ScanChunk(scan_id="test-cancel", last=False),
                     )
+                assert created_session_id is not None
+                created = store.get(created_session_id)
+                assert created is not None
+                created.upload_sealed = phase != "upload"
+                created.approval_in_flight = phase == "approval"
+                created.status = {"review": 1, "complete": 3, "triage": 4}.get(phase, 2)
                 raise asyncio.CancelledError
 
         ctx = FakeGrpcContext()
@@ -2307,10 +3110,17 @@ class TestFixSessionRPC:
             ),
             pytest.raises(asyncio.CancelledError),
         ):
-            async for _event in servicer.FixSession(_CancellingStream(), ctx):  # type: ignore[arg-type]
-                pass
+            async for event in servicer.FixSession(_CancellingStream(), ctx):  # type: ignore[arg-type]
+                if event.HasField("created"):
+                    created_session_id = event.created.session_id
 
-        assert store.count == before
+        try:
+            assert store.count == before + int(preserve)
+            assert created_session_id is not None
+            assert (store.get(created_session_id) is not None) == preserve
+        finally:
+            if created_session_id is not None:
+                store.remove(created_session_id)
 
     async def test_cancel_after_upload_then_resume_removes_upload_session(self) -> None:
         """Cancellation removes the upload-created session, not a later resume target."""

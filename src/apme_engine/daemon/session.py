@@ -152,6 +152,12 @@ class SessionState:
             (ADR-062 Phase 3); empty when Tier 1 auto-applies.
         awaiting_tier1_gate: True while Gate 1 (deterministic) proposals
             are pending; cleared after Tier 1 ApprovalRequest.
+        approval_token: Opaque identity of the currently offered decision gate.
+        approval_offer_snapshot: Serialized offer set bound to approval_token.
+        approval_decisions: Completed decisions indexed by immutable gate token.
+        approval_in_flight: Whether an approval preview/commit owns the session's mutation guard.
+        approval_finished: Signal for replay waiting on a committed approval's continuation.
+        approval_tasks: Owned continuations retained through best-effort reporting.
         awaiting_assess: True while ADR-064 assess-pause findings are
             pending BeginRemediate (before Gate 1 ProposalsReady).
         assess_findings: Proto Violations last emitted in FindingsReady
@@ -238,6 +244,12 @@ class SessionState:
     ai_proposals: list[object] = field(default_factory=list)
     tier1_proposals: list[object] = field(default_factory=list)
     awaiting_tier1_gate: bool = False
+    approval_token: str = ""
+    approval_offer_snapshot: tuple[tuple[str, bytes], ...] = ()
+    approval_decisions: dict[str, frozenset[str]] = field(default_factory=dict)
+    approval_in_flight: bool = False
+    approval_finished: asyncio.Event = field(default_factory=asyncio.Event)
+    approval_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False)
     awaiting_assess: bool = False
     assess_findings: list[object] = field(default_factory=list)
     awaiting_ai_triage: bool = False
@@ -394,6 +406,8 @@ class SessionState:
         self.tier1_patches = []
         self.proposals.clear()
         self.review_declined_proposals.clear()
+        self.approval_token = ""
+        self.approval_offer_snapshot = ()
         self.progress_logs = []
         self.report = None
         self.ai_proposals = []

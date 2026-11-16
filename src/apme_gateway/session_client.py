@@ -10,7 +10,7 @@ Protocol (browser -> gateway, JSON over WS)::
     {"type": "start",      "options": {...}}
     {"type": "file",       "path": "...", "content": "<base64>"}
     {"type": "files_done"}
-    {"type": "approve",    "approved_ids": ["id1", ...]}
+    {"type": "approve",    "approved_ids": ["id1", ...], "approval_token": "..."}
     {"type": "escalate_ai", "targets": [{"path": "...", "rule_ids": []}]}
     {"type": "extend"}
     {"type": "close"}
@@ -21,10 +21,10 @@ Protocol (gateway -> browser, JSON over WS)::
     {"type": "progress",        "phase": "...", "message": "...", "level": N}
     {"type": "tier1_complete",   ...}
     {"type": "ai_triage",        "candidates": [...], "status": "...", "ttl_seconds": N}
-    {"type": "proposals",        "proposals": [...], "tier": N}
+    {"type": "proposals",        "proposals": [...], "tier": N, "approval_token": "..."}
     {"type": "approval_ack",     "applied_count": N, "status": "..."}
     {"type": "result",           ...}
-    {"type": "error",            "message": "..."}
+    {"type": "error",            "message": "...", "recoverable": false}
     {"type": "closed"}
 """
 
@@ -265,7 +265,11 @@ async def _ws_command_reader(
                     logger.warning("Invalid approved_ids: expected list of strings, got %r", type(ids).__name__)
                     continue
                 logger.info("Received approval for %d proposal(s): %s", len(ids), ids)
-                await queue.put(SessionCommand(approve=ApprovalRequest(approved_ids=ids)))
+                token = msg.get("approval_token", "")
+                if not isinstance(token, str):
+                    logger.warning("Invalid approval_token: expected a string")
+                    continue
+                await queue.put(SessionCommand(approve=ApprovalRequest(approved_ids=ids, approval_token=token)))
             elif msg_type == "escalate_ai":
                 raw_targets = msg.get("targets", [])
                 if not isinstance(raw_targets, list):
@@ -413,10 +417,12 @@ async def _forward_events(
                     "type": "error",
                     "code": err.code,
                     "message": err.message,
+                    "recoverable": err.recoverable is True,
                 },
             )
-            done.set()
-            return
+            if err.recoverable is not True:
+                done.set()
+                return
 
         elif oneof == "tier1_complete":
             t1 = event.tier1_complete
@@ -446,6 +452,7 @@ async def _forward_events(
                 {
                     "type": "proposals",
                     "tier": pr.tier,
+                    "approval_token": pr.approval_token,
                     "status": _status_name(pr.status),
                     "proposals": [
                         {

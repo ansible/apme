@@ -151,6 +151,8 @@ message BeginRemediateRequest {}
 
 message ApprovalRequest {
   repeated string approved_ids = 1;
+  // Echo ProposalsReady.approval_token, including for decline-all requests.
+  string approval_token = 2;
 }
 
 // One location (and optional rule subset) allowed into Abbenay for Gate 2.
@@ -194,6 +196,8 @@ message SessionEvent {
 message SessionError {
   string code = 1;
   string message = 2;
+  // The request failed without closing the session or consuming the gate.
+  bool recoverable = 3;
 }
 
 // Assessment snapshot before Gate 1 (ADR-064). Content violations only;
@@ -251,6 +255,8 @@ message ProposalsReady {
   repeated Proposal proposals = 1;
   int32 tier = 2;
   SessionStatus status = 3;
+  // Opaque decision identity; stable on replay, unique to this proposal gate.
+  string approval_token = 4;
 }
 
 message ApprovalAck {

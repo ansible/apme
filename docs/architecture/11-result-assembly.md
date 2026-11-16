@@ -45,9 +45,71 @@ in-memory `ContentGraph` back to file content:
 
 1. **Identify modified nodes** — nodes with at least two progression entries
    where the original hash differs from the effective (approved) hash.
+   Bounded progression history retains both the original baseline and the most
+   recent approved snapshot even when later pending attempts fill the buffer.
 
-2. **Group by file** — collect `(line_start, line_end, yaml_lines, rule_ids)`
-   edits per file.
+2. **Group changed spans by file** — compare each node's effective YAML
+   with its original progression state and collect only changed line spans.
+   This preserves independently modified children when a parent block or
+   play header is also edited. Header fragments replace only the source
+   lines they actually contain, rather than the full play span.
+
+   Snippet trailing newlines are normalized before comparison. Equal-length
+   replacements split into atomic source-line changes: agreed changes apply
+   once and independent adjacent changes compose. Separately proposed boundary
+   insertions from the same or nested source owner can identify a shared prefix
+   or suffix, which also applies once. Touching boundaries owned by separate
+   sibling tasks remain independent and apply in source-owner order, including
+   identical text. At a shared closing boundary, child additions precede their
+   enclosing block's additions; following siblings begin afterward.
+   Other length-changing overlaps are rejected when no line correspondence is
+   established. Source text is never aligned across words, comments, or task
+   names. Conflicting line replacements and competing insertions raise an
+   error. Whenever multiple nodes contribute to a file, combined edits are
+   parsed with the formatter's round-trip YAML 1.1 loader before persistence.
+   Duplicate keys are rejected after scalar resolution, including disjoint
+   changes that produce equivalent numeric or boolean keys.
+
+   All owners contributing to a combined patch retain per-line YAML structural
+   roles from each proposed snapshot. After assembly, mapping fields, sequence
+   items, and comments must retain their container-kind roles; a field cannot
+   silently become text inside a block-scalar script merely because the YAML
+   still parses. Each snapshot is parsed once through YAML events, which retain
+   alias occurrences without resolving external anchors. Final assembled YAML
+   still undergoes full alias validation. Unchanged intervening lines do not
+   exempt nested or sibling edits from these checks. A single owner's patch
+   avoids this additional snapshot parsing.
+
+   Conflicts raise `SpliceConflictError`. Initial remediation, approval, and AI
+   gates report this as a `remediation_failed` session event with the conflict
+   message; it is not an invalid client argument or a gRPC stream abort. Working
+   file restoration and patch writes happen only after successful assembly.
+   Approval decisions are previewed on a graph copy. A conflict leaves the
+   graph, pending proposals, approval telemetry, and working bytes unchanged,
+   so the client can retry with different approval choices.
+   Pure preview and blocking disk persistence run in an executor. Prepared
+   patches include Gate 2 snapshot restorations and baseline bytes for affected
+   files whose edits were rejected, so changed choices overwrite earlier partial
+   writes. Restoration payloads stay as raw bytes alongside text splice patches;
+   untouched templates and other non-UTF-8 files are never decoded. Persist the
+   entire batch before committing decisions on the event-loop thread, verifying the captured
+   proposal set before persistence and again at commit. A failed write emits
+   `remediation_failed` and leaves live proposals, graph, telemetry, and working
+   bytes unchanged; a retry writes the full batch, including any files already
+   written before the failure. A session guard rejects overlapping mutations
+   and remains held until canceled workers finish.
+   Once persistence starts, an owned continuation completes persistence, commit,
+   and the next gate even if the stream disconnects; replay waits for that
+   durable state and duplicate approvals replay it without advancing the phase
+   again. Sealed, resumable sessions survive disconnect cleanup while incomplete uploads and
+   interrupted initial processing are removed. Reporting runs after durable
+   events are ready and the approval guard is released, without delaying result
+   delivery or the subsequent close handshake. The approval handler returns
+   after delivering its events while the session retains the reporting task
+   until completion, including after close or disconnect.
+
+   All gates use the same post-splice formatter with full source paths and the
+   session file inventory, preserving role-source context consistently.
 
 3. **Bottom-up splice** — sort edits by `line_start` descending so that
    splicing one edit does not shift line numbers for edits above it. Replace

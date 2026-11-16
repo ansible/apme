@@ -101,6 +101,15 @@ direct sequence scalars. Task-list membership is classified in one forward
 pass so formatting large task lists does not repeat backward searches for each
 blank line.
 
+### Name Casing and Source Containers
+
+Formatting preserves all `name` values. Capitalization is semantic remediation
+through enabled L025 findings on identified plays, tasks, handlers, and blocks.
+Identified task/play containers are expanded to block style so independent
+graph nodes have distinct source lines; arbitrary data lists keep their style.
+Short and collection-qualified `import_playbook` directives are treated as plays
+for task-list spacing.
+
 ## Related Decisions
 
 - ADR-009: Remediation engine (consumes formatted YAML)
@@ -109,4 +118,5 @@ blank line.
 
 | Date | Author | Change |
 |------|--------|--------|
+| 2026-11-16 | Codex | Preserve name casing for L025 remediation; scope container expansion and recognize qualified playbook imports (#880) |
 | 2026-11-06 | AI agent | Document scalar-safe cleanup and task spacing, indentation handling, and linear task-list classification |

@@ -282,6 +282,15 @@ export function PlaygroundPage() {
           <Tier1ResultsPanel tier1={tier1} />
         )}
 
+        {rawStatus === 'awaiting_approval' && error && (
+          <Alert variant="warning" isInline title="Approval was not applied" style={{ marginBottom: 16 }}>
+            <p>{error}</p>
+            <Button variant="link" onClick={handleReconnect} isDisabled={!sessionId || !scanId} size="sm">
+              Refresh proposals
+            </Button>
+          </Alert>
+        )}
+
         {rawStatus === 'awaiting_approval' && opProposals.length > 0 && (
           <>
             {tier1 && <Tier1ResultsPanel tier1={tier1} />}

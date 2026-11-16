@@ -20,12 +20,15 @@ import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import TypeVar, cast
+from typing import Protocol, TypeVar, cast
 
 import grpc
 import grpc.aio
+from google.protobuf.message import Message
 
 from apme.v1 import engine_pb2_grpc, reporting_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import (
@@ -92,11 +95,13 @@ from apme_engine.daemon.session import (
     limit_venv_builds,
 )
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
+from apme_engine.engine.finder import TaskfileSourceContext
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+from apme_engine.remediation.graph_engine import SpliceConflictError
 from apme_engine.rule_ids import normalize_rule_id
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import (
@@ -1506,10 +1511,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Returns:
             ``_FormatBatchResult`` with changed-file diffs and skipped paths.
         """
+        from apme_engine.engine.finder import role_roots_from_paths, taskfile_source_context
         from apme_engine.formatter import format_content
 
         diffs: list[FileDiff] = []
         skipped: list[tuple[str, str]] = []
+        role_roots = role_roots_from_paths([file.path for file in files])
         for f in files:
             if not f.path.endswith((".yml", ".yaml")):
                 continue
@@ -1520,7 +1527,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 skipped.append((f.path, "not valid UTF-8"))
                 continue
             try:
-                result = format_content(text, filename=f.path)
+                context = taskfile_source_context(f.path, role_roots=role_roots)
+                result = format_content(text, filename=f.path, source_context=context)
             except Exception as exc:
                 # Defense in depth: one unformattable file must not abort the scan.
                 reason = f"unexpected error: {exc}"
@@ -1739,6 +1747,19 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         try:
             async for cmd in request_stream:
                 oneof = cmd.WhichOneof("command")
+                if (
+                    session is not None
+                    and session.approval_in_flight
+                    and oneof in {"approve", "begin_remediate", "ai_escalate", "upload", "close"}
+                ):
+                    yield SessionEvent(
+                        error=SessionError(
+                            code="approval_in_progress",
+                            recoverable=True,
+                            message="An approval is already in progress; retry after it finishes",
+                        )
+                    )
+                    continue
 
                 if oneof == "upload":
                     chunk: ScanChunk = cmd.upload
@@ -1819,7 +1840,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         continue
                     session.touch()
                     approved = set(cmd.approve.approved_ids)
-                    async for event in self._session_handle_approval(session, approved):
+                    async for event in self._session_handle_approval(
+                        session, approved, approval_token=cmd.approve.approval_token
+                    ):
                         yield event
 
                 elif oneof == "begin_remediate":
@@ -1886,11 +1909,18 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     return
 
         except asyncio.CancelledError:
-            # Client disconnect raises CancelledError (a BaseException), which
-            # bypasses the explicit close path.  Remove only sessions this stream
-            # created so gateway reconnect can ResumeRequest without NOT_FOUND.
+            # Discard incomplete uploads/processing, but retain sealed approval
+            # continuations and stable gates so resume cannot lose committed work
+            # or race cleanup against an owned writer still finishing its phase.
             if upload_created_session_id:
-                store.remove(upload_created_session_id)
+                created = store.get(upload_created_session_id)
+                resumable = (
+                    created is not None
+                    and created.upload_sealed
+                    and (created.approval_in_flight or created.status in {1, 3, 4})
+                )
+                if not resumable:
+                    store.remove(upload_created_session_id)
             raise
         except ResourceExhaustedError as e:
             _drop_unsealed_created()
@@ -2846,12 +2876,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # 3. Splice approved modifications and write patched files.
         # Interactive / assess-pause: defer splice until ApprovalRequest or
         # BeginRemediate auto-apply (no disk writes yet).
-        patches = [] if defer_tier1 and tier1_node_proposals else splice_modifications(graph, originals)
+        try:
+            patches = [] if defer_tier1 and tier1_node_proposals else splice_modifications(graph, originals)
+        except SpliceConflictError as exc:
+            yield SessionEvent(error=SessionError(code="remediation_failed", message=str(exc)))
+            return
 
-        for patch in patches:
-            fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
-            if getattr(fmt_result, "changed", False):
-                patch.patched = getattr(fmt_result, "formatted", patch.patched)
+        _format_spliced_patches(patches, originals, temp_dir, formatter=format_content)
 
         for patch in patches:
             patch.diff = "".join(
@@ -2978,6 +3009,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             session.status = 1  # AWAITING_APPROVAL
             yield SessionEvent(
                 proposals=ProposalsReady(
+                    approval_token=_current_approval_token(session),
                     proposals=list(session.proposals.values()),
                     tier=1,
                     status=session.status,
@@ -3019,6 +3051,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
             yield SessionEvent(
                 proposals=ProposalsReady(
+                    approval_token=_current_approval_token(session),
                     proposals=all_proposals,
                     tier=session.current_tier,
                     status=session.status,
@@ -3286,6 +3319,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             session.status = 1  # AWAITING_APPROVAL
             yield SessionEvent(
                 proposals=ProposalsReady(
+                    approval_token=_current_approval_token(session),
                     proposals=list(session.proposals.values()),
                     tier=1,
                     status=session.status,
@@ -3314,28 +3348,187 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         self,
         session: SessionState,
         approved_ids: set[str],
+        *,
+        approval_token: str | None = None,
+    ) -> AsyncIterator[SessionEvent]:
+        """Preview in an executor and commit once on the event-loop thread.
+
+        Args:
+            session: Active session.
+            approved_ids: Proposal identifiers the client accepted.
+            approval_token: Echoed gate identity. None is reserved for trusted
+                internal transitions; an empty string identifies legacy clients.
+
+        Yields:
+            SessionEvent: Approval results or a session-scoped error.
+
+        Raises:
+            asyncio.CancelledError: When the approving stream disconnects.
+        """
+        if session.approval_in_flight:
+            yield SessionEvent(
+                error=SessionError(
+                    recoverable=True, code="approval_in_progress", message="An approval is already in progress"
+                )
+            )
+            return
+        offered = bool(session.proposals or session.review_declined_proposals)
+        current_token = _current_approval_token(session) if offered else ""
+        decided_ids = session.approved_ids | set(session.rejected_proposals)
+        offered_ids = set(session.proposals) | set(session.review_declined_proposals)
+        replay = bool(approved_ids and approved_ids <= decided_ids)
+        error_code = ""
+        if approval_token:
+            if approval_token in session.approval_decisions:
+                replay = session.approval_decisions[approval_token] == frozenset(approved_ids)
+                if not replay:
+                    error_code = "approval_already_decided"
+            elif approval_token != current_token:
+                error_code = "stale_approval_gate"
+            else:
+                # Proposal IDs can be reused by a later gate; its token owns
+                # the decision even if those IDs occur in earlier telemetry.
+                replay = False
+        elif approval_token == "" and offered:
+            if not approved_ids and session.approval_decisions:
+                # An unscoped decline-all cannot distinguish a delayed retry
+                # from a fresh decision after the first completed gate.
+                error_code = "approval_token_required"
+            elif approved_ids and not replay and not approved_ids <= offered_ids:
+                error_code = "stale_approval_gate"
+        if not error_code and not replay and offered and not approved_ids <= offered_ids:
+            error_code = "invalid_approval_ids"
+        if error_code:
+            yield SessionEvent(
+                error=SessionError(
+                    code=error_code,
+                    recoverable=True,
+                    message="This approval does not match this proposal gate. Refresh proposals and retry.",
+                )
+            )
+            return
+        if replay or (not offered and (session.awaiting_ai_triage or session.status == 3)):
+            yield SessionEvent(
+                approval_ack=ApprovalAck(applied_count=0, status=session.status, ttl_seconds=session.ttl_seconds)
+            )
+            async for event in self._session_replay_state(session):
+                yield event
+            return
+        if approval_token is not None and not offered:
+            yield SessionEvent(
+                error=SessionError(recoverable=True, code="stale_approval_gate", message="No approval gate is active")
+            )
+            return
+        decision_token = current_token or _current_approval_token(session)
+        session.approval_in_flight = True
+        session.approval_finished.clear()
+        release_on_exit = True
+        try:
+            preview = None
+            graph = session.content_graph
+            if (
+                isinstance(graph, ContentGraph)
+                and session.graph_originals is not None
+                and any(pid.startswith(("ai-", "t1-", "g2-t1-")) for pid in session.proposals)
+            ):
+                future = asyncio.get_event_loop().run_in_executor(
+                    None, partial(_preview_graph_approvals, session, graph, session.graph_originals, set(approved_ids))
+                )
+                try:
+                    preview = await asyncio.shield(future)
+                except asyncio.CancelledError:
+                    # The pure worker cannot be stopped. Keep its read guard
+                    # until completion; a resumed stream can retry afterward.
+                    release_on_exit = False
+
+                    def release(done: asyncio.Future[_GraphApprovalPreview]) -> None:
+                        if not done.cancelled():
+                            done.exception()
+                        session.approval_in_flight = False
+                        session.approval_finished.set()
+
+                    future.add_done_callback(release)
+                    raise
+
+            ready: asyncio.Future[list[SessionEvent]] = asyncio.get_running_loop().create_future()
+
+            def consume_ready(done: asyncio.Future[list[SessionEvent]]) -> None:
+                if not done.cancelled():
+                    done.exception()
+
+            ready.add_done_callback(consume_ready)
+
+            async def finish() -> None:
+                try:
+                    events = [event async for event in self._session_finish_approval(session, approved_ids, preview)]
+                    session.approval_decisions[decision_token] = frozenset(approved_ids)
+                    if session.approval_token == decision_token:
+                        session.approval_token = ""
+                        session.approval_offer_snapshot = ()
+                except BaseException as exc:
+                    ready.set_exception(exc)
+                    raise
+                finally:
+                    session.approval_in_flight = False
+                    session.approval_finished.set()
+                ready.set_result(events)
+                for event in events:
+                    if event.HasField("result"):
+                        await self._session_report_result(session, event.result)
+
+            continuation = asyncio.create_task(finish())
+            session.approval_tasks.add(continuation)
+
+            def completed(done: asyncio.Task[None]) -> None:
+                session.approval_tasks.discard(done)
+                if not done.cancelled():
+                    done.exception()
+
+            continuation.add_done_callback(completed)
+            # The owned task now releases the mutation guard, even if this
+            # stream disconnects. Reporting follows readiness independently.
+            release_on_exit = False
+            events = await asyncio.shield(ready)
+            for event in events:
+                yield event
+        except (SpliceConflictError, OSError) as exc:
+            yield SessionEvent(error=SessionError(recoverable=True, code="remediation_failed", message=str(exc)))
+        finally:
+            if release_on_exit:
+                session.approval_in_flight = False
+                session.approval_finished.set()
+
+    async def _session_finish_approval(
+        self,
+        session: SessionState,
+        approved_ids: set[str],
+        preview: _GraphApprovalPreview | None,
     ) -> AsyncIterator[SessionEvent]:
         """Apply approvals and either complete or advance to Gate 2 (AI).
 
         Args:
             session: Active session.
             approved_ids: Proposal IDs the user accepted.
+            preview: Pure graph approval preview, or None for legacy text proposals.
 
         Yields:
             SessionEvent: ApprovalAck, optional Gate 2 ProposalsReady, and SessionResult.
         """
         was_tier1_gate = session.awaiting_tier1_gate
         run_ai_gate = was_tier1_gate and bool(session.fix_options and session.fix_options.enable_ai)
-        applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=not run_ai_gate)
-        if session.temp_dir is not None and temp_patches:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                _write_patches_to_temp_dir,
-                session.temp_dir,
-                temp_patches,
-            )
+        # Persist the prepared source transaction before consuming proposals or
+        # changing the live graph. A partial write can retry the entire batch.
+        if preview is not None:
+            _validate_graph_approval_preview(session, session.content_graph, approved_ids, preview)
+            if session.temp_dir is not None and preview.files:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, _write_files_to_temp_dir, session.temp_dir, preview.files
+                )
+        applied, temp_patches = self._session_apply_approved(
+            session, approved_ids, finalize=not run_ai_gate, preview=preview
+        )
         if was_tier1_gate:
-            files_touched = len(temp_patches) if temp_patches else 0
+            files_touched = len(preview.files) if preview is not None else len(temp_patches or [])
             report_fixed = session.report.fixed if session.report else applied
             _apply_msg = ProgressUpdate(
                 message=(
@@ -3357,17 +3550,19 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
 
         if run_ai_gate:
-            async for event in self._session_enter_ai_phase(session):
+            async for event in self._session_enter_ai_phase(session, report_completion=False):
                 yield event
             return
 
         if session.status == 3:  # COMPLETE
-            async for event in self._session_build_result(session):
+            async for event in self._session_serialize_result(session):
                 yield event
 
     async def _session_enter_ai_phase(
         self,
         session: SessionState,
+        *,
+        report_completion: bool = True,
     ) -> AsyncIterator[SessionEvent]:
         """Pause for AI escalation triage, or skip when no candidates remain.
 
@@ -3376,6 +3571,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         Args:
             session: Session after Tier 1 apply (graph spliced).
+            report_completion: Emit reporting after the result; approval callers
+                defer reporting until their durable continuation releases its guard.
 
         Yields:
             SessionEvent: AiTriageReady, or SessionResult when nothing to escalate.
@@ -3383,7 +3580,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         candidates = _collect_ai_triage_candidates(session)
         if not candidates:
             session.status = 3  # COMPLETE
-            async for event in self._session_build_result(session):
+            result_events = (
+                self._session_build_result(session) if report_completion else self._session_serialize_result(session)
+            )
+            async for event in result_events:
                 yield event
             return
 
@@ -3636,6 +3836,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             session.status = 1  # AWAITING_APPROVAL
             yield SessionEvent(
                 proposals=ProposalsReady(
+                    approval_token=_current_approval_token(session),
                     proposals=all_proposals,
                     tier=2,
                     status=session.status,
@@ -3646,14 +3847,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             # progression, then sync working_files from approved snapshots only.
             _reject_unapproved_graph_progress(graph)
             originals = session.graph_originals or {}
-            from apme_engine.formatter import format_content  # noqa: PLC0415
             from apme_engine.remediation.graph_engine import splice_modifications  # noqa: PLC0415
 
-            patches = splice_modifications(graph, originals)
-            for patch in patches:
-                fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
-                if getattr(fmt_result, "changed", False):
-                    patch.patched = getattr(fmt_result, "formatted", patch.patched)
+            try:
+                patches = splice_modifications(graph, originals)
+            except SpliceConflictError as exc:
+                yield SessionEvent(error=SessionError(code="remediation_failed", message=str(exc)))
+                return
+            _format_spliced_patches(patches, originals, session.temp_dir)
             _write_patches_to_session(session, patches)
             if session.temp_dir is not None and patches:
                 await asyncio.get_event_loop().run_in_executor(
@@ -3672,6 +3873,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         approved_ids: set[str],
         *,
         finalize: bool = True,
+        preview: _GraphApprovalPreview | None = None,
     ) -> tuple[int, list[SplicedFilePatch] | None]:
         """Apply approved proposals to session working state.
 
@@ -3687,9 +3889,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             approved_ids: Set of proposal IDs the user accepted.
             finalize: When true, mark session COMPLETE. When false (Gate 1
                 with AI still pending), leave status for the AI gate.
+            preview: Optional pure graph approval preview prepared off the event loop.
 
         Returns:
-            Number of proposals successfully applied.
+            Applied proposal count and prepared text patches. The approval
+            preview separately carries complete file bytes for persistence.
         """
         if not approved_ids and not session.proposals:
             session.review_declined_proposals.clear()
@@ -3712,6 +3916,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 graph,
                 originals,
                 approved_ids,
+                preview=preview,
             )
             _reconcile_after_approval(
                 session,
@@ -3855,25 +4060,28 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Yields:
             SessionEvent: Event containing the SessionResult.
         """
-        patches: list[FilePatch] = []
-        remaining_violations: list[object] = []
+        result: SessionResult | None = None
         async for event in self._session_serialize_result(session):
             yield event
-            if event.WhichOneof("event") == "result":
-                patches = list(event.result.patches)
-                remaining_violations = list(event.result.remaining_violations)
+            if event.HasField("result"):
+                result = event.result
+        if result is not None:
+            await self._session_report_result(session, result)
 
-        report = session.report or FixReport()
+    async def _session_report_result(self, session: SessionState, result: SessionResult) -> None:
+        """Emit completion reporting after delivering the client's result.
 
-        # Always emit FixCompletedEvent for both check and remediate modes.
-        # The gateway's link_scan_to_project() sets the correct scan_type
-        # ("check" or "remediate") based on the operation intent (ADR-039).
+        Args:
+            session: Completed session supplying reporting metadata.
+            result: Delivered result with final patches and findings.
+        """
+        # The gateway derives scan_type from operation intent (ADR-039).
         await emit_fix_completed(
             self._build_fix_event(
                 session,
-                remaining_violations,
-                list(report.fixed_violations),
-                patches,
+                list(result.remaining_violations),
+                list(result.fixed_violations),
+                list(result.patches),
             )
         )
 
@@ -3988,6 +4196,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Yields:
             SessionEvent: Events reflecting the session's current state.
         """
+        if session.approval_in_flight and (session.status != 1 or session.approval_tasks):
+            await session.approval_finished.wait()
         if session.tier1_patches or session.format_diffs:
             yield SessionEvent(
                 tier1_complete=Tier1Summary(
@@ -4028,6 +4238,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             review_proposals = list(session.proposals.values()) + list(session.review_declined_proposals.values())
             yield SessionEvent(
                 proposals=ProposalsReady(
+                    approval_token=_current_approval_token(session),
                     proposals=review_proposals,
                     tier=session.current_tier,
                     status=1,
@@ -4223,25 +4434,35 @@ def _write_patches_to_temp_dir(temp_dir: Path, patches: Sequence[SplicedFilePatc
     Args:
         temp_dir: Session temp directory root.
         patches: Splice results with ``path`` and ``patched`` attributes.
+    """
+    _write_files_to_temp_dir(temp_dir, {patch.path: patch.patched.encode("utf-8") for patch in patches})
+
+
+def _write_files_to_temp_dir(temp_dir: Path, files: Mapping[str, bytes]) -> None:
+    """Persist an approval file batch without decoding unchanged source bytes.
+
+    Args:
+        temp_dir: Session temp directory root.
+        files: Complete target bytes indexed by source path.
 
     Raises:
-        ValueError: If a patch path escapes ``temp_dir`` or uses relative ``..``.
+        ValueError: If a source path escapes the root or contains relative "..".
         OSError: If a write fails.
     """
     root = temp_dir.resolve()
-    for patch in patches:
-        rel = Path(patch.path)
+    for source_path, content in files.items():
+        rel = Path(source_path)
         if rel.is_absolute():
             path = rel.resolve()
         else:
             if ".." in rel.parts:
-                raise ValueError(f"Unsafe patch path rejected: {patch.path!r}")
+                raise ValueError(f"Unsafe patch path rejected: {source_path!r}")
             path = (root / rel).resolve()
         if not path.is_relative_to(root):
-            raise ValueError(f"Patch path escapes temp root: {patch.path!r}")
+            raise ValueError(f"Patch path escapes temp root: {source_path!r}")
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            path.write_text(patch.patched, encoding="utf-8")
+            path.write_bytes(content)
         except OSError:
             logger.exception(
                 "Failed to write patch to temp_dir path=%s temp_dir=%s",
@@ -4275,6 +4496,57 @@ def _reject_unapproved_graph_progress(graph: object) -> set[str]:
     return rejected
 
 
+class _SourceFormatter(Protocol):
+    """Formatter contract shared by post-splice gates."""
+
+    def __call__(
+        self, text: str, filename: str = "<stdin>", *, source_context: TaskfileSourceContext | None = None
+    ) -> object:
+        """Format source with its declared provenance.
+
+        Args:
+            text: Source content to format.
+            filename: Source path used for diagnostics and classification.
+            source_context: Context established by the owning source inventory.
+
+        Returns:
+            Formatting result.
+        """
+        ...
+
+
+def _format_spliced_patches(
+    patches: Sequence[SplicedFilePatch],
+    originals: Mapping[str, str],
+    temp_dir: Path | None = None,
+    *,
+    formatter: _SourceFormatter | None = None,
+) -> None:
+    """Format every gate's patches using the same file inventory and source context.
+
+    Args:
+        patches: Assembled patches to format in place.
+        originals: Original file inventory, including standalone role markers.
+        temp_dir: Project root for session-relative paths.
+        formatter: Optional formatter supplied by the initial remediation caller.
+    """
+    from apme_engine.engine.finder import role_roots_from_paths, taskfile_source_context
+    from apme_engine.formatter import format_content
+
+    format_fn = formatter or format_content
+
+    def source_path(value: str) -> str:
+        path = Path(value)
+        return str(temp_dir / path) if temp_dir is not None and not path.is_absolute() else value
+
+    roots = role_roots_from_paths([source_path(path) for path in originals])
+    for patch in patches:
+        context = taskfile_source_context(source_path(patch.path), str(temp_dir) if temp_dir else "", roots)
+        result = format_fn(patch.patched, filename=patch.path, source_context=context)
+        if getattr(result, "changed", False):
+            patch.patched = getattr(result, "formatted", patch.patched)
+
+
 def _write_patches_to_session(
     session: SessionState,
     patches: list[SplicedFilePatch],
@@ -4293,33 +4565,172 @@ def _write_patches_to_session(
         session.working_files[rel_path] = patch.patched.encode("utf-8")
 
 
-def _restore_pre_gate2_files(session: SessionState) -> list[SplicedFilePatch]:
-    """Restore ``working_files`` from the pre-Gate-2 snapshot.
+@dataclass(frozen=True)
+class _GraphApprovalPreview:
+    """Prepared source patches without mutations to the live approval state.
 
-    Returns FilePatch objects so the async approval handler can write temp_dir
-    via ``run_in_executor`` (ADR-007). Does not touch disk itself.
+    Attributes:
+        graph: Live graph whose decisions were previewed.
+        proposal_snapshot: Proposal bytes captured before preview.
+        approved_ids: Approval choices used for the preview.
+        decisions: Resolved proposal and node identifiers.
+        patches: Successfully assembled and formatted text source patches.
+        files: Complete target bytes for affected files, including restorations.
+    """
+
+    graph: ContentGraph
+    proposal_snapshot: tuple[tuple[str, bytes], ...]
+    approved_ids: frozenset[str]
+    decisions: tuple[tuple[str, str], ...]
+    patches: list[SplicedFilePatch]
+    files: dict[str, bytes]
+
+
+def _proposal_snapshot(session: SessionState) -> tuple[tuple[str, bytes], ...]:
+    """Capture the pending proposal set for approval conflict detection.
 
     Args:
-        session: Session that may hold ``pre_gate2_files``.
+        session: Session owning the pending proposals.
 
     Returns:
-        Patches representing the restored snapshot (empty when none).
+        Sorted proposal identifiers and serialized values.
     """
-    if not session.pre_gate2_files:
-        return []
-    session.working_files = dict(session.pre_gate2_files)
-    restored: list[SplicedFilePatch] = []
-    for rel_path, content in session.pre_gate2_files.items():
-        restored.append(
-            SplicedFilePatch(
-                path=rel_path,
-                original="",
-                patched=content.decode("utf-8", errors="replace"),
-                diff="",
-                rule_ids=[],
+    return tuple(
+        sorted(
+            (pid, cast(Message, proposal).SerializeToString(deterministic=True))
+            for pid, proposal in session.proposals.items()
+        )
+    )
+
+
+def _current_approval_token(session: SessionState) -> str:
+    """Bind an opaque, replay-stable token to the current proposal snapshot.
+
+    Args:
+        session: Session owning the currently offered proposals.
+
+    Returns:
+        Token to echo with approvals, including empty decline-all decisions.
+    """
+    snapshot = tuple(
+        sorted(
+            _proposal_snapshot(session)
+            + tuple(
+                (pid, cast(Message, row).SerializeToString(deterministic=True))
+                for pid, row in session.review_declined_proposals.items()
             )
         )
-    return restored
+    )
+    if not session.approval_token or session.approval_offer_snapshot != snapshot:
+        session.approval_token = uuid.uuid4().hex
+        session.approval_offer_snapshot = snapshot
+    return session.approval_token
+
+
+def _apply_node_approval_decisions(
+    graph: ContentGraph, decisions: tuple[tuple[str, str], ...], approved_ids: frozenset[str]
+) -> tuple[set[str], set[str]]:
+    """Apply decisions to an exclusively owned graph or during an atomic commit.
+
+    Args:
+        graph: Graph to update.
+        decisions: Resolved proposal and node identifiers.
+        approved_ids: Accepted proposal identifiers.
+
+    Returns:
+        Rejected and approved node identifiers.
+    """
+    rejected: set[str] = set()
+    approved: set[str] = set()
+    for pid, node_id in decisions:
+        if pid in approved_ids:
+            graph.approve_node(node_id)
+            approved.add(node_id)
+        else:
+            graph.reject_node(node_id)
+            rejected.add(node_id)
+    for node in graph.nodes():
+        if node.node_id not in approved and any(
+            not entry.approved and entry.source in ("ai", "deterministic") for entry in node.progression
+        ):
+            graph.reject_node(node.node_id)
+            rejected.add(node.node_id)
+    return rejected, approved
+
+
+def _preview_graph_approvals(
+    session: SessionState, graph: ContentGraph, originals: dict[str, str], approved_ids: set[str]
+) -> _GraphApprovalPreview:
+    """Prepare an approval transaction without changing live graph/session data.
+
+    Args:
+        session: Read-only session view while its approval guard is held.
+        graph: Read-only live graph to copy.
+        originals: Original source file contents.
+        approved_ids: Accepted proposal identifiers.
+
+    Returns:
+        Preview to commit on the event-loop thread after validation.
+    """
+    from apme_engine.remediation.graph_engine import AINodeProposal, Tier1NodeProposal, splice_modifications
+
+    snapshot = _proposal_snapshot(session)
+    proposal_node_map: dict[str, str] = {}
+    ai_proposals = [p for p in session.ai_proposals if isinstance(p, AINodeProposal)]
+    tier1_proposals = [p for p in session.tier1_proposals if isinstance(p, Tier1NodeProposal)]
+    for index, proposal in enumerate(ai_proposals):
+        proposal_node_map[f"ai-{index:04d}"] = proposal.node_id
+    for index, tier1_proposal in enumerate(tier1_proposals):
+        proposal_node_map[f"t1-{index:04d}"] = tier1_proposal.node_id
+        proposal_node_map[f"g2-t1-{index:04d}"] = tier1_proposal.node_id
+    decisions = tuple(
+        (pid, node_id)
+        for pid, row in session.proposals.items()
+        if (node_id := (row.path or "").strip() or proposal_node_map.get(pid))
+    )
+    choices = frozenset(approved_ids)
+    candidate = deepcopy(graph)
+    _apply_node_approval_decisions(candidate, decisions, choices)
+    patches = splice_modifications(candidate, originals)
+    _format_spliced_patches(patches, originals, session.temp_dir)
+    # A retry may change its choices after a partial disk write. Include the
+    # baseline for every affected file, even when rejecting its edits produces
+    # no splice delta, so the next batch overwrites all prior attempted bytes.
+    decided_nodes = {node_id for _pid, node_id in decisions}
+    affected_paths = {
+        node.file_path
+        for node in graph.nodes()
+        if node.node_id in decided_nodes
+        or any(not entry.approved and entry.source in ("ai", "deterministic") for entry in node.progression)
+    }
+    restoration = {path: text.encode("utf-8") for path, text in originals.items() if path in affected_paths}
+    restoration.update(session.pre_gate2_files)
+    files = {_working_files_key(session.temp_dir, path): content for path, content in restoration.items()}
+    for patch in patches:
+        files[_working_files_key(session.temp_dir, patch.path)] = patch.patched.encode("utf-8")
+    return _GraphApprovalPreview(graph, snapshot, choices, decisions, patches, files)
+
+
+def _validate_graph_approval_preview(
+    session: SessionState, graph: object, approved_ids: set[str], prepared: _GraphApprovalPreview
+) -> None:
+    """Reject stale approval input before disk persistence or live commit.
+
+    Args:
+        session: Session owning the pending proposals.
+        graph: Current live graph.
+        approved_ids: Approval choices to validate.
+        prepared: Preview captured while the session guard was held.
+
+    Raises:
+        SpliceConflictError: When the graph, proposals, or choices changed.
+    """
+    if (
+        prepared.graph is not graph
+        or prepared.proposal_snapshot != _proposal_snapshot(session)
+        or prepared.approved_ids != frozenset(approved_ids)
+    ):
+        raise SpliceConflictError("Approval proposals changed while preparing patches; retry the approval")
 
 
 def _apply_graph_approvals(
@@ -4327,58 +4738,36 @@ def _apply_graph_approvals(
     graph: object,
     originals: dict[str, str],
     approved_ids: set[str],
+    *,
+    preview: _GraphApprovalPreview | None = None,
 ) -> tuple[int, set[str], set[str], list[SplicedFilePatch]]:
-    """Apply graph-based approvals: approve/reject nodes, re-splice files.
+    """Commit graph approvals only after their source patches were prepared.
 
     Args:
-        session: Active session.
-        graph: ContentGraph with pending AI transforms.
-        originals: Original file contents for splicing.
-        approved_ids: Proposal IDs the user accepted.
+        session: Session to update on the owning event-loop thread.
+        graph: Live graph containing pending proposals.
+        originals: Original source file contents.
+        approved_ids: Accepted proposal identifiers.
+        preview: Optional pure preview already prepared in an executor.
 
     Returns:
-        Tuple of (proposals applied, rejected node IDs, approved node IDs, patches).
+        Applied count, rejected/approved node identifiers, and text patches.
+        Complete file bytes are carried separately in the preview.
+
+    Raises:
+        SpliceConflictError: When the pending proposal set changed before commit.
     """
-    from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
-    from apme_engine.remediation.graph_engine import (  # noqa: PLC0415
-        AINodeProposal,
-        splice_modifications,
-    )
-
     if not isinstance(graph, ContentGraph):
+        if preview is not None:
+            raise SpliceConflictError("Approval graph changed while preparing patches; retry the approval")
         return (_apply_text_approvals(session, approved_ids), set(), set(), [])
-
-    ai_proposals: list[AINodeProposal] = [p for p in session.ai_proposals if isinstance(p, AINodeProposal)]
-    from apme_engine.remediation.graph_engine import Tier1NodeProposal  # noqa: PLC0415
-
-    tier1_proposals: list[Tier1NodeProposal] = [p for p in session.tier1_proposals if isinstance(p, Tier1NodeProposal)]
-
-    # Fallback for older in-memory proposals that predate Proposal.path.
-    proposal_node_map: dict[str, str] = {}
-    for idx, anp in enumerate(ai_proposals):
-        proposal_node_map[f"ai-{idx:04d}"] = anp.node_id
-    for idx, tnp in enumerate(tier1_proposals):
-        proposal_node_map[f"t1-{idx:04d}"] = tnp.node_id
-        proposal_node_map[f"g2-t1-{idx:04d}"] = tnp.node_id
-
+    prepared = preview or _preview_graph_approvals(session, graph, originals, approved_ids)
+    _validate_graph_approval_preview(session, graph, approved_ids, prepared)
+    rejected, approved = _apply_node_approval_decisions(graph, prepared.decisions, prepared.approved_ids)
     applied = 0
-    rejected_node_ids: set[str] = set()
-    approved_node_ids: set[str] = set()
-    all_proposal_ids = list(session.proposals.keys())
-
-    for pid in all_proposal_ids:
-        proposal = session.proposals.get(pid)
-        if not proposal:
-            continue
-
-        # Prefer Proposal.path (node_id wire field); enum maps are fallback only.
-        node_id = (getattr(proposal, "path", None) or "").strip() or proposal_node_map.get(pid)
-        if not node_id:
-            continue
-
+    for pid, _node_id in prepared.decisions:
+        proposal = session.proposals.pop(pid)
         if pid in approved_ids:
-            graph.approve_node(node_id)
-            approved_node_ids.add(node_id)
             session.approved_proposals.append(
                 {
                     "proposal_id": pid,
@@ -4391,47 +4780,12 @@ def _apply_graph_approvals(
             )
             session.approved_ids.add(pid)
             applied += 1
-            session.proposals.pop(pid, None)
         else:
-            graph.reject_node(node_id)
-            rejected_node_ids.add(node_id)
             _record_rejected_proposal(session, pid, proposal)
-            session.proposals.pop(pid, None)
-
-    # Revert staged AI / deterministic transforms that never got a proposal
-    # (or shared a node with a declined proposal).
-    for node in graph.nodes():
-        if node.node_id in approved_node_ids:
-            continue
-        has_unapproved = any(
-            (not entry.approved) and entry.source in ("ai", "deterministic") for entry in node.progression
-        )
-        if has_unapproved:
-            graph.reject_node(node.node_id)
-            rejected_node_ids.add(node.node_id)
-
-    # Always start from the pre-Gate-2 snapshot when present so decline-all
-    # cannot leave leaked AI bytes in working_files after a no-op splice.
-    restored_patches = _restore_pre_gate2_files(session) if session.pre_gate2_files else []
-
-    from apme_engine.formatter import format_content
-
-    patches = splice_modifications(graph, originals)
-    for patch in patches:
-        fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
-        if getattr(fmt_result, "changed", False):
-            patch.patched = getattr(fmt_result, "formatted", patch.patched)
-
-    _write_patches_to_session(session, patches)
-
-    # Prefer splice results over restore-only rows for the same path.
-    if restored_patches:
-        by_path = {_working_files_key(session.temp_dir, p.path): p for p in restored_patches}
-        for patch in patches:
-            by_path[_working_files_key(session.temp_dir, patch.path)] = patch
-        patches = list(by_path.values())
-
-    return (applied, rejected_node_ids, approved_node_ids, patches)
+    if session.pre_gate2_files:
+        session.working_files = dict(session.pre_gate2_files)
+    session.working_files.update(prepared.files)
+    return applied, rejected, approved, prepared.patches
 
 
 def _reconcile_after_approval(

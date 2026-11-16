@@ -28,6 +28,7 @@ from apme_engine.graph.argument_specs import (
 from . import logger
 from .awx_utils import could_be_playbook, search_playbooks
 from .finder import (
+    ROLE_ENTRY_POINTS,
     could_be_playbook_detail,
     could_be_taskfile,
     find_best_repo_root_path,
@@ -39,6 +40,7 @@ from .finder import (
     search_inventory_files,
     search_module_files,
     search_taskfiles_for_playbooks,
+    taskfile_source_context,
 )
 from .models import (
     BecomeInfo,
@@ -212,15 +214,7 @@ def load_repository(
     )
     # Standalone role: check for canonical role entry points rather than
     # a bare tasks/ dir, which many non-role projects also have.
-    _has_role_markers = any(
-        os.path.exists(os.path.join(repo_path, marker))
-        for marker in (
-            os.path.join("tasks", "main.yml"),
-            os.path.join("tasks", "main.yaml"),
-            os.path.join("meta", "main.yml"),
-            os.path.join("meta", "main.yaml"),
-        )
-    )
+    _has_role_markers = any(os.path.exists(os.path.join(repo_path, marker)) for marker in ROLE_ENTRY_POINTS)
     if _has_role_markers:
         role_name = os.path.basename(repo_path)
         role = load_role(
@@ -1390,7 +1384,13 @@ def load_role(
     taskfiles: list[TaskFile | str] = []
     for task_yaml_path in task_yaml_files:
         tf = None
-        if not could_be_taskfile(fpath=task_yaml_path):
+        # These candidates come only from this role's tasks/includes roots and,
+        # when requested, its test sources. Preserve that caller-owned context.
+        if not could_be_taskfile(
+            fpath=task_yaml_path,
+            task_context=True,
+            source_context=taskfile_source_context(task_yaml_path, fullpath, (fullpath,)),
+        ):
             continue
         if could_be_playbook_detail(fpath=task_yaml_path):
             continue

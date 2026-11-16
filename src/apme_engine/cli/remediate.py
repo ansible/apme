@@ -293,7 +293,9 @@ def run_remediate(args: argparse.Namespace) -> None:
 
                     cmd_queue.put(
                         SessionCommand(
-                            approve=ApprovalRequest(approved_ids=approved),
+                            approve=ApprovalRequest(
+                                approved_ids=approved, approval_token=event.proposals.approval_token
+                            ),
                         )
                     )
 

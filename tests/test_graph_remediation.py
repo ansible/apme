@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import (
     ContentGraph,
@@ -1046,6 +1048,433 @@ class TestSpliceModifications:
         dest: /tmp/a.txt
 """
 
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    def test_length_changing_parent_child_overlap_rejected(self, reverse: bool) -> None:
+        """Conflicting snapshots cannot overwrite a child fix or create two actions.
+
+        Args:
+            reverse: Whether the child is inserted into the graph before its parent.
+        """
+        original = "- name: Parent\n  block:\n    - debug:\n        msg: hello\n"
+        parent = _make_node("tasks.yml/tasks[0]", yaml_lines=original, line_start=1, line_end=4)
+        child = _make_node(
+            "tasks.yml/tasks[0]/block[0]", yaml_lines="    - debug:\n        msg: hello\n", line_start=3, line_end=4
+        )
+        graph = ContentGraph()
+        for node in [child, parent] if reverse else [parent, child]:
+            node.file_path = "tasks.yml"
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        parent.update_from_yaml(original.replace("debug:", "ansible.builtin.command: echo hello\n      args:"))
+        parent.record_state(1, "transformed")
+        child.update_from_yaml("    - ansible.builtin.debug:\n        msg: hello\n")
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        with pytest.raises(ValueError, match="Conflicting remediation edits in tasks.yml at line 3"):
+            splice_modifications(graph, {"tasks.yml": original})
+
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("extra", ["adjacent", "comment", "name"])  # type: ignore[untyped-decorator]
+    def test_parent_child_overlap_reconciliation(self, reverse: bool, extra: str) -> None:
+        """Merge compatible overlap and reject ambiguous structural replacement.
+
+        Args:
+            reverse: Whether the child enters the graph first.
+            extra: Additional parent edit adjacent to the repeated child fix.
+        """
+        original = "- name: Parent\n  block:\n    - debug:\n        msg: hello\n"
+        child_original = "    - debug:\n        msg: hello\n"
+        child_fixed = child_original.replace("debug:", "ansible.builtin.debug:")
+        parent_fixed = original.replace("debug:", "ansible.builtin.debug:")
+        if extra == "adjacent":
+            parent_fixed = parent_fixed.replace("msg: hello", "msg: goodbye")
+        elif extra == "comment":
+            parent_fixed = parent_fixed.replace("    - ansible", "    # Kept comment\n    - ansible")
+        else:
+            parent_fixed = parent_fixed.replace("    - ansible", "    - name: Child\n      ansible")
+        parent = _make_node("tasks.yml/tasks[0]", yaml_lines=original, line_start=1, line_end=4)
+        child = _make_node("tasks.yml/tasks[0]/block[0]", yaml_lines=child_original, line_start=3, line_end=4)
+        graph = ContentGraph()
+        for node in [child, parent] if reverse else [parent, child]:
+            node.file_path = "tasks.yml"
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        parent.update_from_yaml(parent_fixed)
+        parent.record_state(1, "transformed")
+        child.update_from_yaml(child_fixed)
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        if extra in {"comment", "name"}:
+            # Length-changing replacements have no line-to-line correspondence
+            # unless an independently proposed insertion anchors their prefix.
+            with pytest.raises(ValueError, match="Conflicting remediation edits"):
+                splice_modifications(graph, {"tasks.yml": original})
+            return
+        patches = splice_modifications(graph, {"tasks.yml": original})
+        assert len(patches) == 1
+        assert patches[0].patched == parent_fixed
+
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "comment",
+            "label",
+            "repeated_words",
+            "repeated_alignment",
+            "suffix_same",
+            "suffix_conflict",
+            "prefix_same",
+            "prefix_conflict",
+            "duplicate_key",
+            "duplicate_key_disjoint",
+            "resolved_key",
+            "boolean_key",
+        ],
+    )  # type: ignore[untyped-decorator]
+    def test_overlap_keeps_source_line_identity(self, reverse: bool, case: str) -> None:
+        """Executable lines cannot realign to comments, names, or repeated scalar words.
+
+        Args:
+            reverse: Whether the child enters the graph first.
+            case: Overlap/provenance or shared boundary insertion scenario.
+        """
+        before = "    - debug: {}\n"
+        child_after = before.replace("debug:", "ansible.builtin.debug:")
+        parent_after = before
+        compatible = case.endswith("_same")
+        if case == "comment":
+            parent_after = "    - ansible.builtin.command: echo ok # debug: {}\n"
+        elif case == "label":
+            parent_after = "    - name: debug\n      ansible.builtin.debug: {}\n"
+            child_after = before.replace("debug:", "ansible.builtin.fail:")
+        elif case.startswith("repeated"):
+            before = '    - debug:\n        msg: "a a a"\n'
+            parent_after = before.replace("a a a", "b a")
+            child_after = before.replace("a a a", "a a")
+            if case == "repeated_alignment":
+                before = before.replace("a a a", "foo bar foo")
+                parent_after = before.replace("foo bar foo", "bar foo bar")
+                child_after = before.replace("foo bar foo", "baz bar foo")
+        elif case.startswith("duplicate_key"):
+            before = "    - debug: {}\n      when: ready\n"
+            fixed = before.replace("debug:", "ansible.builtin.debug:") if case == "duplicate_key" else before
+            parent_after = fixed.replace("when: ready", "changed_when: ready")
+            child_after = fixed + "      changed_when: false\n"
+        elif case in {"resolved_key", "boolean_key"}:
+            old, replacement, addition = ("0x20", "0x10", "16") if case == "resolved_key" else ("false", "yes", "true")
+            before = f"    - debug: {{}}\n      vars:\n        {old}: old\n"
+            parent_after = before.replace(old, replacement)
+            child_after = before + f"        {addition}: new\n"
+        elif case.startswith("suffix"):
+            parent_after = before.replace("debug:", "ansible.builtin.debug:") + "      when: ready\n"
+            child_after = before + ("      when: ready\n" if compatible else "      when: other\n")
+        else:
+            before = "    - name: Child\n      debug:\n        msg: hello\n"
+            parent_after = before.replace("      debug:", "      when: ready\n      ansible.builtin.debug:").replace(
+                "msg: hello", "msg: goodbye"
+            )
+            child_after = before.replace(
+                "      debug:", "      when: ready\n      debug:" if compatible else "      when: other\n      debug:"
+            ).replace("msg: hello", "msg: goodbye")
+        wrapper = "- name: Parent\n  block:\n"
+        original = wrapper + before
+        parent = _make_node(
+            "tasks.yml/tasks[0]", yaml_lines=original, line_start=1, line_end=2 + len(before.splitlines())
+        )
+        child = _make_node(
+            "tasks.yml/tasks[0]/block[0]", yaml_lines=before, line_start=3, line_end=2 + len(before.splitlines())
+        )
+        graph = ContentGraph()
+        for node in [child, parent] if reverse else [parent, child]:
+            node.file_path = "tasks.yml"
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        parent.update_from_yaml(wrapper + parent_after)
+        parent.record_state(1, "transformed")
+        child.update_from_yaml(child_after)
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        if not compatible:
+            with pytest.raises(ValueError, match="Conflicting remediation edits"):
+                splice_modifications(graph, {"tasks.yml": original})
+            return
+        patches = splice_modifications(graph, {"tasks.yml": original})
+        assert len(patches) == 1
+        assert patches[0].patched == wrapper + parent_after
+
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("comment", [False, True])  # type: ignore[untyped-decorator]
+    def test_independent_sibling_boundary_edits(self, reverse: bool, comment: bool) -> None:
+        """A sibling insertion stays independent of the next task's expansion.
+
+        Args:
+            reverse: Whether nodes enter the graph in reverse source order.
+            comment: Whether independent additions happen to share identical text.
+        """
+        first = "- ansible.builtin.command: first\n"
+        second = "- ansible.builtin.command: second\n"
+        original = first + second
+        first_after = first + ("# Boundary\n" if comment else "  changed_when: false\n")
+        second_after = ("# Boundary\n" if comment else "") + "- ansible.builtin.command:\n    cmd: second\n"
+        graph = ContentGraph()
+        nodes = [
+            _make_node("tasks.yml/tasks[0]", yaml_lines=first, file_path="tasks.yml", line_start=1, line_end=1),
+            _make_node("tasks.yml/tasks[1]", yaml_lines=second, file_path="tasks.yml", line_start=2, line_end=2),
+        ]
+        for node in reversed(nodes) if reverse else nodes:
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        for node, after in zip(nodes, (first_after, second_after), strict=True):
+            node.update_from_yaml(after)
+            node.record_state(1, "transformed")
+        graph.approve_pending()
+        patches = splice_modifications(graph, {"tasks.yml": original})
+        assert len(patches) == 1
+        assert patches[0].patched == first_after + second_after
+
+    @pytest.mark.parametrize("same", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    def test_pure_sibling_insertions_preserve_ownership(self, same: bool, reverse: bool) -> None:
+        """Touching sibling additions preserve both owners and source order.
+
+        Args:
+            same: Whether both sibling additions have identical comment text.
+            reverse: Whether nodes enter the graph in reverse order.
+        """
+        first = "- ansible.builtin.debug: {}\n"
+        second = "- ansible.builtin.command: second\n"
+        first_addition = "# Boundary\n" if same else "  changed_when: false\n"
+        second_addition = "# Boundary\n" if same else "# Second task\n"
+        graph = ContentGraph()
+        nodes = [
+            _make_node("tasks.yml/tasks[0]", yaml_lines=first, file_path="tasks.yml", line_start=1, line_end=1),
+            _make_node("tasks.yml/tasks[1]", yaml_lines=second, file_path="tasks.yml", line_start=2, line_end=2),
+        ]
+        for node in reversed(nodes) if reverse else nodes:
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        for node, after in zip(nodes, (first + first_addition, second_addition + second), strict=True):
+            node.update_from_yaml(after)
+            node.record_state(1, "transformed")
+        graph.approve_pending()
+        patches = splice_modifications(graph, {"tasks.yml": first + second})
+        assert patches[0].patched == first + first_addition + second_addition + second
+
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("expand", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("alias", [False, True, "new", "parent", "boundary"])  # type: ignore[untyped-decorator]
+    def test_block_condition_and_child_expansion_are_independent(
+        self, reverse: bool, expand: bool, alias: bool | str
+    ) -> None:
+        """A block condition does not conflict with its last child's expanded action.
+
+        Args:
+            reverse: Whether the child enters the graph before its block.
+            expand: Whether the child expands its action or appends its own condition.
+            alias: Whether the child references an external anchor in a file without a final newline.
+        """
+        child_text = "    - ansible.builtin.command: second\n"
+        block = "- name: Parent\n  block:\n" + child_text
+        anchor = "- ansible.builtin.debug:\n    msg: &target /tmp/done\n" if alias and alias != "parent" else ""
+        offset = len(anchor.splitlines())
+        original = (anchor.replace("&target ", "") if alias == "new" else anchor) + block
+        if alias:
+            original = original.rstrip("\n")
+        parent = _make_node(
+            "tasks.yml/tasks[0]",
+            yaml_lines=block,
+            file_path="tasks.yml",
+            line_start=offset + 1,
+            line_end=offset + 3,
+        )
+        child = _make_node(
+            "tasks.yml/tasks[0]/block[0]",
+            yaml_lines=child_text,
+            file_path="tasks.yml",
+            line_start=offset + 3,
+            line_end=offset + 3,
+        )
+        graph = ContentGraph()
+        for node in [child, parent] if reverse else [parent, child]:
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        anchor_after = anchor + ("  changed_when: false\n" if alias == "boundary" else "")
+        if alias in ("new", "boundary"):
+            anchor_node = _make_node(
+                "tasks.yml/anchor",
+                yaml_lines=anchor.replace("&target ", "") if alias == "new" else anchor,
+                file_path="tasks.yml",
+                line_start=1,
+                line_end=offset,
+            )
+            graph.add_node(anchor_node)
+            anchor_node.record_state(0, "scanned")
+            anchor_node.update_from_yaml(anchor_after)
+            anchor_node.record_state(1, "transformed")
+        parent_after = block + "  when: ready\n"
+        if alias == "parent":
+            parent_after = parent_after.replace("  block:\n", "  vars: {target: &target /tmp/done}\n  block:\n")
+        elif alias == "boundary":
+            parent_after = "# Parent\n" + parent_after
+        parent.update_from_yaml(parent_after)
+        parent.record_state(1, "transformed")
+        child_after = (
+            "    - ansible.builtin.command:\n        cmd: second\n"
+            if expand
+            else child_text + "      changed_when: false\n"
+        )
+        if alias:
+            child_after += "        creates: *target\n" if expand else "      vars:\n        path: *target\n"
+        child.update_from_yaml(child_after)
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        patches = splice_modifications(graph, {"tasks.yml": original})
+        assert patches[0].patched == anchor_after + parent_after.replace(child_text, child_after)
+
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("comment", [False, True])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("gap", ["", "        # kept\n", "        cmd: echo hi\n"])  # type: ignore[untyped-decorator]
+    def test_boundary_edit_cannot_be_absorbed_into_a_script(self, reverse: bool, comment: bool, gap: str) -> None:
+        """Valid YAML cannot hide a separately proposed field or comment in a script scalar.
+
+        Args:
+            reverse: Whether the child enters the graph before its block.
+            comment: Whether the child adds a comment instead of a mapping field.
+            gap: Unchanged source between the parent's replacement and child's addition.
+        """
+        child_text = "    - ansible.builtin.shell:\n" + (gap if "cmd:" in gap else "        cmd: echo hi\n" + gap)
+        original = "- name: Parent\n  block:\n" + child_text
+        end = len(original.splitlines())
+        parent = _make_node(
+            "tasks.yml/tasks[0]", yaml_lines=original, file_path="tasks.yml", line_start=1, line_end=end
+        )
+        child = _make_node(
+            "tasks.yml/tasks[0]/block[0]", yaml_lines=child_text, file_path="tasks.yml", line_start=3, line_end=end
+        )
+        graph = ContentGraph()
+        for node in [child, parent] if reverse else [parent, child]:
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        parent.update_from_yaml(
+            "- name: Parent\n  block:\n    - ansible.builtin.shell: |\n"
+            + (gap if "cmd:" in gap else "        echo hi\n" + gap)
+            + ("" if gap else "        # comment\n")
+        )
+        parent.record_state(1, "transformed")
+        child.update_from_yaml(
+            child_text + ("        # separate comment\n" if comment else "        creates: /tmp/done\n")
+        )
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        with pytest.raises(ValueError, match="container or structural role"):
+            splice_modifications(graph, {"tasks.yml": original})
+
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    def test_sibling_comment_cannot_be_absorbed_into_copy_content(self, reverse: bool) -> None:
+        """An indented sibling comment must not become a copied file's contents.
+
+        Args:
+            reverse: Whether nodes enter the graph in reverse order.
+        """
+        first = "- ansible.builtin.copy:\n    content: hello\n"
+        second = "- ansible.builtin.debug: {}\n"
+        graph = ContentGraph()
+        nodes = [
+            _make_node("tasks.yml/tasks[0]", yaml_lines=first, file_path="tasks.yml", line_start=1, line_end=2),
+            _make_node("tasks.yml/tasks[1]", yaml_lines=second, file_path="tasks.yml", line_start=3, line_end=3),
+        ]
+        for node in reversed(nodes) if reverse else nodes:
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        after = (first.replace("content: hello", "content: |\n      hello"), "      # next task\n" + second)
+        for node, text in zip(nodes, after, strict=True):
+            node.update_from_yaml(text)
+            node.record_state(1, "transformed")
+        graph.approve_pending()
+        with pytest.raises(ValueError, match="container or structural role"):
+            splice_modifications(graph, {"tasks.yml": first + second})
+
+    @pytest.mark.parametrize("reverse", [False, True])  # type: ignore[untyped-decorator]
+    def test_implicit_null_does_not_mark_the_following_field(self, reverse: bool) -> None:
+        """An implicit null does not transfer roles to a separately edited field.
+
+        Args:
+            reverse: Whether nodes enter the graph in reverse order.
+        """
+        child_text = "    - ansible.builtin.debug: {}\n      vars:\n        flag:\n        options: {}\n"
+        original = "- name: Parent\n  block:\n" + child_text
+        parent = _make_node("tasks.yml/parent", yaml_lines=original, file_path="tasks.yml", line_start=1, line_end=6)
+        child = _make_node("tasks.yml/child", yaml_lines=child_text, file_path="tasks.yml", line_start=3, line_end=6)
+        graph = ContentGraph()
+        for node in [child, parent] if reverse else [parent, child]:
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        parent_after = original.replace("        options:", "        extra: true\n        options:")
+        parent.update_from_yaml(parent_after)
+        parent.record_state(1, "transformed")
+        child.update_from_yaml(child_text.replace("options: {}", "options: []"))
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        patches = splice_modifications(graph, {"tasks.yml": original})
+        assert patches[0].patched == parent_after.replace("options: {}", "options: []")
+
+    def test_parent_newline_does_not_overwrite_last_child(self) -> None:
+        """Snippet newline normalization preserves a last child's independent fix."""
+        original = "- name: parent\n  block:\n    - name: 'child'\n      debug: {}\n"
+        parent = _make_node("tasks.yml/tasks[0]", yaml_lines=original.rstrip("\n"), line_start=1, line_end=4)
+        child = _make_node(
+            "tasks.yml/tasks[0]/block[0]", yaml_lines="    - name: 'child'\n      debug: {}", line_start=3, line_end=4
+        )
+        graph = ContentGraph()
+        for node in (parent, child):
+            node.file_path = "tasks.yml"
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        parent.update_from_yaml(original.replace("name: parent", "name: Parent"))
+        parent.record_state(1, "transformed")
+        child.update_from_yaml("    - name: 'Child'\n      debug: {}\n")
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        patches = splice_modifications(graph, {"tasks.yml": original})
+        assert patches[0].patched == original.replace("name: parent", "name: Parent").replace("'child'", "'Child'")
+
+    @pytest.mark.parametrize("same_edit", [False, True])  # type: ignore[untyped-decorator]
+    def test_shared_child_edit_or_insertion_boundary(self, same_edit: bool) -> None:
+        """Deduplicate shared edits and preserve insertions before child replacements.
+
+        Args:
+            same_edit: Whether the parent repeats the child fix instead of inserting a comment.
+        """
+        original = "- name: Parent\n  block:\n    - debug: {}\n"
+        parent = _make_node("tasks.yml/tasks[0]", yaml_lines=original, line_start=1, line_end=3)
+        child = _make_node("tasks.yml/tasks[0]/block[0]", yaml_lines="    - debug: {}\n", line_start=3, line_end=3)
+        graph = ContentGraph()
+        for node in (parent, child):
+            node.file_path = "tasks.yml"
+            graph.add_node(node)
+            node.record_state(0, "scanned")
+        graph.add_edge(parent.node_id, child.node_id, EdgeType.CONTAINS)
+        updated = (
+            original.replace("debug:", "ansible.builtin.debug:")
+            if same_edit
+            else original.replace("    - debug:", "    # Child task\n    - debug:")
+        )
+        parent.update_from_yaml(updated)
+        parent.record_state(1, "transformed")
+        child.update_from_yaml("    - ansible.builtin.debug: {}\n")
+        child.record_state(1, "transformed")
+        graph.approve_pending()
+        patches = splice_modifications(graph, {"tasks.yml": original})
+        assert patches[0].patched == updated.replace("- debug:", "- ansible.builtin.debug:")
+
     def test_no_modifications(self) -> None:
         """When no nodes are modified, no patches are produced."""
         graph = ContentGraph()
@@ -1086,10 +1515,13 @@ class TestSpliceModifications:
 
     def test_multi_node_bottom_up(self) -> None:
         """Multiple nodes in the same file are spliced bottom-up."""
+        from textwrap import indent
+
         graph = ContentGraph()
         n1 = _make_node(
             "site.yml/plays[0]/tasks[0]",
             module="apt",
+            yaml_lines=indent(_TASK_YAML_APT, "    "),
             file_path="/workspace/site.yml",
             line_start=4,
             line_end=7,
@@ -1097,7 +1529,7 @@ class TestSpliceModifications:
         n2 = _make_node(
             "site.yml/plays[0]/tasks[1]",
             module="copy",
-            yaml_lines=_TASK_YAML_COPY,
+            yaml_lines=indent(_TASK_YAML_COPY, "    "),
             file_path="/workspace/site.yml",
             line_start=8,
             line_end=11,
@@ -1108,13 +1540,13 @@ class TestSpliceModifications:
         n1.record_state(0, "scanned")
         v1: ViolationDict = {"rule_id": "M001", "path": n1.node_id}
         graph.register_violations([v1], 0)
-        n1.update_from_yaml(_TASK_YAML_FQCN)
+        n1.update_from_yaml(indent(_TASK_YAML_FQCN, "    "))
         n1.record_state(1, "transformed")
 
         n2.record_state(0, "scanned")
         v2: ViolationDict = {"rule_id": "M001", "path": n2.node_id}
         graph.register_violations([v2], 0)
-        n2.update_from_yaml("- name: Copy file\n  ansible.builtin.copy:\n    src: a.txt\n    dest: /tmp/a.txt\n")
+        n2.update_from_yaml(indent(_TASK_YAML_COPY.replace("copy:", "ansible.builtin.copy:"), "    "))
         n2.record_state(1, "transformed")
         graph.approve_pending()
 
@@ -1123,8 +1555,9 @@ class TestSpliceModifications:
 
         assert len(patches) == 1
         p = patches[0]
-        assert "ansible.builtin.apt" in p.patched
-        assert "ansible.builtin.copy" in p.patched
+        assert p.patched == self._ORIGINAL.replace("      apt:", "      ansible.builtin.apt:").replace(
+            "      copy:", "      ansible.builtin.copy:"
+        )
 
     def test_missing_original_skipped(self) -> None:
         """Nodes whose file is not in originals are silently skipped."""
@@ -1303,3 +1736,52 @@ class TestAnsibleNodeLookup:
 
         assert build_node_lookup(b"") == {}
         assert build_node_lookup(b"{}") == {}
+
+
+def test_splicing_retains_early_fixes_after_progression_rollover() -> None:
+    """Bounded snapshots retain the source baseline and all approved edits."""
+    original = "- name: original\n  debug:\n    msg: hello\n"
+    graph = ContentGraph()
+    node = _make_node(yaml_lines=original, file_path="tasks.yml", line_start=1, line_end=3)
+    graph.add_node(node)
+    baseline = node.record_state(0, "scanned")
+    node.update_from_yaml(original.replace("original", "Original"))
+    node.record_state(1, "transformed", source="deterministic")
+    for pass_number in range(2, node.MAX_PROGRESSION + 3):
+        node.record_state(pass_number, "scanned")
+    node.update_from_yaml(node.yaml_lines.replace("debug:", "ansible.builtin.debug:"))
+    node.record_state(node.MAX_PROGRESSION + 3, "transformed", source="deterministic")
+    graph.approve_pending()
+
+    assert len(node.progression) == node.MAX_PROGRESSION
+    assert node.progression[0].id == baseline.id
+    assert node.progression[0].yaml_lines == original
+    patches = splice_modifications(graph, {"tasks.yml": original})
+    assert len(patches) == 1
+    assert patches[0].patched == original.replace("original", "Original").replace("debug:", "ansible.builtin.debug:")
+
+
+def test_splicing_retains_last_approved_snapshot_amid_pending_rollover() -> None:
+    """Pending history cannot evict an approved fix or leak unapproved bytes."""
+    original = "- name: original\n  debug: {}\n"
+    graph = ContentGraph()
+    node = _make_node(yaml_lines=original, file_path="tasks.yml", line_start=1, line_end=2)
+    graph.add_node(node)
+    node.record_state(0, "scanned")
+    approved_text = original.replace("original", "Original")
+    node.update_from_yaml(approved_text)
+    node.record_state(1, "transformed", source="deterministic")
+    graph.approve_pending()
+    baseline, approved = node.progression
+    for pass_number in range(2, node.MAX_PROGRESSION * 3):
+        node.update_from_yaml(approved_text.replace("debug:", f"pending_{pass_number}:"))
+        node.record_state(pass_number, "transformed", source="ai")
+
+    assert len(node.progression) == node.MAX_PROGRESSION
+    assert node.progression[0] is baseline
+    assert any(entry is approved for entry in node.progression)
+    patches = splice_modifications(graph, {"tasks.yml": original})
+    assert len(patches) == 1
+    assert patches[0].patched == approved_text
+    graph.reject_node(node.node_id)
+    assert node.yaml_lines == approved_text
