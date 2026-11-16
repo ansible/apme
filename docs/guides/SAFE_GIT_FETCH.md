@@ -61,7 +61,11 @@ existing project clone operations retain their established behavior.
 Failures report the Git stage, exit status and a fixed diagnostic category
 (for example, authentication failure or quota exhaustion). Git stderr is drained
 with at most 8 KiB retained for classification; raw server messages and
-credentials are never included in the public exception.
+credentials are never included in the public exception. After Git exits, the
+helper allows up to one second to drain stderr through EOF before closing pipe
+handles, so late diagnostics are classified without letting a descendant hold
+cleanup open indefinitely. Missing or malformed kernel mount identity produces
+a descriptive storage error and closes the held descriptor.
 
 `tox -e git-fetch-quota` exercises concurrent production HTTPS snapshots against
 a real 4 MiB tmpfs, covering packed objects, checkout expansion and loose-object

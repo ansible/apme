@@ -61,7 +61,11 @@ def _open_storage() -> int:
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
         info = Path(f"/proc/self/fdinfo/{descriptor}").read_text()
-        mount_id = next(line.split()[1] for line in info.splitlines() if line.startswith("mnt_id:"))
+        mount_id = next(
+            (line.partition(":")[2].strip() for line in info.splitlines() if line.startswith("mnt_id:")), ""
+        )
+        if not mount_id.isdecimal():
+            raise RuntimeError("Git fetch storage changed or lost its kernel quota")
         entries = Path("/proc/self/mountinfo").read_text().splitlines()
         matching = [line for line in entries if line.split()[0] == mount_id]
         stats = os.fstatvfs(descriptor)
@@ -283,9 +287,18 @@ async def _run(command: list[str], env: dict[str, str], *, storage_fd: int | Non
     finally:
         # Do not wait forever if a descendant inherited stderr after its leader exited.
         async def close_reader() -> None:
-            reader.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reader
+            try:
+                # An exited child can leave buffered diagnostics or a descendant
+                # holding the pipe. Drain to EOF, with a finite cleanup deadline.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(reader), 1)
+            finally:
+                reader.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader
+                transport = getattr(process, "_transport", None)
+                if transport is not None:
+                    transport.close()
 
         if await _drain(asyncio.create_task(close_reader())):
             raise asyncio.CancelledError

@@ -32,7 +32,9 @@ including TMPDIR, live under that mount, sharing its hard kernel quotas across
 concurrent operations. Context exit removes the checkout. Canceled and timed-out
 Git process groups are stopped and reaped before deleting their files, including
 cancellation while subprocess creation is pending. Classify bounded stderr into
-fixed diagnostic categories without exposing raw server messages. A required CI
+fixed diagnostic categories without exposing raw server messages. Drain stderr
+through EOF with a finite cleanup deadline before classifying failures. Missing
+or malformed mount identity fails closed as a storage error. A required CI
 gate exercises concurrent production HTTPS snapshots with real kernel quotas
 for packed objects, checkout bytes and loose-object inodes.
 
@@ -71,3 +73,4 @@ not changed by this prerequisite; PR #879 consumes the helper for requirements.
 |------|--------|
 | 2026-11-16 | Added Gateway-local fetch boundary and operator requirements. |
 | 2026-11-16 | Addressed review: translated-address policy, held mount descriptors, process-creation cancellation, bounded diagnostics and mandatory production-path quota CI. |
+| 2026-11-16 | Final review: fail closed on absent/malformed mount identity and drain buffered diagnostics through bounded EOF cleanup. |

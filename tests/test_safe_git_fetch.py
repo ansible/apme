@@ -641,3 +641,77 @@ async def test_creation_cancel_drains_pipe_of_already_exited_child(monkeypatch: 
     assert children[0].returncode == 0
     assert children[0].stderr is not None
     assert children[0].stderr.at_eof()
+
+
+@pytest.mark.parametrize("fdinfo", ["pos:\t0\n", "mnt_id:\n", "mnt_id:\tnot-a-number\n"])  # type: ignore[untyped-decorator]
+def test_missing_mount_identity_fails_closed_and_closes_fd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fdinfo: str,
+) -> None:
+    """Missing or malformed kernel mount identity is a descriptive storage failure.
+
+    Args:
+        tmp_path: Mount pathname already checked by the caller.
+        monkeypatch: Kernel metadata override.
+        fdinfo: Missing, empty or invalid mount identity.
+    """
+    monkeypatch.setattr(safe_fetch, "_storage_root", lambda: tmp_path)
+    original_read = Path.read_text
+    descriptors = []
+
+    def read(path: Path) -> str:
+        if str(path).startswith("/proc/self/fdinfo/"):
+            descriptors.append(int(path.name))
+            return fdinfo
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    with pytest.raises(RuntimeError, match="storage changed or lost its kernel quota"):
+        safe_fetch._open_storage()
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+
+
+async def test_failure_diagnostics_drain_after_process_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Late buffered stderr is classified before the public failure is constructed.
+
+    Args:
+        monkeypatch: Already exited child with delayed stderr delivery.
+    """
+    chunks = [b"fatal: Authentication failed SECRET\n", b""]
+
+    async def read(size: int) -> bytes:
+        await asyncio.sleep(0.01)
+        return chunks.pop(0)
+
+    process = SimpleNamespace(returncode=128, stderr=SimpleNamespace(read=read), wait=AsyncMock(return_value=128))
+    monkeypatch.setattr(safe_fetch, "_spawn", AsyncMock(return_value=process))
+    with pytest.raises(RuntimeError, match=r"^Git fetch failed \(stage fetch, exit 128\): authentication failed$"):
+        await safe_fetch._run(["git", "fetch"], {})
+    assert not chunks
+
+
+async def test_diagnostic_eof_wait_has_finite_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A descendant holding stderr cannot stall diagnostics or keep pipe handles open.
+
+    Args:
+        monkeypatch: Exited leader with a pipe that never reaches EOF.
+    """
+    from unittest.mock import Mock
+
+    async def read(size: int) -> bytes:
+        await asyncio.Event().wait()
+        return b""
+
+    transport = Mock()
+    process = SimpleNamespace(
+        returncode=128,
+        stderr=SimpleNamespace(read=read),
+        wait=AsyncMock(return_value=128),
+        _transport=transport,
+    )
+    monkeypatch.setattr(safe_fetch, "_spawn", AsyncMock(return_value=process))
+    with pytest.raises(RuntimeError, match="Git fetch failed"):
+        await asyncio.wait_for(safe_fetch._run(["git", "fetch"], {}), 3)
+    transport.close.assert_called_once()
