@@ -73,5 +73,7 @@ inode exhaustion. A shared-budget case holds one individually valid 3 MiB
 snapshot while a second must fail, then verifies capacity recovers after cleanup.
 CI runs this gate with mount privileges; inability to mount
 fails the gate. The normal unit suite skips these cases on unprivileged hosts.
-TLS transport tests skip if Git, OpenSSL or destination-pinning support is
-unavailable; separate unit coverage verifies that unsupported Git fails closed.
+In the normal unit suite, TLS transport tests skip if Git, OpenSSL or
+destination-pinning support is unavailable. The required gate fails instead when
+any of these prerequisites is missing. Separate unit coverage verifies that
+unsupported Git fails closed.
