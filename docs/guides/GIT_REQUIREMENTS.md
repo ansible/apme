@@ -52,3 +52,7 @@ reaping is not wired into the daemon yet; account for retained session storage
 when operating this feature.
 
 Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).
+
+The feature is pending security work on fetch storage bounds and destination enforcement;
+see [#885](https://github.com/ansible/apme/issues/885) and
+[#884](https://github.com/ansible/apme/issues/884).

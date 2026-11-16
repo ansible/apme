@@ -3,6 +3,7 @@
 import asyncio
 import os
 import shlex
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -85,7 +86,15 @@ roles:
     monkeypatch.setenv("APME_SCM_TOKEN", "deployment")
     calls = []
 
-    async def fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str | None = None) -> None:
+    async def fetch(
+        url: str,
+        ref: str,
+        dest: str,
+        token: str | None,
+        scm_provider: str | None = None,
+        url_userpass: tuple[str, str] | None = None,
+    ) -> None:
+        assert url_userpass is None
         assert scm_provider == ("gitlab" if source_origin == "git.example" else None)
         calls.append((ref, token))
         root = Path(dest)
@@ -327,3 +336,153 @@ def test_git_dependency_identifiers_cannot_escape_index_paths() -> None:
     for path in ("ansible_collections/.../x/plugins/a.py", "roles/..hidden/tasks/main.yml"):
         with pytest.raises(ValueError, match="Invalid dependency"):
             engine_upload.validate_dependency_path(path)
+
+
+def test_invalid_requirement_file_does_not_block_other_files(tmp_path: Path) -> None:
+    """Malformed requirements do not suppress valid declarations in other files.
+
+    Args:
+        tmp_path: Project checkout.
+    """
+    (tmp_path / "requirements.yml").write_text("collections: [")
+    (tmp_path / "roles").mkdir()
+    (tmp_path / "roles/requirements.yml").write_text("- src: git+https://example.com/example.git\n")
+    assert list(git._read_declarations(tmp_path)) == [("roles", {"src": "git+https://example.com/example.git"})]
+
+
+def test_missing_collection_metadata_reports_error(tmp_path: Path) -> None:
+    """Missing collection metadata produces a useful error.
+
+    Args:
+        tmp_path: Repository checkout.
+    """
+    with pytest.raises(ValueError, match="metadata.*not found"):
+        git._collect_files("collections", {}, tmp_path, tmp_path, "test")
+
+
+@pytest.mark.parametrize("output", ["not json", "null", '["ok", 42]'])  # type: ignore[untyped-decorator]
+def test_role_path_probe_errors_are_scoped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str) -> None:
+    """Bad role path probes produce an L057 result instead of aborting all validation.
+
+    Args:
+        tmp_path: Temporary venv and project.
+        monkeypatch: Subprocess override.
+        output: Invalid probe output.
+    """
+    from apme_engine.validators.ansible.rules import L057_syntax
+
+    venv = tmp_path / "venv"
+    (venv / "lib/python3.12/site-packages/roles").mkdir(parents=True)
+    (venv / "bin").mkdir()
+    (venv / "bin/ansible-playbook").touch()
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=output))
+    violations = L057_syntax.run(venv, tmp_path)
+    assert len(violations) == 1
+    assert violations[0]["rule_id"] == "L057"
+    assert violations[0]["message"] == "Unable to resolve Ansible role search paths"
+
+
+async def test_project_url_credentials_follow_same_origin_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """URL credentials are inherited only for same-origin dependencies.
+
+    Args:
+        tmp_path: Project checkout.
+        monkeypatch: Isolated gateway state.
+    """
+    (tmp_path / "requirements.yml").write_text(
+        "roles:\n- src: git+https://git.example/one.git\n- src: git+https://other.example/two.git\n"
+    )
+    db = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=[
+                SimpleNamespace(enabled=True),
+                SimpleNamespace(
+                    requirements_token=None,
+                    scm_token=None,
+                    repo_url="https://user:secret@git.example/project",
+                    scm_provider=None,
+                ),
+            ]
+        )
+    )
+
+    @asynccontextmanager
+    async def session():  # type: ignore[no-untyped-def]
+        yield db
+
+    monkeypatch.setattr(git, "get_session", session)
+    monkeypatch.setenv("APME_SCM_TOKEN", "")
+    seen = []
+
+    async def fetch(
+        url: str,
+        ref: str,
+        dest: str,
+        token: str | None,
+        scm_provider: str | None = None,
+        url_userpass: tuple[str, str] | None = None,
+    ) -> None:
+        seen.append((url, token, url_userpass))
+        tasks = Path(dest) / "tasks"
+        tasks.mkdir()
+        (tasks / "main.yml").write_text("[]")
+
+    monkeypatch.setattr(git, "_fetch", fetch)
+    await git.resolve_git_requirements("p", str(tmp_path))
+    assert seen == [
+        ("https://git.example/one.git", None, ("user", "secret")),
+        ("https://other.example/two.git", None, None),
+    ]
+
+
+async def test_git_snapshot_isolated_from_later_galaxy_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Newly discovered Galaxy specs select another venv before the Git snapshot is applied.
+
+    Args:
+        tmp_path: Temporary fake venvs.
+        monkeypatch: Scan and venv mocks.
+    """
+    from apme_engine.daemon import engine_server, git_dependencies
+    from apme_engine.venv_manager import session as venv_module
+
+    roots = []
+    calls = []
+    initial_root = tmp_path / "initial"
+    final_root = tmp_path / "final"
+    initial_root.mkdir()
+    final_root.mkdir()
+    initial = SimpleNamespace(venv_root=initial_root, failed_collections=[], installed_collections=[])
+    final = SimpleNamespace(
+        venv_root=final_root, failed_collections=["unavailable.collection"], installed_collections=[]
+    )
+
+    def peek(sid: str, version: str, specs: list[str]) -> object:
+        calls.append((sid, tuple(specs)))
+        return initial if len(calls) == 1 else final
+
+    manager = SimpleNamespace(peek_warm=peek, get=lambda *_: initial)
+    monkeypatch.setattr(engine_server.EngineServicer, "_get_venv_manager", lambda _: manager)
+    monkeypatch.setattr(venv_module, "_venv_site_packages", lambda _: tmp_path)
+    monkeypatch.setattr(
+        engine_server,
+        "run_scan",
+        lambda *args, **kwargs: SimpleNamespace(
+            hierarchy_payload={"collection_set": ["example.new"]},
+            scandata=None,
+        ),
+    )
+    monkeypatch.setattr(git_dependencies, "install_git_dependencies", lambda root, files: roots.append(root))
+    with pytest.raises(engine_server.CollectionDependencyError):
+        await engine_server.EngineServicer()._execute_scan_pipeline(
+            tmp_path,
+            [],
+            "scan",
+            session_id="project",
+            dependency_files={"roles/git/tasks/main.yml": b"[]"},
+        )
+    assert calls[0][0] != calls[1][0]
+    assert calls[0][1] == ()
+    assert calls[1][1] == ("example.new",)
+    assert roots == [initial_root, final_root]

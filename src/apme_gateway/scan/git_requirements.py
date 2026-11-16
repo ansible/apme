@@ -55,6 +55,9 @@ async def resolve_git_requirements(
         )
         project_origin = _origin(project.repo_url)
         project_provider = scm_provider or project.scm_provider
+        from apme_gateway.scan.driver import _url_embedded_userpass
+
+        url_userpass = _url_embedded_userpass(project.repo_url) if not token else None
     files: dict[str, File] = {}
     total = 0
     for kind, entry in declarations:
@@ -71,7 +74,14 @@ async def resolve_git_requirements(
             raise ValueError("Invalid Git collection subdirectory")
         with tempfile.TemporaryDirectory(prefix="apme_git_requirement_") as tmp:
             same_origin = _origin(source) == project_origin
-            await _fetch(source, ref, tmp, token if same_origin else None, project_provider if same_origin else None)
+            await _fetch(
+                source,
+                ref,
+                tmp,
+                token if same_origin else None,
+                project_provider if same_origin else None,
+                url_userpass if same_origin else None,
+            )
             collected = await asyncio.to_thread(
                 _collect_files, kind, entry, Path(tmp) / subdir, Path(tmp), Path(parsed.path).name
             )
@@ -99,7 +109,12 @@ def _read_declarations(root: Path) -> list[tuple[str, dict[str, object]]]:
         path = root / name
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
             continue
-        data = yaml.safe_load(path.read_text())
+        try:
+            if path.stat().st_size > 2 * 1024 * 1024:
+                continue
+            data = yaml.safe_load(path.read_text())
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            continue
         declarations.extend(git_entries(data, roles_file=name.startswith("roles/") or isinstance(data, list)))
     return declarations
 
@@ -143,9 +158,14 @@ def _collect_files(
             manifest = content_root / "MANIFEST.json"
             if manifest.is_symlink():
                 raise ValueError("Symlinked collection metadata is not supported")
+            if not manifest.is_file():
+                raise ValueError("Git collection metadata (galaxy.yml or MANIFEST.json) not found")
             if manifest.stat().st_size > 2 * 1024 * 1024:
                 raise RuntimeError("Git requirement metadata exceeds 2 MiB")
-            metadata = json.loads(manifest.read_text())["collection_info"]
+            manifest_data = json.loads(manifest.read_text())
+            metadata = manifest_data.get("collection_info") if isinstance(manifest_data, dict) else None
+        if not isinstance(metadata, dict) or not metadata.get("namespace") or not metadata.get("name"):
+            raise ValueError("Git collection metadata must include namespace and name")
         namespace, name = str(metadata["namespace"]), str(metadata["name"])
         if not all(re.fullmatch(r"[a-z][a-z0-9_]*", value) for value in (namespace, name)):
             raise ValueError("Invalid Git collection namespace or name")
@@ -176,7 +196,14 @@ def _collect_files(
     return list(files.values())
 
 
-async def _fetch(url: str, ref: str, dest: str, token: str | None, scm_provider: str | None = None) -> None:
+async def _fetch(
+    url: str,
+    ref: str,
+    dest: str,
+    token: str | None,
+    scm_provider: str | None = None,
+    url_userpass: tuple[str, str] | None = None,
+) -> None:
     """Fetch a branch, tag or commit with credentials scoped to its origin.
 
     Args:
@@ -185,6 +212,7 @@ async def _fetch(url: str, ref: str, dest: str, token: str | None, scm_provider:
         dest: Disposable destination.
         token: Selected requirements credential.
         scm_provider: Project provider when fetching from the same host.
+        url_userpass: Optional project URL credentials for the same origin.
 
     Raises:
         RuntimeError: Fetch failed or timed out.
@@ -192,7 +220,7 @@ async def _fetch(url: str, ref: str, dest: str, token: str | None, scm_provider:
     """
     from apme_gateway.scan.driver import _apply_git_auth_env, _git_subprocess_env
 
-    env = _apply_git_auth_env(_git_subprocess_env(), url, token, None, scm_provider=scm_provider)
+    env = _apply_git_auth_env(_git_subprocess_env(), url, token, url_userpass, scm_provider=scm_provider)
     commands = (
         ["git", "init", dest],
         ["git", "-C", dest, "fetch", "--depth=1", "--", url, ref],

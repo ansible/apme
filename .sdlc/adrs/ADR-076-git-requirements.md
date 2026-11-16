@@ -19,7 +19,7 @@ project remediation. Users need global enablement and project credential overrid
 The Gateway resolves explicit Git requirements before opening FixSession. An
 additive ScanChunk.dependency_files field streams credential-free dependency files
 with the existing upload bounds. Engine session state stores them separately from
-project files. Their content hash selects a separate venv; only Engine writes it.
+project files. Their content hash and effective Galaxy requirements select a separate venv; only Engine writes it.
 Git collection identities are excluded from Galaxy resolution. Gateway DB stores
 the disabled-by-default singleton policy and optional project requirements token.
 Credentials follow requirements override, project token, deployment fallback.
@@ -41,7 +41,7 @@ and may include third-party source in generated PRs. Rejected.
 - Dependency fetching remains at the edge; validators retain read-only venv access.
 - Gateway and Engine must be upgraded together to use the new dependency field.
 - Different Git snapshots have separate venvs, trading disk space for reproducibility
-  and isolation from warm state. Disk cache cleanup requires operational management;
+  Galaxy requirements, and isolation from warm state. Disk cache cleanup requires operational management;
   automatic safe venv reaping is a tracked follow-up.
 - Tokens use the existing database secret-storage model; API responses expose presence only.
 - Initial scope supports direct HTTPS Git declarations, not recursive Git manifests.
@@ -59,3 +59,7 @@ ADR-045, ADR-060.
 | 2026-11-13 | Implemented global policy, project credential override, gateway fetching and isolated Engine dependency payloads (REQ-023). |
 
 Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).
+
+Pending review: hard fetch storage bounds ([#885](https://github.com/ansible/apme/issues/885))
+and connection-time destination enforcement ([#884](https://github.com/ansible/apme/issues/884))
+must be implemented before enabling this feature in production.

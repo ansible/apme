@@ -395,8 +395,8 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
 
   router.put(
     "/apme/settings",
-    jsonBody,
     requireApmeSettingsManage,
+    jsonBody,
     async (req, res) => {
       res.json(await settingsService.save(req.body ?? {}));
     },
@@ -411,8 +411,8 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
   );
   router.put(
     "/apme/settings/git-requirements",
-    jsonBody,
     requireApmeSettingsManage,
+    jsonBody,
     async (req, res) => {
       if (typeof req.body?.enabled !== "boolean")
         throw new InputError("enabled must be a boolean");

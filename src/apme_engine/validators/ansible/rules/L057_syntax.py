@@ -594,7 +594,7 @@ def run(
 
     Returns:
         List of violation dicts.
-    """
+    """  # noqa: DOC501, DOC503 -- invalid probe output is caught below
     ansible_playbook = venv_root / "bin" / "ansible-playbook"
     violations: list[dict[str, object]] = []
 
@@ -620,20 +620,24 @@ def run(
     if git_roles:
         # Ask this Ansible runtime to resolve its configuration before appending
         # dependency paths; an env override alone would discard ansible.cfg.
-        resolved = subprocess.run(
-            [
-                str(venv_root / "bin/python"),
-                "-I",
-                "-c",
-                "import json; from ansible import constants as C; print(json.dumps(C.DEFAULT_ROLES_PATH))",
-            ],
-            capture_output=True,
-            text=True,
-            cwd=str(root_dir),
-            timeout=30,
-            env=env,
-        )
-        if resolved.returncode != 0:
+        try:
+            resolved = subprocess.run(
+                [
+                    str(venv_root / "bin/python"),
+                    "-I",
+                    "-c",
+                    "import json; from ansible import constants as C; print(json.dumps(C.DEFAULT_ROLES_PATH))",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(root_dir),
+                timeout=30,
+                env=env,
+            )
+            paths = json.loads(resolved.stdout)
+            if resolved.returncode != 0 or not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                raise ValueError("Invalid Ansible role paths")
+        except (subprocess.TimeoutExpired, OSError, ValueError):
             return [
                 {
                     "rule_id": RULE_ID,
@@ -645,7 +649,6 @@ def run(
                     "scope": "playbook",
                 }
             ]
-        paths = json.loads(resolved.stdout)
         env["ANSIBLE_ROLES_PATH"] = os.pathsep.join([*paths, *(str(path) for path in git_roles)])
 
     molecule_dirs = _molecule_directories(root_dir)

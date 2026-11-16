@@ -1534,6 +1534,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         """
         from apme_engine.validators.ansible._venv import DEFAULT_VERSION
         from apme_engine.venv_manager.session import _venv_site_packages
+        from apme_engine.venv_manager.venv_collections import _requirements_hash
 
         scan_t0 = time.monotonic()
         collection_specs = list(collection_specs or [])
@@ -1552,13 +1553,19 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             discovered_specs, _ = _discover_collection_specs(files)
             initial_specs = merge_collection_specs(collection_specs, discovered_specs, [])
             initial_specs = [spec for spec in initial_specs if spec.split(":")[0] not in git_collections]
-            async with limit_venv_builds() as release_on, self._activate_galaxy_proxy_config(galaxy_cfg_path):
-                loop = asyncio.get_running_loop()
-                acquire_future = loop.run_in_executor(
-                    None, lambda: self._get_venv_manager().acquire(sid, core_version, initial_specs)
-                )
-                release_on(cast(asyncio.Future[object], acquire_future))
-                git_venv = await asyncio.shield(acquire_future)
+            git_base_sid = sid
+            sid = f"{git_base_sid}-{_requirements_hash(initial_specs)[:16]}"
+            loop = asyncio.get_running_loop()
+            git_venv = await loop.run_in_executor(
+                None, self._get_venv_manager().peek_warm, sid, core_version, initial_specs
+            )
+            if git_venv is None:
+                async with limit_venv_builds() as release_on, self._activate_galaxy_proxy_config(galaxy_cfg_path):
+                    acquire_future = loop.run_in_executor(
+                        None, lambda: self._get_venv_manager().acquire(sid, core_version, initial_specs)
+                    )
+                    release_on(cast(asyncio.Future[object], acquire_future))
+                    git_venv = await asyncio.shield(acquire_future)
             if git_venv.failed_collections:
                 raise CollectionDependencyError(git_venv.failed_collections)
             await asyncio.get_running_loop().run_in_executor(
@@ -1613,6 +1620,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         collection_specs = [spec for spec in collection_specs if spec.split(":")[0] not in git_collections]
         logger.info("Collection specs merged (req=%s): %s", scan_id, collection_specs)
+        if dependency_files:
+            # A changed Galaxy request gets a distinct venv, so incremental pip
+            # installs cannot overwrite a Git snapshot already used by readers.
+            sid = f"{git_base_sid}-{_requirements_hash(collection_specs)[:16]}"
 
         # 3. Venv acquire (always — creates or incrementally installs).
         # PE-20: cap concurrent pip/galaxy builds across sessions so one
@@ -1649,6 +1660,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 # Hold the build slot until the worker finishes, even if cancelled.
                 release_on(cast(asyncio.Future[object], acquire_future))
                 venv_session = await asyncio.shield(acquire_future)
+        if dependency_files:
+            await asyncio.get_running_loop().run_in_executor(
+                None, install_git_dependencies, venv_session.venv_root, dependency_files
+            )
         venv_path = str(venv_session.venv_root)
         if venv_session.failed_collections:
             logger.error(
