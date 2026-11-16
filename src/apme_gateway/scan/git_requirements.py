@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import os
 import re
-import signal
-import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -19,6 +16,7 @@ from apme_engine.git_requirements import REQUIREMENTS_PATHS, git_entries
 from apme_gateway.config import GatewayConfig
 from apme_gateway.db import get_session
 from apme_gateway.db.models import GitRequirementsSettings, Project
+from apme_gateway.scm.safe_fetch import git_snapshot
 from apme_gateway.scm.tokens import select_usable_scm_token
 
 
@@ -72,16 +70,14 @@ async def resolve_git_requirements(
             raise ValueError("Invalid Git requirement version")
         if subdir and (Path(subdir).is_absolute() or ".." in Path(subdir).parts):
             raise ValueError("Invalid Git collection subdirectory")
-        with tempfile.TemporaryDirectory(prefix="apme_git_requirement_") as tmp:
-            same_origin = _origin(source) == project_origin
-            await _fetch(
-                source,
-                ref,
-                tmp,
-                token if same_origin else None,
-                project_provider if same_origin else None,
-                url_userpass if same_origin else None,
-            )
+        same_origin = _origin(source) == project_origin
+        async with git_snapshot(
+            source,
+            ref,
+            token if same_origin else None,
+            scm_provider=project_provider if same_origin else None,
+            url_userpass=url_userpass if same_origin else None,
+        ) as tmp:
             collected = await asyncio.to_thread(
                 _collect_files, kind, entry, Path(tmp) / subdir, Path(tmp), Path(parsed.path).name
             )
@@ -194,65 +190,6 @@ def _collect_files(
                 raise RuntimeError("Git requirements exceed session upload limits")
             files[key] = File(path=key, content=content)
     return list(files.values())
-
-
-async def _fetch(
-    url: str,
-    ref: str,
-    dest: str,
-    token: str | None,
-    scm_provider: str | None = None,
-    url_userpass: tuple[str, str] | None = None,
-) -> None:
-    """Fetch a branch, tag or commit with credentials scoped to its origin.
-
-    Args:
-        url: Validated HTTPS repository URL.
-        ref: Branch, tag, commit, or HEAD.
-        dest: Disposable destination.
-        token: Selected requirements credential.
-        scm_provider: Project provider when fetching from the same host.
-        url_userpass: Optional project URL credentials for the same origin.
-
-    Raises:
-        RuntimeError: Fetch failed or timed out.
-        asyncio.CancelledError: Caller canceled; child process is stopped first.
-    """
-    from apme_gateway.scan.driver import _apply_git_auth_env, _git_subprocess_env
-
-    env = _apply_git_auth_env(_git_subprocess_env(), url, token, url_userpass, scm_provider=scm_provider)
-    commands = (
-        ["git", "init", dest],
-        ["git", "-C", dest, "fetch", "--depth=1", "--", url, ref],
-        ["git", "-C", dest, "checkout", "--detach", "FETCH_HEAD"],
-    )
-    for command in commands:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            env=env,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        try:
-            await asyncio.wait_for(process.wait(), timeout=120)
-        except (asyncio.CancelledError, TimeoutError) as exc:
-            if process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    await process.wait()
-            if isinstance(exc, asyncio.CancelledError):
-                raise asyncio.CancelledError from exc
-            raise RuntimeError("Git requirement fetch timed out") from exc
-        if process.returncode:
-            raise RuntimeError(
-                "Git requirement fetch failed; check the requirement URL, version and project credentials"
-            )
 
 
 def _origin(url: str) -> tuple[str, str | None, int]:

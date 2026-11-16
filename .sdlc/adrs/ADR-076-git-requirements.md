@@ -60,6 +60,7 @@ ADR-045, ADR-060.
 
 Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).
 
-Pending review: hard fetch storage bounds ([#885](https://github.com/ansible/apme/issues/885))
-and connection-time destination enforcement ([#884](https://github.com/ansible/apme/issues/884))
-must be implemented before enabling this feature in production.
+[ADR-077](ADR-077-bounded-git-fetch.md) and prerequisite
+[PR #886](https://github.com/ansible/apme/pull/886) enforce the fetch storage
+budget and connection-time destination policy. The requirement resolver consumes
+that shared snapshot context; there is no separate unguarded Git fetch path.

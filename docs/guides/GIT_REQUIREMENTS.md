@@ -53,6 +53,8 @@ when operating this feature.
 
 Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).
 
-The feature is pending security work on fetch storage bounds and destination enforcement;
-see [#885](https://github.com/ansible/apme/issues/885) and
-[#884](https://github.com/ansible/apme/issues/884).
+Git requirement fetching uses the safeguards from [PR #886](https://github.com/ansible/apme/pull/886).
+Configure `APME_GIT_FETCH_ROOT` as a bounded tmpfs mount before enabling the feature.
+Private Git server addresses require deployment configuration through
+`APME_GIT_PRIVATE_CIDRS`. See [Gateway Git fetch safeguards](SAFE_GIT_FETCH.md)
+for exact limits, destination rules and examples. Missing enforcement fails closed.

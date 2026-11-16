@@ -5,9 +5,12 @@ import os
 import shlex
 import subprocess
 import sys
-from contextlib import asynccontextmanager
+import tempfile
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Protocol
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,6 +22,46 @@ from apme_engine.daemon.engine_server import _discover_collection_specs
 from apme_engine.daemon.git_dependencies import install_git_dependencies
 from apme_engine.daemon.session import SessionState
 from apme_gateway.scan import git_requirements as git
+
+
+class _Snapshot(Protocol):
+    def __call__(
+        self,
+        url: str,
+        ref: str,
+        token: str | None = None,
+        *,
+        scm_provider: str | None = None,
+        url_userpass: tuple[str, str] | None = None,
+    ) -> AbstractAsyncContextManager[Path]: ...
+
+
+def _snapshot_mock(
+    fetcher: Callable[[str, str, str, str | None, str | None, tuple[str, str] | None], Awaitable[None]],
+) -> _Snapshot:
+    """Adapt a fake fetch to the bounded snapshot context contract.
+
+    Args:
+        fetcher: Fixture writer replacing network fetches.
+
+    Returns:
+        Snapshot context factory.
+    """
+
+    @asynccontextmanager
+    async def snapshot(
+        url: str,
+        ref: str,
+        token: str | None = None,
+        *,
+        scm_provider: str | None = None,
+        url_userpass: tuple[str, str] | None = None,
+    ) -> AsyncIterator[Path]:
+        with tempfile.TemporaryDirectory() as directory:
+            await fetcher(url, ref, directory, token, scm_provider, url_userpass)
+            yield Path(directory)
+
+    return snapshot
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -106,7 +149,7 @@ roles:
             (root / "tasks").mkdir()
             (root / "tasks/main.yml").write_text("- ansible.builtin.debug:\n    msg: hello\n")
 
-    monkeypatch.setattr(git, "_fetch", fetch)
+    monkeypatch.setattr(git, "git_snapshot", _snapshot_mock(fetch))
     result = await git.resolve_git_requirements("project", str(tmp_path), scm_token=operation_token)
     assert calls == [("v1", expected), ("main", expected)]
     assert {f.path for f in result} == {
@@ -293,7 +336,9 @@ async def test_fetch_cancellation_waits_for_child(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
     monkeypatch.setattr(os, "killpg", lambda *_: stopped.set())
-    task = asyncio.create_task(git._fetch("https://git.example/role.git", "HEAD", "/unused", None))
+    from apme_gateway.scm.safe_fetch import _run
+
+    task = asyncio.create_task(_run(["git"], {}))
     await created.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -427,7 +472,7 @@ async def test_project_url_credentials_follow_same_origin_only(tmp_path: Path, m
         tasks.mkdir()
         (tasks / "main.yml").write_text("[]")
 
-    monkeypatch.setattr(git, "_fetch", fetch)
+    monkeypatch.setattr(git, "git_snapshot", _snapshot_mock(fetch))
     await git.resolve_git_requirements("p", str(tmp_path))
     assert seen == [
         ("https://git.example/one.git", None, ("user", "secret")),
