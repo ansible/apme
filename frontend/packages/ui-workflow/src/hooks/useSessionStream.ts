@@ -308,6 +308,7 @@ export function useSessionStream() {
   const [scanId, setScanId] = useState<string | null>(null);
   const [tier1, setTier1] = useState<Tier1Result | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [approvalToken, setApprovalToken] = useState("");
   const [result, setResult] = useState<SessionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [canReconnect, setCanReconnect] = useState(false);
@@ -344,6 +345,7 @@ export function useSessionStream() {
     setScanId(null);
     setTier1(null);
     setProposals([]);
+    setApprovalToken("");
     setResult(null);
     setError(null);
     setCanReconnect(false);
@@ -393,6 +395,7 @@ export function useSessionStream() {
           // Drop any previously accepted set: approving a stale set after a
           // malformed frame must be impossible.
           setProposals([]);
+          setApprovalToken("");
         }
         setError(message);
         if (
@@ -429,7 +432,8 @@ export function useSessionStream() {
         malformedTaintRef.current.delete("message");
         if (
           errorSourceRef.current === kind ||
-          errorSourceRef.current === "message"
+          errorSourceRef.current === "message" ||
+          (errorSourceRef.current === "approval" && (kind === "proposals" || kind === "result"))
         ) {
           errorSourceRef.current = null;
           setError(null);
@@ -534,6 +538,7 @@ export function useSessionStream() {
           case "proposals":
             if (isProposalArray(msg.proposals)) {
               noteValidFrame("proposals");
+              setApprovalToken(typeof msg.approval_token === "string" ? msg.approval_token : "");
               setProposals(
                 msg.proposals.map((p) => ({
                   ...p,
@@ -633,6 +638,12 @@ export function useSessionStream() {
             // stale malformed source so a later valid tainted-type frame
             // cannot clear an unrelated error.
             errorSourceRef.current = null;
+            if (msg.recoverable === true) {
+              errorSourceRef.current = "approval";
+              // The active offer and socket are still usable. A current-token
+              // retry must not be turned into a disconnect/reconnect cycle.
+              break;
+            }
             if (RECONNECTABLE_PHASES.has(statusRef.current) && sessionIdRef.current) {
               setCanReconnect(true);
               updateStatus("disconnected");
@@ -829,8 +840,12 @@ export function useSessionStream() {
     (approvedIds: string[]) => {
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
+        if (errorSourceRef.current === "approval") {
+          setError(null);
+          errorSourceRef.current = null;
+        }
         ws.send(
-          JSON.stringify({ type: "approve", approved_ids: approvedIds }),
+          JSON.stringify({ type: "approve", approved_ids: approvedIds, approval_token: approvalToken }),
         );
       } else {
         setError(
@@ -845,7 +860,7 @@ export function useSessionStream() {
         }
       }
     },
-    [updateStatus],
+    [updateStatus, approvalToken],
   );
 
   const extend = useCallback(() => {

@@ -89,6 +89,39 @@ describe("useSessionStream hardening", () => {
     sessionStorage.clear();
   });
 
+  it("binds empty approvals to the proposal gate captured by the callback", async () => {
+    const { result, unmount, ws } = await startSessionWithSocket();
+    try {
+      sendMsg(ws, { type: "proposals", proposals: [proposalBase()], approval_token: "gate-1" });
+      const oldApprove = result.current.approve;
+      sendMsg(ws, { type: "proposals", proposals: [proposalBase()], approval_token: "gate-2" });
+      act(() => { oldApprove([]); result.current.approve([]); });
+      const approvals = ws.send.mock.calls.map(([raw]) => JSON.parse(raw as string))
+        .filter((msg) => msg.type === "approve");
+      expect(approvals).toEqual([
+        { type: "approve", approved_ids: [], approval_token: "gate-1" },
+        { type: "approve", approved_ids: [], approval_token: "gate-2" },
+      ]);
+    } finally { unmount(); }
+  });
+
+  it("keeps the active offer and socket usable after a recoverable approval error", async () => {
+    const { result, unmount, ws } = await startSessionWithSocket();
+    try {
+      sendMsg(ws, { type: "proposals", proposals: [proposalBase()], approval_token: "current" });
+      sendMsg(ws, { type: "error", code: "stale_approval_gate", message: "Retry current gate", recoverable: true });
+      expect(result.current.status).toBe("awaiting_approval");
+      expect(result.current.proposals).toHaveLength(1);
+      expect(result.current.error).toBe("Retry current gate");
+      expect(ws.close).not.toHaveBeenCalled();
+      act(() => { result.current.approve([]); });
+      expect(result.current.error).toBeNull();
+      expect(JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1]![0] as string)).toEqual({
+        type: "approve", approved_ids: [], approval_token: "current",
+      });
+    } finally { unmount(); }
+  });
+
   it("accepts proposals omitting line_start and normalizes to 0", async () => {
     const { result, unmount } = await startSessionWithSocket();
     try {

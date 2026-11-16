@@ -134,6 +134,7 @@ class SessionCommand:
 
 class ApprovalRequest:
     approved_ids: list[str]
+    approval_token: str
     def __init__(self, **kwargs: object) -> None: ...
 
 class ExtendRequest:
@@ -178,6 +179,7 @@ class SessionEvent:
 class SessionError:
     code: str
     message: str
+    recoverable: bool
     def __init__(self, **kwargs: object) -> None: ...
 
 class FindingsReady:
@@ -231,6 +233,7 @@ class ProposalsReady:
     proposals: list[Proposal]
     tier: int
     status: int
+    approval_token: str
     def __init__(self, **kwargs: object) -> None: ...
 
 class ApprovalAck:

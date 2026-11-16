@@ -21,9 +21,20 @@ import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
+
+from ruamel.yaml.error import YAMLError
+from ruamel.yaml.events import (
+    AliasEvent,
+    MappingEndEvent,
+    MappingStartEvent,
+    ScalarEvent,
+    SequenceEndEvent,
+    SequenceStartEvent,
+)
 
 from apme_engine.engine.models import ViolationDict
+from apme_engine.engine.yaml_utils import FormattedYAML
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.rule_base import GraphRule
 from apme_engine.graph.scanner import (
@@ -864,6 +875,272 @@ class GraphRemediationEngine:
         return new_violations
 
 
+class SpliceConflictError(ValueError):
+    """Independent graph edits conflict when assembled against their source baseline."""
+
+
+_LineRoles = frozenset[tuple[str, ...]]
+
+
+class _LineEdit(NamedTuple):
+    """Inclusive source-line replacement with roles for each output line.
+
+    Attributes:
+        start: First original line, one-based.
+        end: Last original line, inclusive.
+        text: Replacement source text.
+        rules: Contributing rule identifiers.
+        roles: Expected structural roles per output line.
+    """
+
+    start: int
+    end: int
+    text: str
+    rules: list[str]
+    roles: tuple[_LineRoles, ...]
+
+
+class _SourceEdit(NamedTuple):
+    """Owned source edit with its proposed snapshot offset.
+
+    Attributes:
+        start: First original line, one-based.
+        end: Last original line, inclusive.
+        text: Replacement source text.
+        rules: Contributing rule identifiers.
+        owner_span: Inclusive original span of the proposing node.
+        owner_id: Identity of the proposing node.
+        after_start: Zero-based line offset in the proposed snapshot.
+        roles: Expected structural roles per output line.
+    """
+
+    start: int
+    end: int
+    text: str
+    rules: list[str]
+    owner_span: tuple[int, int]
+    owner_id: str
+    after_start: int
+    roles: tuple[_LineRoles, ...] = ()
+
+
+class _Insertion(NamedTuple):
+    """Boundary addition retaining its owner and structural expectations.
+
+    Attributes:
+        text: Added source text.
+        rules: Contributing rule identifiers.
+        owner: Inclusive original span of the proposing node.
+        roles: Expected structural roles per output line.
+    """
+
+    text: str
+    rules: list[str]
+    owner: tuple[int, int]
+    roles: tuple[_LineRoles, ...]
+
+
+def _yaml_line_roles(text: str) -> tuple[_LineRoles, ...]:
+    """Describe each source line's YAML structural roles without rewriting it.
+
+    Args:
+        text: Complete YAML source or a self-contained node snapshot.
+
+    Returns:
+        Container-kind paths ending in key, value, or sequence-item roles.
+        Comments and blank lines retain distinct roles.
+    """
+    lines = text.splitlines()
+    roles: list[set[tuple[str, ...]]] = [set() for _ in lines]
+    # Parser events preserve each alias occurrence without resolving it. This
+    # allows snapshots to reference anchors owned by other approved nodes while
+    # keeping their local structural intent independent of those nodes.
+    stack: list[tuple[str, bool]] = []
+    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+    for event in yaml.parse(text):
+        if isinstance(event, (MappingEndEvent, SequenceEndEvent)):
+            stack.pop()
+            continue
+        if not isinstance(event, (ScalarEvent, AliasEvent, MappingStartEvent, SequenceStartEvent)):
+            continue
+        parents = tuple(kind for kind, _ in stack)
+        role = "value"
+        if stack:
+            kind, key = stack[-1]
+            if kind == "mapping":
+                role = "key" if key else "value"
+                stack[-1] = (kind, not key)
+            elif event.start_mark is not None and event.start_mark.line < len(roles):
+                roles[event.start_mark.line].add((*parents, "item"))
+        if isinstance(event, (MappingStartEvent, SequenceStartEvent)):
+            stack.append(("mapping" if isinstance(event, MappingStartEvent) else "sequence", True))
+        elif event.start_mark is not None:
+            start = event.start_mark.line
+            end = event.end_mark
+            if end is not None and event.start_mark.index == end.index:
+                # Implicit nulls have no source bytes; their marks may point at
+                # the following key, whose line must not inherit a value role.
+                continue
+            stop = max(start + 1, end.line + bool(end.column)) if end is not None else start + 1
+            for index in range(start, min(stop, len(roles))):
+                roles[index].add((*parents, role))
+    return tuple(
+        frozenset(found or {("blank" if not line.strip() else "comment" if line.lstrip().startswith("#") else "text",)})
+        for line, found in zip(lines, roles, strict=True)
+    )
+
+
+def _bind_edit_roles(edits: list[_SourceEdit], versions: dict[str, str], file_path: str) -> list[_SourceEdit]:
+    """Bind each contributing owner's local structural intent for combined patches.
+
+    Scalars can absorb content across unchanged lines and sibling boundaries.
+    Parse every contributing snapshot once when multiple owners modify a file.
+    Parser events retain alias occurrences without resolving anchors, so
+    external anchors cannot change local expectations.
+
+    Args:
+        edits: Source edits before reconciliation.
+        versions: Proposed YAML snapshots indexed by owner.
+        file_path: Source path for diagnostics.
+
+    Returns:
+        Edits carrying structural roles for every potentially affected owner.
+
+    Raises:
+        SpliceConflictError: When a proposed source variant cannot be parsed.
+    """
+    by_owner: dict[str, list[_SourceEdit]] = defaultdict(list)
+    for edit in edits:
+        by_owner[edit.owner_id].append(edit)
+    if len(by_owner) < 2:
+        return edits
+    bound: dict[int, _SourceEdit] = {}
+    for owner, rows in by_owner.items():
+        try:
+            roles = _yaml_line_roles(versions[owner])
+            for edit in rows:
+                count = len(edit.text.splitlines())
+                bound[id(edit)] = edit._replace(roles=roles[edit.after_start : edit.after_start + count])
+        except YAMLError as exc:
+            raise SpliceConflictError(f"Conflicting remediation edits in {file_path}; invalid proposed YAML") from exc
+    return [bound.get(id(edit), edit) for edit in edits]
+
+
+def _merge_source_edits(edits: list[_SourceEdit], file_path: str) -> list[_LineEdit]:
+    """Reconcile whole-line changes while retaining ownership and YAML intent.
+
+    Args:
+        edits: One-based inclusive edits with source owners and structural roles.
+        file_path: Source path for diagnostics.
+
+    Returns:
+        Non-overlapping edits ready for bottom-up assembly.
+
+    Raises:
+        SpliceConflictError: When line replacements or same-owner insertions conflict.
+    """
+    insertions: dict[int, list[_Insertion]] = defaultdict(list)
+    for edit in edits:
+        if edit.start > edit.end:
+            roles = edit.roles or tuple(frozenset() for _ in edit.text.splitlines())
+            insertions[edit.start].append(_Insertion(edit.text, edit.rules, edit.owner_span, roles))
+    unique: dict[tuple[int, int, str], _LineEdit] = {}
+    additions: dict[int, list[_Insertion]] = defaultdict(list)
+
+    def union(left: tuple[_LineRoles, ...], right: tuple[_LineRoles, ...]) -> tuple[_LineRoles, ...]:
+        return tuple(a | b for a, b in zip(left, right, strict=True))
+
+    def add(
+        start: int, end: int, text: str, rules: list[str], owner: tuple[int, int], roles: tuple[_LineRoles, ...]
+    ) -> None:
+        if start > end:
+            additions[start].append(_Insertion(text, list(rules), owner, roles))
+        else:
+            key = (start, end, text)
+            if key in unique:
+                previous = unique[key]
+                unique[key] = previous._replace(rules=previous.rules + rules, roles=union(previous.roles, roles))
+            else:
+                unique[key] = _LineEdit(start, end, text, list(rules), roles)
+
+    for edit in edits:
+        start, end, replacement, rules, owner_span = edit[:5]
+        replacement_roles = edit.roles or tuple(frozenset() for _ in replacement.splitlines())
+        extra_rules: list[str] = []
+        for boundary, prefix in ((start, True), (end + 1, False)) if start <= end else []:
+            for addition in insertions.get(boundary, []):
+                span = addition.owner
+                related = (
+                    owner_span[0] <= span[0] <= span[1] <= owner_span[1]
+                    or span[0] <= owner_span[0] <= owner_span[1] <= span[1]
+                )
+                if not related:
+                    continue
+                count = len(addition.text.splitlines())
+                extra = len(replacement.splitlines()) - (end - start + 1)
+                matches = replacement.startswith(addition.text) if prefix else replacement.endswith(addition.text)
+                if addition.text and matches and extra >= count:
+                    shared = replacement_roles[:count] if prefix else replacement_roles[-count:]
+                    add(boundary, boundary - 1, addition.text, addition.rules, span, union(shared, addition.roles))
+                    replacement = replacement[len(addition.text) :] if prefix else replacement[: -len(addition.text)]
+                    replacement_roles = replacement_roles[count:] if prefix else replacement_roles[:-count]
+                    extra_rules.extend(addition.rules)
+                    break
+        after = replacement.splitlines(keepends=True)
+        all_rules = [*rules, *extra_rules]
+        if start <= end and len(after) == end - start + 1:
+            for index, line in enumerate(after):
+                add(start + index, start + index, line, all_rules, owner_span, (replacement_roles[index],))
+        else:
+            add(start, end, replacement, all_rules, owner_span, replacement_roles)
+
+    for position, rows in additions.items():
+        rows.sort(
+            key=lambda row: (
+                0 if row.owner[1] < position else 1,
+                -row.owner[0] if row.owner[1] < position else row.owner[0],
+                row.owner[1],
+                row.text,
+            )
+        )
+        accepted: list[_Insertion] = []
+        for row in rows:
+            for index, previous in enumerate(accepted):
+                owner, other = row.owner, previous.owner
+                related = owner[0] <= other[0] <= other[1] <= owner[1] or other[0] <= owner[0] <= owner[1] <= other[1]
+                if related and row.text == previous.text:
+                    accepted[index] = previous._replace(
+                        rules=previous.rules + row.rules, roles=union(previous.roles, row.roles)
+                    )
+                    break
+                if owner == other:
+                    raise SpliceConflictError(
+                        f"Conflicting remediation edits in {file_path} at line {position}; "
+                        "competing insertions have the same source owner"
+                    )
+            else:
+                accepted.append(row)
+        text = "".join(row.text for row in accepted)
+        unique[(position, position - 1, text)] = _LineEdit(
+            position,
+            position - 1,
+            text,
+            [rule for row in accepted for rule in row.rules],
+            tuple(role for row in accepted for role in row.roles),
+        )
+
+    ordered = sorted(unique.values(), key=lambda row: (row.start, row.end, row.text))
+    previous_end = 0
+    for line_edit in ordered:
+        if line_edit.start - 1 < previous_end:
+            raise SpliceConflictError(
+                f"Conflicting remediation edits in {file_path} at line {line_edit.start}; "
+                "cannot safely assemble patches"
+            )
+        previous_end = line_edit.end
+    return ordered
+
+
 def splice_modifications(
     graph: ContentGraph,
     originals: dict[str, str],
@@ -872,10 +1149,12 @@ def splice_modifications(
 ) -> list[FilePatch]:
     """Splice modified ``yaml_lines`` back into original files.
 
-    Groups modified nodes by ``file_path``, sorts by ``line_start``
-    descending (bottom-up) so that splicing one node does not shift
-    line numbers for nodes above it, and produces a unified diff per
-    file.
+    Compares each modified fragment with its original progression state and
+    groups the changed line spans by ``file_path``. Applies spans bottom-up
+    so that edits do not shift source offsets. Unchanged child bodies are
+    preserved when a parent play header or block is also modified. Overlapping
+    edits are refined into atomic source-line changes: matching changes apply
+    once and independent changes compose; ambiguous replacements raise SpliceConflictError.
 
     Args:
         graph: ContentGraph after convergence (nodes may have updated
@@ -889,9 +1168,13 @@ def splice_modifications(
 
     Returns:
         List of ``FilePatch`` objects for files that changed.
+
+    Raises:
+        SpliceConflictError: When edits conflict, align ambiguously, or combine into invalid YAML.
     """
-    _Edit = tuple[int, int, str, list[str]]
-    modified_by_file: dict[str, list[_Edit]] = defaultdict(list)
+    modified_by_file: dict[str, list[_SourceEdit]] = defaultdict(list)
+    contributors: dict[str, set[str]] = defaultdict(set)
+    versions: dict[str, str] = {}
 
     for node in graph.nodes():
         if not node.progression or len(node.progression) < 2:
@@ -915,10 +1198,30 @@ def splice_modifications(
             continue
 
         node_rule_ids = [rec.key[1] for rec in node.violation_ledger.values()]
+        contributors[node.file_path].add(node.node_id)
+        versions[node.node_id] = effective.yaml_lines
 
-        modified_by_file[node.file_path].append(
-            (node.line_start, node.line_end, effective.yaml_lines, node_rule_ids),
-        )
+        # Snippets may omit the final newline even though files and dumped
+        # fragments have one. That difference is not an edit to a child line.
+        before = node.progression[0].yaml_lines.splitlines()
+        after = effective.yaml_lines.splitlines()
+        for tag, start, end, new_start, new_end in difflib.SequenceMatcher(
+            None, before, after, autojunk=False
+        ).get_opcodes():
+            if tag == "equal":
+                continue
+            replacement_lines = after[new_start:new_end]
+            modified_by_file[node.file_path].append(
+                _SourceEdit(
+                    node.line_start + start,
+                    node.line_start + end - 1,
+                    "\n".join(replacement_lines) + "\n" if replacement_lines else "",
+                    node_rule_ids,
+                    (node.line_start, node.line_end),
+                    node.node_id,
+                    new_start,
+                ),
+            )
 
     patches: list[FilePatch] = []
     for file_path, edits in modified_by_file.items():
@@ -930,20 +1233,48 @@ def splice_modifications(
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
 
-        # Bottom-up to preserve line offsets
-        edits.sort(key=lambda e: e[0], reverse=True)
-        rule_ids: list[str] = []
+        edits = _bind_edit_roles(edits, versions, file_path)
+        line_edits = _merge_source_edits(edits, file_path)
 
-        for line_start, line_end, yaml_text, edit_rules in edits:
+        # At a shared boundary, replace existing lines before inserting new
+        # ones, so both operations still refer to the original source offsets.
+        line_edits.reverse()
+        rule_ids: list[str] = []
+        expected_roles: list[_LineRoles] = [frozenset() for _ in lines]
+
+        for line_start, line_end, yaml_text, edit_rules, edit_roles in line_edits:
             new_lines = yaml_text.splitlines(keepends=True)
             if new_lines and not new_lines[-1].endswith("\n"):
                 new_lines[-1] += "\n"
             # line_start/line_end are 1-based inclusive; Python slice
             # [start-1:end] is equivalent because slice end is exclusive.
             lines[line_start - 1 : line_end] = new_lines
+            expected_roles[line_start - 1 : line_end] = edit_roles
             rule_ids.extend(edit_rules)
 
         patched = "".join(lines)
+        if len(contributors[file_path]) > 1:
+            # Disjoint proposals can also introduce duplicate keys or invalid
+            # structure. Match formatting's YAML 1.1 scalar resolution.
+            try:
+                yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+                yaml.allow_duplicate_keys = False
+                list(yaml.load_all(patched))
+                if any(expected_roles):
+                    actual_roles = _yaml_line_roles(patched)
+                    for expected, actual in zip(expected_roles, actual_roles, strict=True):
+                        if any(
+                            not any(len(path) >= len(role) and path[-len(role) :] == role for path in actual)
+                            for role in expected
+                        ):
+                            raise SpliceConflictError(
+                                f"Conflicting remediation edits in {file_path}; "
+                                "an edit changed its YAML container or structural role"
+                            )
+            except YAMLError as exc:
+                raise SpliceConflictError(
+                    f"Conflicting remediation edits in {file_path}; assembled YAML is invalid"
+                ) from exc
 
         if patched != original:
             diff = "".join(

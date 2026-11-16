@@ -961,12 +961,20 @@ async def run_project_operation(
                             except Exception:
                                 logger.exception("on_approve_timeout callback failed")
                     await command_queue.put(
-                        engine_pb2.SessionCommand(approve=engine_pb2.ApprovalRequest(approved_ids=approved_ids))
+                        engine_pb2.SessionCommand(
+                            approve=engine_pb2.ApprovalRequest(
+                                approved_ids=approved_ids, approval_token=event.proposals.approval_token
+                            )
+                        )
                     )
                 elif kind == "proposals":
                     # No approval_queue — decline all proposals to avoid hanging.
                     await command_queue.put(
-                        engine_pb2.SessionCommand(approve=engine_pb2.ApprovalRequest(approved_ids=[]))
+                        engine_pb2.SessionCommand(
+                            approve=engine_pb2.ApprovalRequest(
+                                approved_ids=[], approval_token=event.proposals.approval_token
+                            )
+                        )
                     )
                 elif kind == "result":
                     result = event.result

@@ -159,6 +159,8 @@ def _mk_event(kind: str) -> MagicMock:
     """
     ev = MagicMock()
     ev.WhichOneof.return_value = kind
+    if kind == "proposals":
+        ev.proposals.approval_token = "cli-gate-token"
     return ev
 
 

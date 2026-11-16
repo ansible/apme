@@ -525,8 +525,9 @@ class ContentNode:
         ``violation_ledger`` — this method only captures YAML content.
 
         If progression already contains ``MAX_PROGRESSION`` entries the
-        oldest entry is dropped to prevent unbounded growth from bugs in
-        the convergence loop.
+        oldest intermediate entry is dropped to prevent unbounded growth.
+        The original baseline and last approved snapshot are retained for source
+        splicing and rollback.
 
         Args:
             pass_number: Convergence pass (0 = initial scan).
@@ -549,7 +550,11 @@ class ContentNode:
             source=source,
         )
         if len(self.progression) >= self.MAX_PROGRESSION:
-            self.progression.pop(0)
+            last_approved = next(
+                (index for index in range(len(self.progression) - 1, -1, -1) if self.progression[index].approved),
+                0,
+            )
+            self.progression.pop(2 if last_approved == 1 else 1)
         self.progression.append(ns)
         self.state = ns
         return ns

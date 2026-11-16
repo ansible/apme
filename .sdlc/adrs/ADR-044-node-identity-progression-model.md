@@ -515,6 +515,7 @@ The ContentGraph unlocks capabilities beyond the core identity and progression m
 
 | Date | Author | Change |
 |------|--------|--------|
+| 2026-11-16 | Codex | Retain the original baseline and most recent approved progression snapshot; assemble changed spans, reconcile compatible overlaps using atomic source lines, owned boundary insertions, and retained YAML structural roles, then validate assembled YAML, normalize snippet newlines, and report conflicting or ambiguous nested edits through remediation_failed session events before writing patches; preview approvals on graph copies and persist prepared patches before committing decisions on the owner event loop, leaving failed writes retryable before durable, resumable phase advancement (#880, #883) |
 | 2026-03-27 | Bradley A. Thornton | Initial proposal |
 | 2026-03-27 | Bradley A. Thornton | Added inherited property attribution, scope-level violations |
 | 2026-03-27 | Bradley A. Thornton | Added ansible-core lessons, DAG topology, ownership borders |
