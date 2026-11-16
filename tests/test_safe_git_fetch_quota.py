@@ -32,18 +32,18 @@ async def _exercise_https_snapshot(
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     required = os.environ.get("APME_REQUIRE_GIT_QUOTA_TESTS") == "1"
     privileged_mount = ["sudo", "-n"] if required and os.geteuid() != 0 else []
+    if not shutil.which("git") or not shutil.which("openssl"):
+        if required:
+            pytest.fail("Required Git quota gate requires Git and OpenSSL")
+        pytest.skip("HTTPS snapshot tests require Git and OpenSSL")
+    config = subprocess.run(["git", "help", "--config"], capture_output=True)
+    if config.returncode or b"http.curloptResolve\n" not in config.stdout:
+        if required:
+            pytest.fail("Required Git quota gate requires Git http.curloptResolve support")
+        pytest.skip("HTTPS snapshot tests require Git http.curloptResolve support")
     mount = tmp_path / "quota"
     mount.mkdir()
     if mode == "transport":
-        if not shutil.which("git") or not shutil.which("openssl"):
-            if required:
-                pytest.fail("Required Git quota gate requires Git and OpenSSL")
-            pytest.skip("HTTPS transport test requires Git and OpenSSL")
-        config = subprocess.run(["git", "help", "--config"], capture_output=True, check=True).stdout
-        if b"http.curloptResolve\n" not in config:
-            if required:
-                pytest.fail("Required Git quota gate requires Git http.curloptResolve support")
-            pytest.skip("HTTPS transport test requires Git http.curloptResolve support")
         monkeypatch.setattr(safe_fetch, "_open_storage", lambda: os.open(mount, os.O_RDONLY | os.O_DIRECTORY))
     else:
         result = subprocess.run(
