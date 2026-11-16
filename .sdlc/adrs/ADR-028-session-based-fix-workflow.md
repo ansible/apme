@@ -335,6 +335,17 @@ async for event in stub.FixSession(command_iter()):
         # ...
 ```
 
+## Approval decision identity
+
+Every `ProposalsReady` event carries an opaque `approval_token`. Clients echo
+it with `ApprovalRequest`, including decline-all decisions with empty IDs.
+Tokens are unique per offered gate and stable across replay. Completed decisions
+are immutable: exact retries replay current state without applying to a later
+gate, while stale tokens or changed decisions return a session-scoped error.
+First-party CLI and Gateway/browser clients preserve the token end to end.
+Legacy tokenless nonempty requests may use offered proposal IDs; a tokenless
+empty request after a completed gate is rejected as ambiguous.
+
 ## Related Decisions
 
 - ADR-009: Remediation Engine (tiered architecture)
@@ -361,3 +372,4 @@ async for event in stub.FixSession(command_iter()):
 | 2026-03-19 | AI Agent | Initial proposal |
 | 2026-03-19 | AI Agent | Accepted: implemented in PR #43. SessionStore, FixSession handler, CLI event loop, and 41 tests in test_session.py. |
 | 2026-03-25 | APME Team | ADR-039 addendum; Neutral section: `ScanStream` removed, `FixSession` for check and remediate; `remediate --check` wording. |
+| 2026-11-16 | Codex | Bind approvals, including empty decline-all requests, to opaque per-gate tokens; retain replay stability and prevent delayed Gate 1 decisions from consuming Gate 2 (#880, #883). |

@@ -26,13 +26,12 @@ def fix_name_casing(task: CommentedMap, violation: ViolationDict) -> bool:
         idx = name.rfind(sep) + len(sep)
         prefix_part = name[:idx]
         rest = name[idx:]
-        if not rest or rest[0].isupper():
-            return False
-        task["name"] = prefix_part + rest[0].upper() + rest[1:]
-        return True
+        capitalized = prefix_part + rest[0].upper() + rest[1:] if rest else name[0].upper() + name[1:]
+    else:
+        capitalized = name[0].upper() + name[1:]
 
-    if name[0].isupper():
+    if capitalized == name:
         return False
 
-    task["name"] = name[0].upper() + name[1:]
+    task["name"] = capitalized
     return True

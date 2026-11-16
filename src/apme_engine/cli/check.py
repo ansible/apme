@@ -241,7 +241,11 @@ def run_check(args: argparse.Namespace) -> None:
                 continue
 
             if oneof == "proposals":
-                cmd_queue.put(SessionCommand(approve=ApprovalRequest(approved_ids=[])))
+                cmd_queue.put(
+                    SessionCommand(
+                        approve=ApprovalRequest(approved_ids=[], approval_token=event.proposals.approval_token)
+                    )
+                )
                 continue
 
             if oneof == "ai_triage":

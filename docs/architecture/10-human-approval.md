@@ -20,7 +20,7 @@ sequenceDiagram
     alt Interactive Gate 1 enabled
         Note over Engine: Deterministic Tier 1 proposals generated
         Engine-->>CLI: ProposalsReady(tier=1, id=t1-*)
-        CLI->>Engine: ApprovalRequest(approved_ids=[...])
+        CLI->>Engine: ApprovalRequest(approved_ids=[...], approval_token=token)
         Engine-->>CLI: ApprovalAck(applied_count)
     end
 
@@ -30,16 +30,16 @@ sequenceDiagram
     end
 
     alt Check mode
-        CLI->>Engine: ApprovalRequest(approved_ids=[])
+        CLI->>Engine: ApprovalRequest(approved_ids=[], approval_token=token)
         Note over CLI: Declines all — read-only
     else Interactive mode
         loop For each proposal
             CLI->>CLI: Display diff + explanation
             CLI->>CLI: Prompt: y/n/a/s/q
         end
-        CLI->>Engine: ApprovalRequest(approved_ids=[...])
+        CLI->>Engine: ApprovalRequest(approved_ids=[...], approval_token=token)
     else Auto-approve mode (--auto-approve)
-        CLI->>Engine: ApprovalRequest(approved_ids=[all])
+        CLI->>Engine: ApprovalRequest(approved_ids=[all], approval_token=token)
     end
 
     Engine->>Engine: _session_apply_approved(approved_ids)
@@ -75,13 +75,43 @@ message Proposal {
 Proposal IDs follow `t1-NNNN` for deterministic Gate 1 and `ai-NNNN` for
 AI Gate 2 (zero-padded indices).
 
+Each `ProposalsReady` also carries an opaque `approval_token`, which clients
+must echo in `ApprovalRequest`, including decline-all requests with no IDs.
+The token remains stable during replay and changes for each new gate.
+The Engine records successful decisions by token: an identical retry replays
+current state, while changed decisions or stale unknown tokens return a
+session error without consuming the current proposals. Failed previews or disk
+writes leave the gate token available for a new attempt.
+
+CLI, Gateway stream drivers, and the browser WebSocket bridge preserve this
+token through the full request path. Legacy tokenless requests can still
+identify a gate with nonempty current proposal IDs or make the first empty
+decision. A tokenless empty decision after a completed gate is ambiguous and
+returns `approval_token_required`; refresh/replay proposals and echo their
+token. This prevents a delayed empty Gate 1 retry from rejecting Gate 2.
+New token-bound decisions must select only IDs from the complete offer, including
+display-only declined rows; foreign or mixed-gate IDs are rejected before any
+proposal is consumed.
+
+Approval validation and persistence errors set `SessionError.recoverable`.
+The raw WebSocket bridge preserves the active stream and proposal view for a
+current-token retry rather than treating these request failures as terminal.
+Batch clients may still choose to fail fast on an error.
+
 ## Check Mode
 
 In check mode (no `FixOptions`), the CLI automatically declines all proposals:
 
 ```python
 if oneof == "proposals":
-    cmd_queue.put(SessionCommand(approve=ApprovalRequest(approved_ids=[])))
+    cmd_queue.put(
+        SessionCommand(
+            approve=ApprovalRequest(
+                approved_ids=[],
+                approval_token=event.proposals.approval_token,
+            )
+        )
+    )
 ```
 
 This ensures `check` is always a read-only assessment — it shows what

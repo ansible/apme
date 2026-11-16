@@ -434,3 +434,37 @@ class TestBuildHierarchyFromGraph:
         cs = payload["collection_set"]
         assert isinstance(cs, list)
         assert "community.general" in cs
+
+
+class TestStandaloneTaskfileHierarchy:
+    """OPA receives standalone task files without duplicating included content."""
+
+    def test_standalone_taskfile_is_policy_root(self) -> None:
+        """An unreferenced task file exposes its tasks to OPA rules."""
+        graph = ContentGraph()
+        taskfile = ContentNode(identity=NodeIdentity(path="tasks/main.yml", node_type=NodeType.TASKFILE))
+        task = ContentNode(
+            identity=NodeIdentity(path="tasks/main.yml/tasks[0]", node_type=NodeType.TASK), name="lowercase"
+        )
+        graph.add_node(taskfile)
+        graph.add_node(task)
+        graph.add_edge(taskfile.node_id, task.node_id, EdgeType.CONTAINS)
+        payload = build_hierarchy_from_graph(graph, "taskfile", "tasks/main.yml")
+        hierarchy = payload["hierarchy"]
+        assert isinstance(hierarchy, list) and len(hierarchy) == 1
+        tree = hierarchy[0]
+        assert isinstance(tree, dict)
+        assert tree["root_key"] == taskfile.node_id
+        nodes = tree["nodes"]
+        assert isinstance(nodes, list)
+        assert any(isinstance(node, dict) and node.get("name") == "lowercase" for node in nodes)
+
+    def test_included_taskfile_is_not_an_additional_root(self) -> None:
+        """Tasks reached through a playbook are not evaluated twice."""
+        for edge_type in (EdgeType.CONTAINS, EdgeType.IMPORT, EdgeType.INCLUDE):
+            graph = _make_minimal_graph()
+            taskfile = ContentNode(identity=NodeIdentity(path="tasks/included.yml", node_type=NodeType.TASKFILE))
+            graph.add_node(taskfile)
+            graph.add_edge("site.yml/plays[0]/tasks[0]", taskfile.node_id, edge_type)
+            hierarchy = build_hierarchy_from_graph(graph, "playbook", "site.yml")["hierarchy"]
+            assert isinstance(hierarchy, list) and len(hierarchy) == 1

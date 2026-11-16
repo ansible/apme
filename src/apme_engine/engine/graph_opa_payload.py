@@ -510,7 +510,7 @@ def build_hierarchy_from_graph(
 
 
 def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
-    """Build one tree dict per root (playbook or role without parents).
+    """Build trees for playbook/role roots and unreferenced task files.
 
     Args:
         graph: ContentGraph to extract trees from.
@@ -527,6 +527,10 @@ def _build_trees(graph: ContentGraph) -> list[YAMLDict]:
             dep_edges = graph.edges_to(node.node_id, EdgeType.DEPENDENCY)
             if not in_edges and not dep_edges:
                 roots.append(node)
+        elif node.node_type == NodeType.TASKFILE and not graph.edges_to(node.node_id):
+            # Standalone task files need policy evaluation too. Referenced
+            # task files are already traversed from their owning root.
+            roots.append(node)
 
     for root in roots:
         nodes_list: list[YAMLDict] = []

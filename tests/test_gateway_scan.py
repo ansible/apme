@@ -93,6 +93,7 @@ def _make_proposals_event(
     event = MagicMock()
     event.WhichOneof.return_value = "proposals"
     event.proposals.tier = 2
+    event.proposals.approval_token = "ws-gate-token"
     event.proposals.status = 1  # AWAITING_APPROVAL
 
     mock_proposals = []
@@ -552,3 +553,53 @@ async def test_dot_only_path_rejected() -> None:
         _sanitize_path("./")
 
     assert _sanitize_path("a/./b.yml") == "a/b.yml"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_approval_token_is_forwarded_unchanged() -> None:
+    """WS approval commands preserve the exact gate token even for decline-all."""
+    from apme_gateway.session_client import _ws_command_reader
+
+    ws = MockWebSocket(
+        [
+            {"type": "approve", "approved_ids": [], "approval_token": "old-gate"},
+            {"type": "approve", "approved_ids": [], "approval_token": "new-gate"},
+            {"type": "close"},
+        ]
+    )
+    from apme.v1.engine_pb2 import SessionCommand
+
+    queue: asyncio.Queue[SessionCommand | None] = asyncio.Queue()
+    await _ws_command_reader(ws, queue, asyncio.Event())
+    old = await queue.get()
+    new = await queue.get()
+    assert old is not None and new is not None
+    assert old.approve.approval_token == "old-gate"
+    assert new.approve.approval_token == "new-gate"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_recoverable_approval_error_keeps_bridge_alive() -> None:
+    """A rejected request cannot close the bridge before a later valid approval."""
+    from apme.v1.engine_pb2 import SessionError, SessionEvent
+    from apme_gateway.session_client import _forward_events
+
+    done = asyncio.Event()
+    ws = MockWebSocket([])
+
+    async def events() -> AsyncIterator[object]:
+        yield SessionEvent(
+            error=SessionError(
+                code="stale_approval_gate",
+                message="Refresh proposals",
+                recoverable=True,
+            )
+        )
+        assert not done.is_set()
+        yield _make_proposals_event()
+        yield _make_closed_event()
+
+    await _forward_events(events(), ws, "scan-1", done)
+    assert [message["type"] for message in ws.sent] == ["error", "proposals", "closed"]
+    assert ws.sent[0]["recoverable"] is True
+    assert done.is_set()

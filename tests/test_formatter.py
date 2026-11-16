@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from apme_engine.engine.finder import TaskfileSourceContext
 from apme_engine.engine.yaml_utils import FormattedYAML
 from apme_engine.formatter import (
     FormatResult,
@@ -230,6 +231,39 @@ class TestKeyReorder:
         lines = result.formatted.splitlines()
         name_lines = [i for i, line in enumerate(lines) if "name:" in line]
         assert len(name_lines) >= 1
+
+
+class TestNamePreservation:
+    """Formatting preserves names used as identifiers, data, and labels."""
+
+    @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+        ("filename", "text"),
+        [
+            ("galaxy.yml", "namespace: acme\nname: my_collection\nversion: 1.0.0\n"),
+            ("galaxy.yaml", "namespace: acme\nname: my_collection\nversion: 1.0.0\n"),
+            ("<stdin>", "namespace: acme\nname: my_collection\nversion: 1.0.0\n"),
+            ("metadata.yml", "name: my_collection\n"),
+            ("group_vars/all.yml", "name: production\n"),
+            ("roles/web/defaults/main.yml", "name: web_server\n"),
+            ("roles/requirements.yml", "- name: geerlingguy.nginx\n  src: geerlingguy.nginx\n"),
+            (".github/workflows/ci.yml", "name: ci\njobs: {}\n"),
+            ("tasks/main.yml", "- name: install packages\n  ansible.builtin.package:\n    name: nginx\n"),
+            ("site.yml", "- name: deploy app\n  hosts: all\n  tasks: []\n"),
+        ],
+    )
+    def test_preserves_name_values(self, filename: str, text: str) -> None:
+        """Name casing belongs to L025 remediation, independent of filename.
+
+        Args:
+            filename: Source filename supplied to the formatter.
+            text: YAML with a lowercase name that must remain intact.
+        """
+        result = format_content(text, filename=filename)
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+
+        assert result.error is None
+        assert yaml.load(result.formatted) == yaml.load(text)
+        assert check_idempotent(result)
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +821,133 @@ class TestExpandInlineKVArgs:
 
 
 class TestForceTagsBlockStyle:
-    """Tests for _force_tags_block_style via format_content."""
+    """Task containers and tags use block style without expanding data lists."""
+
+    def test_standalone_role_name_is_not_a_data_boundary(self, tmp_path: Path) -> None:
+        """Marker-established standalone roles retain their own boundary in every batch.
+
+        Args:
+            tmp_path: Parent containing a standalone role named data.
+        """
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer, _format_spliced_patches
+        from apme_engine.remediation.graph_engine import FilePatch
+
+        flow = "[{name: first task, custom_module: {}}, {name: second task, custom_module: {}}]\n"
+        sources = {"data/tasks/main.yml": "- ansible.builtin.debug: {}\n", "data/includes/setup.yml": flow}
+        for relative, content in sources.items():
+            path = tmp_path / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        directory = next(row for row in format_directory(tmp_path) if row.path.name == "setup.yml").formatted
+        uploaded = EngineServicer._format_files(
+            [File(path=path, content=text.encode()) for path, text in sources.items()]
+        )
+        upload = next(row.formatted.decode() for row in uploaded.diffs if row.path.endswith("setup.yml"))
+        patches = [FilePatch(path="data/includes/setup.yml", original=flow, patched=flow, diff="")]
+        _format_spliced_patches(patches, sources, tmp_path)
+        assert directory == upload == patches[0].patched
+        assert "- name: first task" in directory.splitlines()
+        assert "- name: second task" in directory.splitlines()
+
+    @pytest.mark.parametrize("directory", ["tasks", "handlers"])  # type: ignore[untyped-decorator]
+    def test_selected_task_root_retains_context(self, tmp_path: Path, directory: str) -> None:
+        """Selecting a task directory retains its own source-directory evidence.
+
+        Args:
+            tmp_path: Temporary project parent.
+            directory: Explicit task-source directory selected for formatting.
+        """
+        root = tmp_path / directory
+        root.mkdir()
+        (root / "setup.yml").write_text(
+            "[{name: first task, custom_module: {}}, {name: second task, custom_module: {}}]\n"
+        )
+        result = format_directory(root)[0]
+        assert "- name: first task" in result.formatted.splitlines()
+        assert "- name: second task" in result.formatted.splitlines()
+
+    def test_directory_batch_preserves_nested_and_standalone_role_context(self, tmp_path: Path) -> None:
+        """Absolute paths retain the directory root and standalone role markers.
+
+        Args:
+            tmp_path: Temporary root for a project and a standalone role.
+        """
+        flow = "[{name: first task, custom_module: {}}, {name: second task, custom_module: {}}]\n"
+        for relative, content in {
+            "tasks/setup/users.yml": flow,
+            "tasks/main.yml": "- ansible.builtin.debug: {}\n",
+            "includes/nested/setup.yml": flow,
+            "roles/data/tasks/main.yml": "- ansible.builtin.debug: {}\n",
+            "roles/data/includes/setup.yml": flow,
+            "roles/tasks/tasks/main.yml": "- ansible.builtin.debug: {}\n",
+            "roles/tasks/tests/data/users.yml": "---\n- { name: alice, group: staff }\n",
+        }.items():
+            target = tmp_path / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        results = {str(row.path.relative_to(tmp_path)): row for row in format_directory(tmp_path)}
+        for relative in ("tasks/setup/users.yml", "includes/nested/setup.yml", "roles/data/includes/setup.yml"):
+            assert "- name: first task" in results[relative].formatted.splitlines()
+            assert "- name: second task" in results[relative].formatted.splitlines()
+        assert results["roles/tasks/tests/data/users.yml"].formatted == "---\n- { name: alice, group: staff }\n"
+
+    def test_upload_batch_recognizes_standalone_role_sources(self) -> None:
+        """Upload inventory supplies role provenance without filesystem probes."""
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        flow = b"[{name: first task, custom_module: {}}, {name: second task, custom_module: {}}]\n"
+        batch = EngineServicer._format_files(
+            [
+                File(path="tasks/main.yml", content=b"- ansible.builtin.debug: {}\n"),
+                File(path="includes/nested/setup.yml", content=flow),
+            ]
+        )
+        assert not batch.skipped
+        result = next(row for row in batch.diffs if row.path == "includes/nested/setup.yml")
+        assert b"- name: first task" in result.formatted.splitlines()
+        assert b"- name: second task" in result.formatted.splitlines()
+
+    def test_role_include_flow_tasks_have_independent_source_lines(self) -> None:
+        """Custom-module siblings in role includes expand before graph construction."""
+        text = "[{name: first task, custom_module: {}}, {name: second task, custom_module: {}}]\n"
+        result = format_content(text, filename="roles/web/includes/nested/setup.yml")
+        assert result.error is None
+        lines = result.formatted.splitlines()
+        assert "- name: first task" in lines
+        assert "- name: second task" in lines
+        assert check_idempotent(result)
+
+    @pytest.mark.parametrize("directory", ["data", "fixtures"])  # type: ignore[untyped-decorator]
+    def test_role_fixture_flow_data_keeps_its_style(self, directory: str) -> None:
+        """Role test fixtures are data even when fields resemble builtin actions.
+
+        Args:
+            directory: Conventional test fixture directory.
+        """
+        text = "---\n- { name: alice, group: staff }\n"
+        result = format_content(text, filename=f"roles/web/tests/{directory}/users.yml")
+        assert result.error is None
+        assert result.formatted == text
+        assert check_idempotent(result)
+
+    def test_flow_requirements_keep_their_style(self) -> None:
+        """Role requirements retain flow mappings and identifier casing."""
+        text = "---\n- { name: web_role, src: acme.web }\n"
+        result = format_content(text, filename="roles/requirements.yml")
+        assert result.error is None
+        assert result.formatted == text
+        assert check_idempotent(result)
+
+    def test_qualified_imports_do_not_receive_task_spacing(self) -> None:
+        """Qualified import_playbook directives retain playbook list spacing."""
+        for module in ("ansible.builtin.import_playbook", "ansible.legacy.import_playbook", "acme.web.import_playbook"):
+            text = f"---\n- {module}: a.yml\n- {module}: b.yml\n"
+            result = format_content(text)
+            assert result.error is None
+            assert result.formatted == text
+            assert check_idempotent(result)
 
     def test_flow_tags_to_block(self) -> None:
         """Flow-style tags list is converted to block style."""
@@ -860,10 +1020,12 @@ class TestFormatFilesGuard:
             content=b"- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n",
         )
 
-        def _raise_on_bad(text: str, filename: str = "<stdin>") -> FormatResult:
+        def _raise_on_bad(
+            text: str, filename: str = "<stdin>", *, source_context: TaskfileSourceContext | None = None
+        ) -> FormatResult:
             if filename == "bad.yml":
                 raise IndexError("list index out of range")
-            return format_content(text, filename=filename)
+            return format_content(text, filename=filename, source_context=source_context)
 
         with patch("apme_engine.formatter.format_content", side_effect=_raise_on_bad):
             batch = EngineServicer._format_files([bad, good])

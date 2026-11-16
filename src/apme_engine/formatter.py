@@ -18,6 +18,12 @@ from pathlib import Path
 
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
+from apme_engine.engine.finder import (
+    TaskfileSourceContext,
+    could_be_taskfile,
+    role_roots_from_paths,
+    taskfile_source_context,
+)
 from apme_engine.engine.yaml_utils import FormattedYAML
 
 SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", ".tox", "htmlcov", ".eggs"}
@@ -511,12 +517,24 @@ _TASK_ITEM_RE = re.compile(r"^(\s*)- \S")
 _PLAY_KEYS = frozenset({"hosts", "import_playbook"})
 
 
+def _is_import_playbook_key(key: str) -> bool:
+    """Recognize short and collection-qualified playbook import directives.
+
+    Args:
+        key: YAML mapping key.
+
+    Returns:
+        Whether the key names import_playbook.
+    """
+    return key.rsplit(".", 1)[-1] == "import_playbook"
+
+
 def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = None) -> bool:
     """Return True if the file is a bare task list (no ``tasks:`` parent key).
 
     Bare task lists start with ``---`` followed by ``- name:`` or ``- module:``
     at indent 0, typical of role ``tasks/main.yml`` or included task files.
-    Returns False for playbooks (first list item has ``hosts:``).
+    Returns False for plays with hosts or short/qualified import_playbook keys.
 
     Args:
         lines: Split lines of the YAML file.
@@ -548,7 +566,7 @@ def _is_bare_task_list(lines: list[str], scalar_content: list[bool] | None = Non
 
     for fl in first_item_lines:
         key = fl.lstrip("- ").split(":")[0].strip()
-        if key in _PLAY_KEYS:
+        if key in _PLAY_KEYS or _is_import_playbook_key(key):
             return False
     return True
 
@@ -608,53 +626,6 @@ def _add_task_spacing(text: str) -> str:
                 result.append("")
         result.append(line)
     return "\n".join(result)
-
-
-def _capitalize_task_name(name: str) -> str:
-    """Capitalize the meaningful part of a task name, respecting ``name[prefix]``.
-
-    If the name contains `` | `` separators (from the ``name[prefix]`` rule),
-    the prefix portion is left as-is and only the first letter of the final
-    segment is capitalized.
-
-    Args:
-        name: Task name string, possibly with ``name[prefix]`` separators.
-
-    Returns:
-        Name with the meaningful segment capitalized.
-    """
-    sep = " | "
-    if sep in name:
-        idx = name.rfind(sep) + len(sep)
-        prefix_part = name[:idx]
-        rest = name[idx:]
-        if rest and not rest[0].isupper():
-            return prefix_part + rest[0].upper() + rest[1:]
-        return name
-    if name and not name[0].isupper():
-        return name[0].upper() + name[1:]
-    return name
-
-
-def _capitalize_name(data: object) -> None:
-    """Walk task/play mappings and capitalize the first letter of ``name`` values.
-
-    Args:
-        data: CommentedSeq, CommentedMap, or nested structure with tasks.
-    """
-    if isinstance(data, CommentedSeq):
-        for item in data:
-            _capitalize_name(item)
-    elif isinstance(data, CommentedMap):
-        name = data.get("name")
-        if isinstance(name, str) and name:
-            capitalized = _capitalize_task_name(name)
-            if capitalized != name:
-                data["name"] = capitalized
-
-        for nested_key in ("tasks", "pre_tasks", "post_tasks", "handlers", "block", "rescue", "always"):
-            if nested_key in data:
-                _capitalize_name(data[nested_key])
 
 
 def _reorder_task_keys(data: object) -> None:
@@ -931,23 +902,27 @@ def _expand_single_task_kv(mapping: CommentedMap) -> None:
         mapping[module_key] = parsed
 
 
-def _force_tags_block_style(data: object) -> None:
-    """Walk task/play mappings and convert flow-style ``tags`` lists to block style.
+def _force_task_block_style(data: object) -> None:
+    """Expand task/play containers and tags so graph nodes have distinct lines.
 
     Args:
         data: CommentedSeq, CommentedMap, or nested structure with tasks.
     """
     if isinstance(data, CommentedSeq):
+        if data:
+            data.fa.set_block_style()
         for item in data:
-            _force_tags_block_style(item)
+            _force_task_block_style(item)
     elif isinstance(data, CommentedMap):
+        if data:
+            data.fa.set_block_style()
         tags = data.get("tags")
         if isinstance(tags, CommentedSeq) and tags.fa.flow_style():
             tags.fa.set_block_style()
 
         for nested_key in ("tasks", "pre_tasks", "post_tasks", "handlers", "block", "rescue", "always"):
             if nested_key in data:
-                _force_tags_block_style(data[nested_key])
+                _force_task_block_style(data[nested_key])
 
 
 _MIN_ANSIBLE_VERSION_TUPLE = (2, 14, 0)
@@ -997,7 +972,9 @@ def _normalize_min_ansible_version(data: CommentedMap) -> None:
         galaxy_info["min_ansible_version"] = ".".join(str(p) for p in current)
 
 
-def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
+def format_content(
+    text: str, filename: str = "<stdin>", *, source_context: TaskfileSourceContext | None = None
+) -> FormatResult:
     """Format a YAML string.
 
     Load and dump failures are best-effort: the original content is returned
@@ -1007,6 +984,7 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     Args:
         text: Raw YAML content.
         filename: Filename for diff output (default: "<stdin>").
+        source_context: Task-source provenance supplied by a directory or upload batch.
 
     Returns:
         FormatResult with original, formatted, diff.
@@ -1039,16 +1017,24 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
             diff="",
         )
 
+    entries = data if isinstance(data, CommentedSeq) else [data]
+    has_play_structure = any(
+        isinstance(item, CommentedMap)
+        and any(
+            isinstance(key, str) and (key in _PLAY_KEYS | _TASK_LIST_KEYS | {"roles"} or _is_import_playbook_key(key))
+            for key in item
+        )
+        for item in entries
+    )
+    if has_play_structure or could_be_taskfile(body=text, data=entries, fpath=filename, source_context=source_context):
+        _force_task_block_style(data)
+
     if isinstance(data, CommentedSeq):
         for item in data:
             _expand_inline_kv_args(item)
-            _force_tags_block_style(item)
-            _capitalize_name(item)
             _reorder_task_keys(item)
     elif isinstance(data, CommentedMap):
         _expand_inline_kv_args(data)
-        _force_tags_block_style(data)
-        _capitalize_name(data)
         _reorder_task_keys(data)
         _normalize_min_ansible_version(data)
 
@@ -1089,17 +1075,18 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     )
 
 
-def format_file(path: Path) -> FormatResult:
+def format_file(path: Path, *, source_context: TaskfileSourceContext | None = None) -> FormatResult:
     """Format a single YAML file on disk.
 
     Args:
         path: Path to the YAML file.
+        source_context: Task-source provenance supplied by a directory batch.
 
     Returns:
         FormatResult with original, formatted, diff.
     """
     text = path.read_text(encoding="utf-8")
-    result = format_content(text, filename=str(path))
+    result = format_content(text, filename=str(path), source_context=source_context)
     result.path = path
     return result
 
@@ -1118,6 +1105,7 @@ def format_directory(
         List of FormatResult for each formatted file.
     """
     results: list[FormatResult] = []
+    paths: list[Path] = []
     exclude = set(exclude_patterns or [])
 
     for dirpath, dirnames, filenames in os.walk(root):
@@ -1137,7 +1125,12 @@ def format_directory(
             if any(_matches_glob(str(rel), pat) for pat in exclude):
                 continue
 
-            results.append(format_file(fpath))
+            paths.append(fpath)
+
+    role_roots = role_roots_from_paths([str(path) for path in paths])
+    for path in paths:
+        context = taskfile_source_context(str(path), str(root), role_roots)
+        results.append(format_file(path, source_context=context))
 
     return results
 

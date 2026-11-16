@@ -27,16 +27,87 @@ import contextlib
 from . import logger
 from .awx_utils import (
     could_be_eda_rulebook,
-    could_be_playbook,
     is_eda_rulebook_path,
     looks_like_eda_ruleset,
     search_playbooks,
 )
 from .safe_glob import safe_glob
 
-fqcn_module_name_re = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+$")
+fqcn_module_name_re = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+(?:\.[a-z0-9_]+)+$")
 module_name_re = re.compile(r"^[a-z0-9_.]+$")
 taskfile_path_in_role_re = r".*roles/[^/]+/(tasks|handlers)/.*\.ya?ml"
+ROLE_ENTRY_POINTS = ("tasks/main.yml", "tasks/main.yaml", "meta/main.yml", "meta/main.yaml")
+_SOURCE_DIRECTORY_KINDS = {
+    "tasks",
+    "handlers",
+    "files",
+    "templates",
+    "vars",
+    "defaults",
+    "group_vars",
+    "host_vars",
+    "data",
+    "fixtures",
+}
+
+
+def role_roots_from_paths(paths: list[str]) -> tuple[str, ...]:
+    """Find role roots from canonical entry points in a caller-owned file inventory.
+
+    Args:
+        paths: File paths available to a formatting or loading batch.
+
+    Returns:
+        Role root paths, without consulting unrelated filesystem ancestors.
+    """
+    roots: set[str] = set()
+    for value in paths:
+        path = Path(value)
+        if f"{path.parent.name}/{path.name}" in ROLE_ENTRY_POINTS:
+            roots.add(str(path.parent.parent))
+    return tuple(sorted(roots))
+
+
+def _conventional_role_root(path: Path) -> str:
+    """Recognize role boundaries from their structural path prefix.
+
+    Args:
+        path: Candidate source path.
+
+    Returns:
+        Outermost conventional role root, or an empty string.
+    """
+    parts = path.parts
+    roots: list[Path] = []
+    for index, part in enumerate(parts[:-2]):
+        if part == "roles" and parts[index + 2] in _SOURCE_DIRECTORY_KINDS | {"includes", "tests", "meta", "playbooks"}:
+            roots.append(Path(*parts[: index + 2]))
+        elif parts[index : index + 3] == ("tests", "integration", "targets") and index + 4 < len(parts):
+            roots.append(Path(*parts[: index + 4]))
+    return str(roots[0]) if roots else ""
+
+
+def _source_directory_kind(parts: tuple[str, ...]) -> str:
+    """Find the first source/data boundary, ignoring role namespace components.
+
+    Args:
+        parts: Directory components relative to the selected project or role.
+
+    Returns:
+        First source or data directory kind, or an empty string.
+    """
+    index = 0
+    while index < len(parts):
+        if parts[index : index + 3] == ("tests", "integration", "targets") and index + 3 < len(parts):
+            index += 4
+        elif parts[index] == "roles" and index + 1 < len(parts):
+            index += 2
+        elif parts[index] in _SOURCE_DIRECTORY_KINDS:
+            return parts[index]
+        else:
+            index += 1
+    return ""
+
 
 module_dir_patterns = [
     "library",
@@ -504,28 +575,30 @@ def search_taskfiles_for_playbooks(path: str, taskfile_dir_paths: list[str] | No
     # must copy the input here; otherwise, the added items are kept forever
     if taskfile_dir_paths is None:
         taskfile_dir_paths = []
-    search_targets = [p for p in taskfile_dir_paths]
+    search_targets = [(p, p, True) for p in taskfile_dir_paths]
     for playbook_taskfile_dir_pattern in playbook_taskfile_dir_patterns:
-        search_targets.append(os.path.join(path, playbook_taskfile_dir_pattern))
+        search_targets.append((os.path.join(path, playbook_taskfile_dir_pattern), path, False))
     candidates = []
-    for search_target in search_targets:
+    for search_target, context_root, explicit_source in search_targets:
         patterns = [search_target + "/**/*.ya?ml"]
         found = safe_glob(patterns, recursive=True)
         for f in found:
             # taskfiles in role will be loaded when the role is loaded, so skip
             if re.match(taskfile_path_in_role_re, f):
                 continue
-            # if it is a playbook, skip it
-            if could_be_playbook(f):
-                continue
             d = None
+            body = ""
             with open(f) as file:
                 try:
-                    d = yaml.load(file, Loader=Loader)
+                    body = file.read()
+                    d = yaml.load(body, Loader=Loader)
                 except Exception as e:
                     logger.debug(f"failed to load this yaml file to search task files; {e.args[0]}")
-            # if d cannot be loaded as tasks yaml file, skip it
-            if d is None or not isinstance(d, list):
+            # Use the same source classification as individually discovered
+            # files; a list under playbooks/ may be dependency metadata.
+            if could_be_playbook_detail(body=body, data=d) or not could_be_taskfile(
+                body=body, data=d, fpath=f, root_path=context_root, task_context=explicit_source
+            ):
                 continue
             candidates.append(f)
     return candidates
@@ -787,13 +860,109 @@ def could_be_eda_rulebook_detail(body: str = "", data: YAMLValue | None = None, 
     return looks_like_eda_ruleset(data[0])
 
 
-def could_be_taskfile(body: str = "", data: YAMLValue | None = None, fpath: str = "") -> bool:
+@dataclass(frozen=True)
+class TaskfileSourceContext:
+    """Shared path evidence for loading and formatting possible task sources.
+
+    Attributes:
+        task_directory: Whether bounded path components identify tasks or handlers.
+        role_source: Whether the file belongs to a conventional role task source.
+        data_directory: Whether a non-task source belongs to a data/fixture directory.
+        role_test_source: Whether bounded role ownership places the file under tests/.
+    """
+
+    task_directory: bool
+    role_source: bool
+    data_directory: bool
+    role_test_source: bool = False
+
+
+def taskfile_source_context(fpath: str, root_path: str = "", role_roots: tuple[str, ...] = ()) -> TaskfileSourceContext:
+    """Derive source evidence without borrowing directories outside its boundary.
+
+    Args:
+        fpath: Candidate YAML source path.
+        root_path: Optional project or explicitly selected search boundary.
+        role_roots: Role roots established by the caller's file inventory.
+
+    Returns:
+        Context shared by source discovery, loading, and formatting.
+    """
+    source = Path(fpath)
+    conventional_root = _conventional_role_root(source.absolute())
+    role_root = conventional_root
+    matching_roots = [
+        candidate for candidate in role_roots if source.absolute().is_relative_to(Path(candidate).absolute())
+    ]
+    if role_root:
+        matching_roots.append(role_root)
+    matching_roots = [
+        candidate
+        for candidate in matching_roots
+        if not root_path or Path(candidate).absolute().is_relative_to(Path(root_path).absolute())
+    ]
+    accepted_roots: list[str] = []
+    base = Path(root_path or ".").absolute()
+    if not root_path and source.is_absolute() and matching_roots:
+        base = min((Path(value).absolute() for value in matching_roots), key=lambda value: len(value.parts)).parent
+    for candidate in sorted(set(matching_roots), key=lambda value: len(Path(value).absolute().parts)):
+        parent = Path(accepted_roots[-1]).absolute() if accepted_roots else base
+        try:
+            relative = Path(candidate).absolute().relative_to(parent).parts
+        except ValueError:
+            continue
+        ancestor_kind = _source_directory_kind(relative[:-1])
+        candidate_kind = _source_directory_kind(relative)
+        if ancestor_kind and ancestor_kind not in {"tasks", "handlers"}:
+            continue
+        if candidate_kind and candidate_kind not in {"tasks", "handlers"} and (accepted_roots or "tests" in relative):
+            continue
+        accepted_roots.append(candidate)
+    role_root = accepted_roots[-1] if accepted_roots else ""
+    context_root = root_path or role_root
+    within_boundary = True
+    if context_root:
+        try:
+            directory_parts = source.absolute().relative_to(Path(context_root).absolute()).parts[:-1]
+        except ValueError:
+            # The boundary limits path-derived permissions, not structural
+            # evidence such as a builtin action in an explicitly supplied file.
+            directory_parts = ()
+            within_boundary = False
+    else:
+        directory_parts = (source.parent.name,) if source.is_absolute() else source.parts[:-1]
+    role_parts = (
+        source.absolute().relative_to(Path(role_root).absolute()).parts[:-1] if role_root and within_boundary else ()
+    )
+    source_parts = role_parts if role_root and within_boundary else directory_parts
+    if within_boundary and not role_root and root_path and Path(root_path).name in _SOURCE_DIRECTORY_KINDS:
+        source_parts = (Path(root_path).name, *source_parts)
+    source_kind = _source_directory_kind(source_parts)
+    task_directory = source_kind in {"tasks", "handlers"}
+    role_source = bool(role_parts and role_parts[0] in {"tasks", "handlers", "includes", "tests"})
+    data_directory = bool(source_kind) and not task_directory
+    return TaskfileSourceContext(
+        task_directory, role_source, data_directory, bool(role_parts and role_parts[0] == "tests")
+    )
+
+
+def could_be_taskfile(
+    body: str = "",
+    data: YAMLValue | None = None,
+    fpath: str = "",
+    root_path: str = "",
+    task_context: bool = False,
+    source_context: TaskfileSourceContext | None = None,
+) -> bool:
     """Return True if content looks like a task file (list of tasks, not import_playbook).
 
     Args:
         body: Optional raw YAML string.
         data: Optional parsed YAML value.
         fpath: Path to read from if body/data missing.
+        root_path: Project or role root bounding directory-based task context.
+        task_context: Allow custom actions in caller-selected sources, subject to data-directory exclusions.
+        source_context: Shared context already established by a batch caller.
 
     Returns:
         True if data looks like a task list.
@@ -813,18 +982,72 @@ def could_be_taskfile(body: str = "", data: YAMLValue | None = None, fpath: str 
     if not isinstance(data, list):
         return False
 
-    if not isinstance(data[0], dict):
+    source_context = source_context or taskfile_source_context(fpath, root_path)
+    if source_context.data_directory:
         return False
 
-    if "name" in data[0]:
+    # Treat the complete requirements document as data. A lone unnamed include
+    # must not make adjacent role identifiers into task labels.
+    def requirement_entry(item: object) -> bool:
+        if isinstance(item, str):
+            return True
+        if not isinstance(item, dict) or any(isinstance(value, (dict, list)) for value in item.values()):
+            return False
+        if "include" in item:
+            return set(item) == {"include"}
+        return bool(set(item) & {"name", "src"}) and set(item) <= {"name", "src", "scm", "version"}
+
+    requirements_evidence = any(
+        isinstance(item, str) or isinstance(item, dict) and bool(set(item) & {"src", "scm", "version"}) for item in data
+    )
+    if all(requirement_entry(item) for item in data) and (
+        requirements_evidence or source_context.role_test_source and not source_context.task_directory
+    ):
+        return False
+    allow_custom_actions = task_context or source_context.task_directory or source_context.role_source
+    return any(isinstance(item, dict) and _has_taskfile_action(item, allow_custom_actions) for item in data)
+
+
+def _has_taskfile_action(item: YAMLDict, allow_custom_actions: bool) -> bool:
+    """Require positive task evidence outside conventional task directories.
+
+    Args:
+        item: Candidate task mapping.
+        allow_custom_actions: Whether caller/path context permits custom or malformed task actions.
+
+    Returns:
+        Whether the mapping identifies an Ansible task or a known task source.
+    """
+    if any(isinstance(item.get(key), list) for key in ("block", "rescue", "always")):
         return True
-
-    module_name = find_module_name(data[0])
-    if module_name:
-        short_module_name = module_name.split(".")[-1] if "." in module_name else module_name
-        # if the found module name is import_playbook, the file is a playbook
-        return short_module_name != "import_playbook"
-
+    if "action" in item or "local_action" in item:
+        return True
+    # Requirements includes have no task label. Named legacy includes remain
+    # discoverable even when the task source itself is called requirements.yml.
+    if "include" in item and ("name" in item or allow_custom_actions):
+        return True
+    module_name = find_module_name(item)
+    if module_name.rsplit(".", 1)[-1] == "import_playbook":
+        return False
+    if module_name != "include" and (
+        module_name in get_builtin_module_names() or fqcn_module_name_re.fullmatch(module_name)
+    ):
+        return True
+    # Role test/include roots may also hold Galaxy requirement lists. Those
+    # identifiers are data even when the directory permits custom modules.
+    requirement_keys = {"name", "src", "scm", "version"}
+    if (
+        set(item) <= requirement_keys
+        and any(key in item for key in ("src", "scm", "version"))
+        and not any(isinstance(value, (dict, list)) for value in item.values())
+    ):
+        return False
+    if allow_custom_actions:
+        return bool(
+            module_name and (item.get(module_name) is None or isinstance(item.get(module_name), (str, dict)))
+        ) or ("name" in item and not module_name)
+    # The permissive short-name fallback also matches data keys such as uid,
+    # source and version. Reserve it for known task contexts.
     return False
 
 
@@ -864,6 +1087,9 @@ def get_role_info_from_path(fpath: str) -> tuple[str, str]:
         Tuple of (role_name, role_path).
 
     """
+    canonical = _conventional_role_root(Path(fpath))
+    if canonical:
+        return Path(canonical).name, canonical
     patterns = [
         "/roles/",
         "/tests/integration/targets/",
@@ -1014,7 +1240,7 @@ def count_top_level_element(yml_body: str = "") -> int:
 
 
 def label_yml_file(
-    yml_path: str = "", yml_body: str = "", task_num_thresh: int = 50
+    yml_path: str = "", yml_body: str = "", task_num_thresh: int = 50, root_path: str = ""
 ) -> tuple[str, int, dict[str, str] | None]:
     """Classify YAML as playbook, taskfile, or others; optionally enforce task count limit.
 
@@ -1022,6 +1248,7 @@ def label_yml_file(
         yml_path: Path to YAML file (optional).
         yml_body: Raw YAML string (optional).
         task_num_thresh: Max tasks/elements; exceed returns error.
+        root_path: Project root bounding directory-based task context.
 
     Returns:
         Tuple of (label, name_count, error_dict or None).
@@ -1075,7 +1302,7 @@ def label_yml_file(
         label = "rulebook"
     elif could_be_playbook_detail(body, data):
         label = "playbook"
-    elif could_be_taskfile(body, data, yml_path):
+    elif could_be_taskfile(body, data, yml_path, root_path=root_path):
         label = "taskfile"
     else:
         label = "others"
@@ -1100,7 +1327,7 @@ def get_yml_label(
     if relative_path[-1] == "/":
         relative_path = relative_path[:-1]
 
-    label, _, error = label_yml_file(file_path, task_num_thresh=task_num_threshold)
+    label, _, error = label_yml_file(file_path, task_num_thresh=task_num_threshold, root_path=root_path)
     role_name, role_path = get_role_info_from_path(file_path)
     role_info = None
     if role_name and role_path:
