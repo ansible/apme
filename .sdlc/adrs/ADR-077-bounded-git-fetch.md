@@ -18,16 +18,23 @@ Gateway must remain the fetch owner (ADR-020/029) and run without mount privileg
 ## Decision
 
 Provide a Gateway-local async snapshot context that pins an approved resolved
-address with Git's `http.curloptResolve`, disables redirects and ambient Git/proxy
+address with Git's `http.curloptResolve` (numeric URLs already select their
+validated address), disables redirects and ambient Git/proxy
 configuration, and only allows HTTPS. Require all DNS answers to satisfy policy;
 private unicast addresses require deployment CIDRs. Always deny loopback,
-link-local, multicast and unspecified addresses. Preserve TLS verification.
+link-local, multicast and unspecified addresses, plus standard NAT64, 6to4 and
+Teredo ranges that can conceal restricted IPv4 targets. Preserve TLS verification.
 
 Require a pre-provisioned tmpfs mount root bounded to at most 512 MiB and 65536
-inodes. Verify its filesystem and capacities before each fetch. All Git files,
+inodes. Verify its filesystem and capacities before each fetch, then revalidate
+and retain an open mount descriptor for allocation and child Git access. All Git files,
 including TMPDIR, live under that mount, sharing its hard kernel quotas across
 concurrent operations. Context exit removes the checkout. Canceled and timed-out
-Git process groups are stopped and reaped before deleting their files.
+Git process groups are stopped and reaped before deleting their files, including
+cancellation while subprocess creation is pending. Classify bounded stderr into
+fixed diagnostic categories without exposing raw server messages. A required CI
+gate exercises concurrent production HTTPS snapshots with real kernel quotas
+for packed objects, checkout bytes and loose-object inodes.
 
 ## Alternatives Considered
 
@@ -63,3 +70,4 @@ not changed by this prerequisite; PR #879 consumes the helper for requirements.
 | Date | Change |
 |------|--------|
 | 2026-11-16 | Added Gateway-local fetch boundary and operator requirements. |
+| 2026-11-16 | Addressed review: translated-address policy, held mount descriptors, process-creation cancellation, bounded diagnostics and mandatory production-path quota CI. |

@@ -256,6 +256,13 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   For asynchronous resource acquisition, cancel before the handle is returned
+   as well as during use; the acquisition owner must finish disposal before
+   cleanup releases its storage or capacity reservation. Bind authorization
+   and quota checks to the actual resource used after resolution, translation
+   or pathname replacement. Security-boundary tests must exercise the production
+   path under real enforcement in a required CI gate; skip-only tests cannot
+   establish that the boundary works.
    For patches built from nested snapshots, construct overlapping parent and
    child edits against the same baseline, including length-changing edits,
    identical edits, and insertion boundaries. Require explicit composition or

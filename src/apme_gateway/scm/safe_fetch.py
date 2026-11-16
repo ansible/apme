@@ -47,6 +47,59 @@ def _storage_root() -> Path:
     return root
 
 
+def _open_storage() -> int:
+    """Hold and revalidate the actual filesystem used for checkout creation.
+
+    Returns:
+        Open descriptor pinning a bounded tmpfs mount.
+
+    Raises:
+        RuntimeError: Mount changed or no longer enforces the limits.
+        BaseException: Validation failed; the opened descriptor is closed before propagation.
+    """
+    root = _storage_root()
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        info = Path(f"/proc/self/fdinfo/{descriptor}").read_text()
+        mount_id = next(line.split()[1] for line in info.splitlines() if line.startswith("mnt_id:"))
+        entries = Path("/proc/self/mountinfo").read_text().splitlines()
+        matching = [line for line in entries if line.split()[0] == mount_id]
+        stats = os.fstatvfs(descriptor)
+        if (
+            not matching
+            or matching[0].split(" - ")[1].split()[0] != "tmpfs"
+            or not (0 < stats.f_blocks * stats.f_frsize <= _MAX_STORAGE and 0 < stats.f_files <= _MAX_INODES)
+        ):
+            raise RuntimeError("Git fetch storage changed or lost its kernel quota")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _create_checkout() -> tuple[int, tempfile.TemporaryDirectory[str]]:
+    """Allocate a checkout through a held mount, closing it on allocation failure.
+
+    Returns:
+        Mount descriptor and disposable operation directory.
+
+    Raises:
+        RuntimeError: Shared storage cannot allocate a checkout.
+        BaseException: Allocation failed; the held descriptor is closed before propagation.
+    """
+    descriptor = _open_storage()
+    try:
+        directory = tempfile.TemporaryDirectory(prefix="apme_git_", dir=f"/proc/self/fd/{descriptor}")
+        return descriptor, directory
+    except BaseException as exc:
+        os.close(descriptor)
+        if isinstance(exc, OSError):
+            raise RuntimeError(
+                "Git fetch storage allocation failed; check shared quota and mount permissions"
+            ) from None
+        raise
+
+
 async def _destination(url: str) -> tuple[str, str]:
     """Validate every DNS answer and pin one allowed address for libcurl.
 
@@ -58,27 +111,57 @@ async def _destination(url: str) -> tuple[str, str]:
 
     Raises:
         ValueError: URL, policy or network destination is disallowed.
+        RuntimeError: Hostname resolution failed.
     """
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
         raise ValueError("Git fetch requires an HTTPS URL without embedded credentials or fragments")
     if "%" in parsed.hostname:
         raise ValueError("Scoped Git addresses are not allowed")
-    host = parsed.hostname.encode("idna").decode("ascii").lower()
+    literal = False
+    try:
+        host = str(ipaddress.ip_address(parsed.hostname))
+        literal = True
+    except ValueError:
+        host = parsed.hostname.encode("idna").decode("ascii").lower()
     port = parsed.port or 443
     if not 0 < port < 65536:
         raise ValueError("Invalid Git HTTPS port")
-    networks = [
-        ipaddress.ip_network(c.strip()) for c in os.environ.get("APME_GIT_PRIVATE_CIDRS", "").split(",") if c.strip()
-    ]
-    answers = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    if not answers:
+    try:
+        networks = [
+            ipaddress.ip_network(c.strip())
+            for c in os.environ.get("APME_GIT_PRIVATE_CIDRS", "").split(",")
+            if c.strip()
+        ]
+    except ValueError:
+        raise ValueError("Invalid APME_GIT_PRIVATE_CIDRS setting") from None
+    if literal:
+        resolved = [host]
+    else:
+        try:
+            answers = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            raise RuntimeError("Git hostname resolution failed") from None
+        resolved = [str(answer[4][0]) for answer in answers]
+    if not resolved:
         raise ValueError("Git hostname has no usable addresses")
     addresses = []
-    for answer in answers:
-        address = ipaddress.ip_address(answer[4][0])
+    for resolved_address in resolved:
+        address = ipaddress.ip_address(resolved_address)
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
             address = address.ipv4_mapped
+        # Translation gateways can turn a globally routed IPv6 address into a
+        # restricted IPv4 target. Reject standard translation/tunnel ranges.
+        if isinstance(address, ipaddress.IPv6Address) and any(
+            address in ipaddress.ip_network(prefix)
+            for prefix in (
+                "64:ff9b::/96",
+                "64:ff9b:1::/48",
+                "2002::/16",
+                "2001::/32",
+            )
+        ):
+            raise ValueError("Git translation and tunnel destinations are restricted")
         prohibited = address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified
         if prohibited or not (address.is_global or any(address in network for network in networks)):
             raise ValueError("Git destination is restricted by deployment network policy")
@@ -88,27 +171,108 @@ async def _destination(url: str) -> tuple[str, str]:
         address_text = f"[{address_text}]"
     authority = f"[{host}]" if ":" in host else host
     canonical = urlunsplit(("https", f"{authority}:{port}", parsed.path, parsed.query, ""))
-    return canonical, f"{authority}:{port}:{address_text}"
+    # Numeric URLs already select their connection address. Older libcurl builds
+    # cannot parse an IPv6 host in a resolve entry, even when Git supports the key.
+    return canonical, "" if literal else f"{authority}:{port}:{address_text}"
 
 
-async def _run(command: list[str], env: dict[str, str]) -> None:
-    """Run Git within a finite deadline and reap its process group on cancellation.
+async def _spawn(
+    command: list[str],
+    env: dict[str, str],
+    *,
+    stdout: int = asyncio.subprocess.DEVNULL,
+    stderr: int = asyncio.subprocess.DEVNULL,
+    storage_fd: int | None = None,
+) -> asyncio.subprocess.Process:
+    """Own subprocess creation through cancellation before returning its handle.
+
+    Args:
+        command: Executable and arguments.
+        env: Child environment.
+        stdout: Standard output destination.
+        stderr: Standard error destination.
+        storage_fd: Optional bounded mount descriptor inherited by Git.
+
+    Returns:
+        Started child process.
+
+    Raises:
+        asyncio.CancelledError: Caller canceled after spawned child cleanup.
+        RuntimeError: Git could not be started.
+    """
+    creation = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *command,
+            env=env,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+            pass_fds=() if storage_fd is None else (storage_fd,),
+        )
+    )
+    try:
+        return await asyncio.shield(creation)
+    except OSError:
+        raise RuntimeError("Git process could not be started") from None
+    except asyncio.CancelledError:
+
+        async def cleanup_created() -> None:
+            try:
+                process = await creation
+            except OSError:
+                return
+
+            async def discard(stream: asyncio.StreamReader) -> None:
+                while await stream.read(65536):
+                    pass
+
+            readers = [
+                asyncio.create_task(discard(stream))
+                for stream in (process.stdout, process.stderr)
+                if stream is not None
+            ]
+            try:
+                await _terminate(process)
+            finally:
+                # An already exited child can still have a paused pipe transport.
+                # Let readers consume buffered data and EOF before closing handles.
+                try:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(asyncio.gather(*readers, return_exceptions=True), 1)
+                finally:
+                    for reader in readers:
+                        reader.cancel()
+                    await asyncio.gather(*readers, return_exceptions=True)
+                    # Process exposes no public close API for inherited pipe handles.
+                    transport = getattr(process, "_transport", None)
+                    if transport is not None:
+                        transport.close()
+
+        await _drain(asyncio.create_task(cleanup_created()))
+        raise
+
+
+async def _run(command: list[str], env: dict[str, str], *, storage_fd: int | None = None) -> None:
+    """Run Git with bounded diagnostic capture and cancellation-safe cleanup.
 
     Args:
         command: Git argv.
         env: Sanitized child environment.
+        storage_fd: Optional bounded mount descriptor inherited by Git.
 
     Raises:
         RuntimeError: Git failed or exceeded its deadline.
         asyncio.CancelledError: Caller canceled after process cleanup.
     """
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        env=env,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    process = await _spawn(command, env, stderr=asyncio.subprocess.PIPE, storage_fd=storage_fd)
+    diagnostic = bytearray()
+
+    async def read_errors() -> None:
+        if process.stderr is not None:
+            while data := await process.stderr.read(4096):
+                diagnostic.extend(data[: max(0, 8192 - len(diagnostic))])
+
+    reader = asyncio.create_task(read_errors())
     try:
         await asyncio.wait_for(process.wait(), 120)
     except (asyncio.CancelledError, TimeoutError) as exc:
@@ -116,8 +280,31 @@ async def _run(command: list[str], env: dict[str, str]) -> None:
         if canceled or isinstance(exc, asyncio.CancelledError):
             raise asyncio.CancelledError from exc
         raise RuntimeError("Git fetch timed out") from exc
+    finally:
+        # Do not wait forever if a descendant inherited stderr after its leader exited.
+        async def close_reader() -> None:
+            reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reader
+
+        if await _drain(asyncio.create_task(close_reader())):
+            raise asyncio.CancelledError
     if process.returncode:
-        raise RuntimeError("Git fetch failed; check repository access, version and fetch storage capacity")
+        stage = next((part for part in ("init", "fetch", "checkout", "clone") if part in command), "git")
+        lowered = bytes(diagnostic).lower()
+        categories = (
+            (b"no space left", "storage quota exhausted"),
+            (b"authentication failed", "authentication failed"),
+            (b"certificate", "TLS certificate verification failed"),
+            (b"couldn't find remote ref", "ref not found"),
+            (b"repository not found", "repository not found"),
+            (b"failed to connect", "connection failed"),
+        )
+        reason = next(
+            (message for pattern, message in categories if pattern in lowered),
+            "check repository access, version and fetch storage capacity",
+        )
+        raise RuntimeError(f"Git fetch failed (stage {stage}, exit {process.returncode}): {reason}")
 
 
 async def _terminate(process: asyncio.subprocess.Process) -> None:
@@ -187,7 +374,6 @@ async def git_snapshot(
 
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./-]*", ref) or ".." in ref:
         raise ValueError("Invalid Git requirement version")
-    root = await asyncio.to_thread(_storage_root)
     canonical, resolve = await _destination(url)
     env = {
         k: v
@@ -201,24 +387,36 @@ async def git_snapshot(
     env.update(
         GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/bin/false"
     )
-    support = await asyncio.create_subprocess_exec(
-        "git", "help", "--config", env=env, stdout=asyncio.subprocess.PIPE, start_new_session=True
-    )
+    support = await _spawn(["git", "help", "--config"], env, stdout=asyncio.subprocess.PIPE)
     try:
         output, _ = await asyncio.wait_for(support.communicate(), 10)
+    except TimeoutError:
+        raise RuntimeError("Git capability probe timed out") from None
     finally:
         if support.returncode is None and await _drain(asyncio.create_task(_terminate(support))):
             raise asyncio.CancelledError
     if support.returncode or b"http.curloptResolve\n" not in output:
         raise RuntimeError("Git must support http.curloptResolve for destination enforcement")
-    creation = asyncio.create_task(asyncio.to_thread(tempfile.TemporaryDirectory, prefix="apme_git_", dir=root))
+    # Create relative to an open, revalidated mount, not its replaceable name.
+    # /proc/self/fd resolves the held mount in both Python and Git children.
+    creation = asyncio.create_task(asyncio.to_thread(_create_checkout))
     try:
-        temporary = await asyncio.shield(creation)
+        descriptor, temporary = await asyncio.shield(creation)
+    except OSError:
+        raise RuntimeError("Git fetch storage is unavailable") from None
     except asyncio.CancelledError:
 
         async def cleanup_created() -> None:
-            directory = await creation
-            await asyncio.to_thread(directory.cleanup)
+            try:
+                held_fd, directory = await creation
+            except Exception:
+                # The allocator closes partial resources itself. Preserve cancellation
+                # even when mount validation or allocation fails in the worker.
+                return
+            try:
+                await asyncio.to_thread(directory.cleanup)
+            finally:
+                os.close(held_fd)
 
         await _drain(asyncio.create_task(cleanup_created()))
         raise
@@ -233,18 +431,22 @@ async def git_snapshot(
             "-c",
             "http.followRedirects=false",
             "-c",
-            f"http.curloptResolve={resolve}",
-            "-c",
             "protocol.allow=never",
             "-c",
             "protocol.https.allow=always",
             "-c",
             "core.hooksPath=/dev/null",
         ]
-        await _run([*prefix, "init", "--template=", checkout], env)
-        await _run([*prefix, "-C", checkout, "fetch", "--depth=1", "--", canonical, ref], env)
-        await _run([*prefix, "-C", checkout, "checkout", "--detach", "FETCH_HEAD"], env)
-        yield Path(checkout)
+        if resolve:
+            prefix.extend(["-c", f"http.curloptResolve={resolve}"])
+        await _run([*prefix, "init", "--template=", checkout], env, storage_fd=descriptor)
+        await _run([*prefix, "-C", checkout, "fetch", "--depth=1", "--", canonical, ref], env, storage_fd=descriptor)
+        await _run([*prefix, "-C", checkout, "checkout", "--detach", "FETCH_HEAD"], env, storage_fd=descriptor)
+        # A consumer may pass this Path to a child without inheriting our fd.
+        yield Path(f"/proc/{os.getpid()}/fd/{descriptor}") / Path(checkout).name
     finally:
-        if await _drain(asyncio.create_task(asyncio.to_thread(temporary.cleanup))):
-            raise asyncio.CancelledError
+        try:
+            if await _drain(asyncio.create_task(asyncio.to_thread(temporary.cleanup))):
+                raise asyncio.CancelledError
+        finally:
+            os.close(descriptor)
