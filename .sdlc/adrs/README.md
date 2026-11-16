@@ -58,6 +58,7 @@ Decisions that are fully reflected in the codebase.
 | [ADR-068](ADR-068-adaptive-operation-deadlines.md) | Adaptive Operation Deadlines for Long AI Remediation | 2026-07-30 |
 | [ADR-070](ADR-070-gateway-abbenay-admin-proxy.md) | Gateway HTTP Proxy to In-Pod Abbenay Admin (Simple Model) | 2026-08-03 |
 | [ADR-075](ADR-075-bounded-validator-request-streaming.md) | Bounded Streaming for Oversized Validator Requests | 2026-11-06 |
+| [ADR-077](ADR-077-bounded-git-fetch.md) | Gateway Git fetch network and storage boundaries | 2026-11-16 |
 
 ## Partially Implemented
 
@@ -117,7 +118,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-076)
+2. Use the next available number (currently ADR-078)
 3. Include:
    - Status (Proposed → Accepted → Partially Implemented → Implemented)
    - Date

@@ -221,6 +221,8 @@ def _git_origin(repo_url: str) -> str:
     """
     parsed = urlparse(repo_url)
     host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
     origin = f"{parsed.scheme}://{host}"
     try:
         port = parsed.port
