@@ -40,11 +40,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - run: uvx --with-requirements ci/tox-requirements.txt tox -e unit
       # These security tests require real kernel mounts; inability to mount fails
       # this gate rather than silently skipping quota enforcement coverage.
+      # Only the fixture mount/umount commands use sudo; tox stays runner-owned.
       - name: Git fetch kernel quota gate
-        run: sudo env "PATH=$PATH" uvx --with-requirements ci/tox-requirements.txt tox -e git-fetch-quota
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e git-fetch-quota
+      - run: uvx --with-requirements ci/tox-requirements.txt tox -e unit
       - name: Fail if git reports dirty
         run: |
           if [[ -n $(git status -s) ]]; then
