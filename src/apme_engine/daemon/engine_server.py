@@ -1660,10 +1660,6 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 # Hold the build slot until the worker finishes, even if cancelled.
                 release_on(cast(asyncio.Future[object], acquire_future))
                 venv_session = await asyncio.shield(acquire_future)
-        if dependency_files:
-            await asyncio.get_running_loop().run_in_executor(
-                None, install_git_dependencies, venv_session.venv_root, dependency_files
-            )
         venv_path = str(venv_session.venv_root)
         if venv_session.failed_collections:
             logger.error(
@@ -1673,6 +1669,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 ", ".join(venv_session.failed_collections),
             )
             raise CollectionDependencyError(venv_session.failed_collections)
+        if dependency_files:
+            await asyncio.get_running_loop().run_in_executor(
+                None, install_git_dependencies, venv_session.venv_root, dependency_files
+            )
         logger.info(
             "Venv: ready (%d collections installed, session=%s, req=%s)",
             len(venv_session.installed_collections),

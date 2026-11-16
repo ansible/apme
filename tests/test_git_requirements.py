@@ -447,7 +447,6 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
     from apme_engine.daemon import engine_server, git_dependencies
     from apme_engine.venv_manager import session as venv_module
 
-    roots = []
     calls = []
     initial_root = tmp_path / "initial"
     final_root = tmp_path / "final"
@@ -460,7 +459,7 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
 
     def peek(sid: str, version: str, specs: list[str]) -> object:
         calls.append((sid, tuple(specs)))
-        return initial if len(calls) == 1 else final
+        return final if specs else initial
 
     manager = SimpleNamespace(peek_warm=peek, get=lambda *_: initial)
     monkeypatch.setattr(engine_server.EngineServicer, "_get_venv_manager", lambda _: manager)
@@ -473,16 +472,40 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
             scandata=None,
         ),
     )
-    monkeypatch.setattr(git_dependencies, "install_git_dependencies", lambda root, files: roots.append(root))
+    monkeypatch.setattr(git_dependencies, "_venv_site_packages", lambda root: root)
+    dependency = {"ansible_collections/demo/custom/plugins/modules/a.py": b"git-version"}
     with pytest.raises(engine_server.CollectionDependencyError):
         await engine_server.EngineServicer()._execute_scan_pipeline(
             tmp_path,
             [],
             "scan",
             session_id="project",
-            dependency_files={"roles/git/tasks/main.yml": b"[]"},
+            dependency_files=dependency,
         )
     assert calls[0][0] != calls[1][0]
     assert calls[0][1] == ()
     assert calls[1][1] == ("example.new",)
-    assert roots == [initial_root, final_root]
+    assert not (final_root / ".git-dependencies-ready").exists()
+
+    # A retry may install a conflicting transitive Galaxy collection before
+    # the snapshot is written. Git must win and the marker must be created only
+    # after the acquisition succeeds.
+    galaxy_file = final_root / "ansible_collections/demo/custom/plugins/modules/a.py"
+    galaxy_file.parent.mkdir(parents=True)
+    galaxy_file.write_bytes(b"galaxy-version")
+    final.failed_collections = []
+
+    def stop_after_install(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("validators not needed")
+
+    monkeypatch.setattr(engine_server, "ValidateRequest", stop_after_install)
+    with pytest.raises(RuntimeError, match="validators not needed"):
+        await engine_server.EngineServicer()._execute_scan_pipeline(
+            tmp_path,
+            [],
+            "scan",
+            session_id="project",
+            dependency_files=dependency,
+        )
+    assert galaxy_file.read_bytes() == b"git-version"
+    assert (final_root / ".git-dependencies-ready").is_file()
