@@ -60,13 +60,19 @@ async def resolve_git_requirements(
     files: dict[str, File] = {}
     total = 0
     for kind, entry in declarations:
-        source = str(entry.get("src", entry.get("name", ""))).removeprefix("git+")
+        raw_source = entry.get("src", entry.get("name", ""))
+        if not isinstance(raw_source, str):
+            raise ValueError("Git requirement source must be a string")
+        source = raw_source.removeprefix("git+")
         source, _, inline_ref = source.partition(",")
         source, _, subdir = source.partition("#")
         parsed = urlsplit(source)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("Git requirements must use HTTPS URLs without embedded credentials")
-        ref = str(entry.get("version") or inline_ref or "HEAD")
+        version = entry.get("version")
+        if version is not None and not isinstance(version, (str, int, float)):
+            raise ValueError("Invalid Git requirement version")
+        ref = str(version or inline_ref or "HEAD")
         if ref.startswith("-") or not re.fullmatch(r"[A-Za-z0-9_./-]+", ref) or ".." in ref:
             raise ValueError("Invalid Git requirement version")
         if subdir and (Path(subdir).is_absolute() or ".." in Path(subdir).parts):
@@ -168,7 +174,10 @@ def _collect_files(
             raise ValueError("Invalid Git collection namespace or name")
         prefix = f"ansible_collections/{namespace}/{name}"
     else:
-        name = str(entry.get("name") or repository_name.removesuffix(".git"))
+        role_name = entry.get("name")
+        if role_name is not None and not isinstance(role_name, (str, int, float)):
+            raise ValueError("Invalid Git role name")
+        name = str(role_name or repository_name.removesuffix(".git"))
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name):
             raise ValueError("Invalid Git role name")
         prefix = f"roles/{name}"

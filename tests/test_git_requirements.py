@@ -611,3 +611,59 @@ def test_collection_metadata_rejects_alias_graph(tmp_path: Path) -> None:
     (tmp_path / "galaxy.yml").write_text("node: &node [a, b]\nnamespace: [*node, *node]\nname: valid\n")
     with pytest.raises(ValueError, match="Invalid Git collection"):
         git._collect_files("collections", {}, tmp_path, tmp_path, "collection.git")
+
+
+@pytest.mark.parametrize("field", ["src", "name", "version"])  # type: ignore[untyped-decorator]
+async def test_requirement_rejects_alias_graph_before_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    """Structured source and version values fail before network access.
+
+    Args:
+        tmp_path: Disposable project directory.
+        monkeypatch: Isolated database and fetch overrides.
+        field: Field containing an aliased YAML graph.
+    """
+    declaration = "  - type: git\n"
+    if field == "version":
+        declaration += "    name: https://git.example/collection.git\n"
+    declaration += f"    {field}: *graph\n"
+    (tmp_path / "requirements.yml").write_text("graph: &graph [a, a]\ncollections:\n" + declaration)
+    db = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=[
+                SimpleNamespace(enabled=True),
+                SimpleNamespace(requirements_token=None, scm_token=None, scm_provider=None),
+            ]
+        )
+    )
+
+    @asynccontextmanager
+    async def session():  # type: ignore[no-untyped-def]
+        yield db
+
+    class AliasGraph(list[object]):
+        def __str__(self) -> str:
+            raise AssertionError("Structured requirements must not be stringified")
+
+    declarations = git._read_declarations(tmp_path)
+    declarations[0][1][field] = AliasGraph(["a", "a"])
+    monkeypatch.setattr(git, "_read_declarations", lambda _: declarations)
+    snapshot = AsyncMock()
+    monkeypatch.setattr(git, "get_session", session)
+    monkeypatch.setattr(git, "git_snapshot", snapshot)
+    with pytest.raises(ValueError, match="source must be a string|Invalid Git requirement version"):
+        await git.resolve_git_requirements("p", str(tmp_path), repo_url="https://git.example/project")
+    snapshot.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [["role"], {"role": "name"}])  # type: ignore[untyped-decorator]
+def test_role_name_rejects_structured_values(tmp_path: Path, value: object) -> None:
+    """Role aliases cannot expand during install name conversion.
+
+    Args:
+        tmp_path: Disposable Git checkout.
+        value: Non-scalar role name.
+    """
+    with pytest.raises(ValueError, match="Invalid Git role name"):
+        git._collect_files("roles", {"name": value}, tmp_path, tmp_path, "role.git")
