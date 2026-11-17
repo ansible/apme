@@ -71,7 +71,15 @@ from apme_gateway.api.schemas import (
 )
 from apme_gateway.db import get_database_type, get_session
 from apme_gateway.db import queries as q
-from apme_gateway.db.models import GalaxyServer, Project, Rule, RuleOverride, Scan, ScanManifest
+from apme_gateway.db.models import (
+    GalaxyServer,
+    GitRequirementsSettings,
+    Project,
+    Rule,
+    RuleOverride,
+    Scan,
+    ScanManifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -505,6 +513,7 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
                 branch=body.branch,
                 scm_token=body.scm_token.strip() or None if body.scm_token else None,
                 scm_provider=scm_provider,
+                requirements_token=body.requirements_token.strip() or None if body.requirements_token else None,
             )
     except IntegrityError:
         raise HTTPException(status_code=409, detail=f"Project named '{body.name}' already exists") from None
@@ -516,6 +525,7 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
         created_at=proj.created_at,
         health_score=proj.health_score,
         scm_provider=proj.scm_provider,
+        has_requirements_token=bool(proj.requirements_token),
         has_scm_token=bool(proj.scm_token),
         last_scanned_commit=proj.last_scanned_commit,
     )
@@ -613,6 +623,7 @@ async def list_projects(
                     scan_count=scan_cnt,
                     last_scanned_at=last_scan_at,
                     scm_provider=proj.scm_provider,
+                    has_requirements_token=bool(proj.requirements_token),
                     has_scm_token=bool(proj.scm_token),
                     last_scanned_commit=proj.last_scanned_commit,
                     active_operation=active_op_summary,
@@ -672,6 +683,8 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
         latest_summary = _to_activity_summary(latest) if latest else None
         vt = _compute_violation_trend(trend)
         last_scan_at = trend[-1].created_at if trend else None
+        git_policy = await db.get(GitRequirementsSettings, 1)
+        git_requirements_enabled = bool(git_policy and git_policy.enabled)
 
     has_new = False
     if proj.last_scanned_commit:
@@ -702,6 +715,7 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
         logger.debug("Could not resolve active operation for project %s", project_id, exc_info=True)
 
     return ProjectDetail(
+        git_requirements_enabled=git_requirements_enabled,
         id=proj.id,
         name=proj.name,
         repo_url=proj.repo_url,
@@ -713,6 +727,7 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
         scan_count=scan_cnt,
         last_scanned_at=last_scan_at,
         scm_provider=proj.scm_provider,
+        has_requirements_token=bool(proj.requirements_token),
         has_scm_token=bool(proj.scm_token),
         last_scanned_commit=proj.last_scanned_commit,
         has_new_commits=has_new,
@@ -746,6 +761,8 @@ async def update_project(
         updates["repo_url"] = body.repo_url
     if body.branch is not None:
         updates["branch"] = body.branch
+    if body.requirements_token is not None:
+        updates["requirements_token"] = body.requirements_token.strip() or None
     if body.scm_token is not None:
         scm_token = body.scm_token.strip()
         updates["scm_token"] = scm_token or None
@@ -773,6 +790,7 @@ async def update_project(
         created_at=proj.created_at,
         health_score=proj.health_score,
         scm_provider=proj.scm_provider,
+        has_requirements_token=bool(proj.requirements_token),
         has_scm_token=bool(proj.scm_token),
         last_scanned_commit=proj.last_scanned_commit,
     )

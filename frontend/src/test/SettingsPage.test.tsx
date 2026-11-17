@@ -111,3 +111,22 @@ describe('SettingsPage model loading', () => {
     );
   });
 });
+
+it('does not save a default policy after a failed load and allows retry', async () => {
+  let attempts = 0;
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith('/settings/git-requirements')) {
+      if (init?.method === 'PUT') return jsonResponse({ enabled: true });
+      attempts += 1;
+      if (attempts === 1) throw new Error('unavailable');
+      return jsonResponse({ enabled: true });
+    }
+    return jsonResponse([]);
+  }) as typeof globalThis.fetch;
+  render(renderSettings(fetch));
+  const retry = await screen.findByRole('button', { name: 'Retry loading' });
+  expect(screen.getByRole('button', { name: 'Save Git requirements setting' })).toBeDisabled();
+  await act(async () => { retry.click(); });
+  expect(screen.getByRole('checkbox', { name: 'Allow Git requirements for all projects' })).toBeChecked();
+  expect(screen.getByRole('button', { name: 'Save Git requirements setting' })).toBeEnabled();
+});

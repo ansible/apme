@@ -1,3 +1,4 @@
+import { GitRequirementsSettings } from '../components/GitRequirementsSettings';
 import { useCallback, useEffect, useState } from 'react';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
@@ -455,6 +456,7 @@ export function SettingsPage() {
         <hr style={{ border: 'none', borderTop: '1px solid var(--pf-t--global--border--color--default)', marginBottom: 24 }} />
 
         <GalaxyServersSection />
+        <GitRequirementsSettings />
       </div>
     </PageLayout>
   );

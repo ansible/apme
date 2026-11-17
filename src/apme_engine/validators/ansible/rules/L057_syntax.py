@@ -1,5 +1,6 @@
 """L057: Syntax check via ansible-playbook --syntax-check."""
 
+import json
 import os
 import posixpath
 import re
@@ -594,7 +595,7 @@ def run(
 
     Returns:
         List of violation dicts.
-    """
+    """  # noqa: DOC501, DOC503 -- invalid probe output is caught below
     ansible_playbook = venv_root / "bin" / "ansible-playbook"
     violations: list[dict[str, object]] = []
 
@@ -615,6 +616,41 @@ def run(
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
+
+    git_roles = sorted(venv_root.glob("lib/python*/site-packages/roles"))
+    if git_roles:
+        # Ask this Ansible runtime to resolve its configuration before appending
+        # dependency paths; an env override alone would discard ansible.cfg.
+        try:
+            resolved = subprocess.run(
+                [
+                    str(venv_root / "bin/python"),
+                    "-I",
+                    "-c",
+                    "import json; from ansible import constants as C; print(json.dumps(C.DEFAULT_ROLES_PATH))",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=str(root_dir),
+                timeout=30,
+                env=env,
+            )
+            paths = json.loads(resolved.stdout)
+            if resolved.returncode != 0 or not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                raise ValueError("Invalid Ansible role paths")
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return [
+                {
+                    "rule_id": RULE_ID,
+                    "severity": "error",
+                    "message": "Unable to resolve Ansible role search paths",
+                    "file": "",
+                    "line": 1,
+                    "path": "",
+                    "scope": "playbook",
+                }
+            ]
+        env["ANSIBLE_ROLES_PATH"] = os.pathsep.join([*paths, *(str(path) for path in git_roles)])
 
     molecule_dirs = _molecule_directories(root_dir)
     static_paths: frozenset[str] = frozenset()

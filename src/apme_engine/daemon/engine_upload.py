@@ -11,13 +11,30 @@ from __future__ import annotations
 import hashlib
 import logging
 import posixpath
+import re
 from collections.abc import Mapping
+from typing import cast
 
+from apme.v1.common_pb2 import File
 from apme.v1.engine_pb2 import ScanChunk
 from apme_engine.config_env import get_env_int
 from apme_engine.daemon.session import SessionState
 
 logger = logging.getLogger("apme.engine")
+_DEPENDENCY_FILES_FIELD = "dependency_files"
+
+
+def dependency_upload_files(chunk: ScanChunk) -> list[File]:
+    """Access the additive field absent from the legacy partial protobuf hints.
+
+    Args:
+        chunk: Upload message.
+
+    Returns:
+        Repeated dependency files.
+    """
+    return cast(list[File], getattr(chunk, _DEPENDENCY_FILES_FIELD))
+
 
 # Per-session aggregate upload caps enforced in _session_upload_append and
 # _accumulate_chunks (PE-35).
@@ -55,6 +72,31 @@ def _normalize_upload_path(path: str) -> str:
     return normalized
 
 
+def validate_dependency_path(path: str) -> str:
+    """Validate dependency layout and identifiers before filesystem access.
+
+    Args:
+        path: Uploaded dependency path.
+
+    Returns:
+        Normalized dependency path.
+
+    Raises:
+        ValueError: Invalid collection, role or install layout.
+    """
+    normalized = _normalize_upload_path(path)
+    parts = normalized.split("/")
+    collection = (
+        parts[0] == "ansible_collections"
+        and len(parts) >= 4
+        and all(re.fullmatch(r"[a-z][a-z0-9_]*", part) for part in parts[1:3])
+    )
+    role = parts[0] == "roles" and len(parts) >= 3 and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", parts[1])
+    if not (collection or role):
+        raise ValueError("Invalid dependency install path")
+    return normalized
+
+
 def _hash_upload_files(files: Mapping[str, bytes]) -> str:
     """SHA-256 over sorted ``(path, content)`` pairs for payload comparison.
 
@@ -66,10 +108,11 @@ def _hash_upload_files(files: Mapping[str, bytes]) -> str:
     """
     digest = hashlib.sha256()
     for path in sorted(files):
-        digest.update(path.encode("utf-8"))
-        digest.update(b"\x00")
+        encoded = path.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(len(files[path]).to_bytes(8, "big"))
         digest.update(files[path])
-        digest.update(b"\x00")
     return digest.hexdigest()
 
 
@@ -94,6 +137,8 @@ def _hash_upload_chunk(chunk: ScanChunk) -> str:
     staged: dict[str, bytes] = {}
     for f in chunk.files:
         staged[_normalize_upload_path(f.path)] = f.content  # type: ignore[attr-defined]
+    for f in dependency_upload_files(chunk):
+        staged[".git-dependencies/" + _normalize_upload_path(f.path)] = f.content
     return _hash_upload_files(staged)
 
 
@@ -119,19 +164,26 @@ def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
     """
     if session.upload_sealed:
         raise ValueError("Session upload already processed: start a new session for additional files")
+    if any(_normalize_upload_path(f.path).startswith(".git-dependencies/") for f in chunk.files):  # type: ignore[attr-defined]
+        raise ValueError("Reserved dependency upload path")
     staged = [(_normalize_upload_path(f.path), f.content) for f in chunk.files]  # type: ignore[attr-defined]
+    for f in dependency_upload_files(chunk):
+        path = validate_dependency_path(f.path)
+        staged.append((".git-dependencies/" + path, f.content))
+    existing = dict(session.original_files)
+    existing.update({".git-dependencies/" + p: c for p, c in session.dependency_files.items()})
     # One chunk may repeat a path (e.g. `a.yml` + `./a.yml` normalize
     # alike): last copy wins, accounted once so byte math stays exact.
     deduped: dict[str, bytes] = {}
     for path, content in staged:
         deduped[path] = content
     staged = list(deduped.items())
-    new_keys = {path for path, _ in staged} - set(session.original_files)
-    file_total = len(session.original_files) + len(new_keys)
+    new_keys = {path for path, _ in staged} - set(existing)
+    file_total = len(existing) + len(new_keys)
     if file_total > _SESSION_MAX_UPLOAD_FILES:
         raise ValueError(f"Session upload file limit exceeded: {file_total} files (max {_SESSION_MAX_UPLOAD_FILES})")
-    current_bytes = sum(len(content) for content in session.original_files.values())
-    replaced_bytes = sum(len(session.original_files[path]) for path, _ in staged if path in session.original_files)
+    current_bytes = sum(len(content) for content in existing.values())
+    replaced_bytes = sum(len(existing[path]) for path, _ in staged if path in existing)
     incoming_bytes = sum(len(content) for _, content in staged)
     byte_total = current_bytes - replaced_bytes + incoming_bytes
     if byte_total > _SESSION_MAX_UPLOAD_BYTES:
@@ -139,5 +191,8 @@ def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
             f"Session upload size limit exceeded: {byte_total} bytes (max {_SESSION_MAX_UPLOAD_BYTES} bytes)"
         )
     for path, content in staged:
+        if path.startswith(".git-dependencies/"):
+            session.dependency_files[path.removeprefix(".git-dependencies/")] = content
+            continue
         session.original_files[path] = content
         session.working_files[path] = content

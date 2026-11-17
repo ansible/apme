@@ -33,8 +33,10 @@ def make_target_path(
         parts = target_name.split(".")
         if len(parts) == 1:
             parts.append("")
-        dep_dir_target_path_candidates = [
-            os.path.join(dep_dir, target_name),
+        dep_dir_target_path_candidates = [os.path.join(dep_dir, target_name)]
+        if typ == LoadType.ROLE:
+            dep_dir_target_path_candidates.append(os.path.join(dep_dir, "roles", target_name))
+        dep_dir_target_path_candidates += [
             os.path.join(dep_dir, parts[0], parts[1]),
             os.path.join(dep_dir, "ansible_collections", parts[0], parts[1]),
         ]

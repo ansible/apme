@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { useApi } from "@backstage/core-plugin-api";
 import { Alert, Box, Flex, Text } from "@backstage/ui";
 import type { ApmeApiAdapter } from "@apme/client/transport";
+import { ApmeGitRequirementsSettings } from "./ApmeGitRequirementsSettings";
 import { ApmeGalaxySettings } from "./ApmeGalaxySettings";
 import { ApmeModelSettings } from "./ApmeModelSettings";
 import { ApmeAiProviders } from "./ApmeAiProviders";
@@ -56,7 +57,7 @@ export function ApmeSettings({
     <Flex className="apme-ui apme-settings" direction="column" gap="4">
       <SectionHeader
         title="Settings"
-        description="Manage AI providers, model preferences and Galaxy access."
+        description="Manage AI providers, model preferences, Galaxy access and Git requirements."
       />
       <div className="apme-panel">
         <ApmeAiProviders
@@ -75,6 +76,13 @@ export function ApmeSettings({
           canView={canViewSettings}
           canManage={canManageSettings}
           supportsCertificateSettings={supportsGalaxyCertificateSettings}
+        />
+      </div>
+      <div className="apme-panel">
+        <ApmeGitRequirementsSettings
+          adapter={adapter}
+          canView={canViewSettings}
+          canManage={canManageSettings}
         />
       </div>
     </Flex>

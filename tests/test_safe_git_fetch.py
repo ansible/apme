@@ -736,3 +736,19 @@ async def test_diagnostic_eof_wait_has_finite_deadline(monkeypatch: pytest.Monke
     with pytest.raises(RuntimeError, match="Git fetch failed"):
         await asyncio.wait_for(safe_fetch._run(["git", "fetch"], {}), 3)
     transport.close.assert_called_once()
+
+
+async def test_all_validated_addresses_are_pinned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin all unique IPv4 and IPv6 answers to permit safe connection failover.
+
+    Args:
+        monkeypatch: DNS overrides.
+    """
+    answers = [
+        (socket.AF_INET, 0, 0, "", ("8.8.8.8", 443)),
+        (socket.AF_INET6, 0, 0, "", ("2606:4700:4700::1111", 443, 0, 0)),
+        (socket.AF_INET, 0, 0, "", ("8.8.8.8", 443)),
+    ]
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", AsyncMock(return_value=answers))
+    _, pin = await safe_fetch._destination("https://git.example/repo")
+    assert pin == "git.example:443:8.8.8.8,[2606:4700:4700::1111]"

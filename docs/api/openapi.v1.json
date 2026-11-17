@@ -683,7 +683,7 @@
         "type": "object"
       },
       "CreateProjectRequest": {
-        "description": "Request body for creating a project.\n\nAttributes:\n    name: Display label.\n    repo_url: HTTPS clone URL.\n    branch: Branch to clone (default main). 1-100 chars; letters,\n        digits, '.', '_', '/', '-'; must satisfy git check-ref-format\n        component rules. Invalid names fail with 422.\n    scm_token: Per-project SCM token for PR creation (ADR-050).\n    scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if omitted.",
+        "description": "Request body for creating a project.\n\nAttributes:\n    name: Display label.\n    repo_url: HTTPS clone URL.\n    branch: Branch to clone (default main). 1-100 chars; letters,\n        digits, '.', '_', '/', '-'; must satisfy git check-ref-format\n        component rules. Invalid names fail with 422.\n    requirements_token: Optional credential override for Git requirements.\n    scm_token: Per-project SCM token for PR creation (ADR-050).\n    scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if omitted.",
         "properties": {
           "branch": {
             "default": "main",
@@ -699,6 +699,18 @@
           "repo_url": {
             "title": "Repo Url",
             "type": "string"
+          },
+          "requirements_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Git requirements credential override; empty clears it",
+            "title": "Requirements Token"
           },
           "scm_provider": {
             "anyOf": [
@@ -1056,6 +1068,18 @@
         "title": "GalaxyServerSchema",
         "type": "object"
       },
+      "GitRequirementsPolicy": {
+        "description": "Global opt-in for fetching Git collections and roles.\n\nAttributes:\n    enabled: Whether projects may fetch Git requirements.",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "title": "GitRequirementsPolicy",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1367,7 +1391,7 @@
         "type": "object"
       },
       "ProjectDetail": {
-        "description": "Full project representation with latest activity summary.\n\nAttributes:\n    latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).\n    severity_breakdown: Violation counts keyed by severity level.",
+        "description": "Full project representation with latest activity summary.\n\nAttributes:\n    git_requirements_enabled: Global Git policy exposed to authorized project readers.\n    latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).\n    severity_breakdown: Violation counts keyed by severity level.",
         "properties": {
           "active_operation": {
             "anyOf": [
@@ -1387,9 +1411,19 @@
             "title": "Created At",
             "type": "string"
           },
+          "git_requirements_enabled": {
+            "default": false,
+            "title": "Git Requirements Enabled",
+            "type": "boolean"
+          },
           "has_new_commits": {
             "default": false,
             "title": "Has New Commits",
+            "type": "boolean"
+          },
+          "has_requirements_token": {
+            "default": false,
+            "title": "Has Requirements Token",
             "type": "boolean"
           },
           "has_scm_token": {
@@ -1541,7 +1575,7 @@
         "type": "object"
       },
       "ProjectSummary": {
-        "description": "Summary representation of a project for list views.\n\nAttributes:\n    id: Unique identifier.\n    name: Display label.\n    repo_url: SCM clone URL.\n    branch: Target branch.\n    created_at: ISO-8601 creation timestamp.\n    health_score: Computed 0-100 score.\n    total_violations: Count from latest check (scan row).\n    violation_trend: Direction indicator.\n    scan_count: Number of completed runs (``scan_count`` / scans table).\n    last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).\n    scm_provider: Explicit SCM provider type (ADR-050), or None for auto-detect.\n    has_scm_token: Whether a project-level SCM token is configured (ADR-050).\n    last_scanned_commit: Git SHA of the commit used in the most recent scan.\n    has_new_commits: True when the remote branch HEAD is ahead of last_scanned_commit.\n    active_operation: Summary of any in-flight operation (ADR-052), or null.",
+        "description": "Summary representation of a project for list views.\n\nAttributes:\n    id: Unique identifier.\n    name: Display label.\n    repo_url: SCM clone URL.\n    branch: Target branch.\n    created_at: ISO-8601 creation timestamp.\n    health_score: Computed 0-100 score.\n    total_violations: Count from latest check (scan row).\n    violation_trend: Direction indicator.\n    scan_count: Number of completed runs (``scan_count`` / scans table).\n    last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).\n    scm_provider: Explicit SCM provider type (ADR-050), or None for auto-detect.\n    has_requirements_token: Whether a Git requirements override is configured.\n    has_scm_token: Whether a project-level SCM token is configured (ADR-050).\n    last_scanned_commit: Git SHA of the commit used in the most recent scan.\n    has_new_commits: True when the remote branch HEAD is ahead of last_scanned_commit.\n    active_operation: Summary of any in-flight operation (ADR-052), or null.",
         "properties": {
           "active_operation": {
             "anyOf": [
@@ -1564,6 +1598,11 @@
           "has_new_commits": {
             "default": false,
             "title": "Has New Commits",
+            "type": "boolean"
+          },
+          "has_requirements_token": {
+            "default": false,
+            "title": "Has Requirements Token",
             "type": "boolean"
           },
           "has_scm_token": {
@@ -2555,7 +2594,7 @@
         "type": "object"
       },
       "UpdateProjectRequest": {
-        "description": "Partial update for project fields.\n\nAttributes:\n    name: New display label.\n    repo_url: New clone URL.\n    branch: New branch.\n    scm_token: New SCM token (ADR-050). Set to empty string to clear.\n    scm_provider: Explicit provider type (ADR-050). Set to empty string to clear.",
+        "description": "Partial update for project fields.\n\nAttributes:\n    name: New display label.\n    repo_url: New clone URL.\n    branch: New branch.\n    requirements_token: Optional Git requirements credential; empty clears it.\n    scm_token: New SCM token (ADR-050). Set to empty string to clear.\n    scm_provider: Explicit provider type (ADR-050). Set to empty string to clear.",
         "properties": {
           "branch": {
             "anyOf": [
@@ -2591,6 +2630,18 @@
               }
             ],
             "title": "Repo Url"
+          },
+          "requirements_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Git requirements credential override; empty clears it",
+            "title": "Requirements Token"
           },
           "scm_provider": {
             "anyOf": [
@@ -5229,6 +5280,68 @@
           }
         },
         "summary": "Update Galaxy Server"
+      }
+    },
+    "/api/v1/settings/git-requirements": {
+      "get": {
+        "description": "Return global policy, disabled until explicitly enabled.\n\nReturns:\n    Current global Git requirements policy.",
+        "operationId": "get_git_requirements_policy_api_v1_settings_git_requirements_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitRequirementsPolicy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Git Requirements Policy",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "description": "Persist global policy.\n\nArgs:\n    body: New global policy.\n\nReturns:\n    Saved policy.",
+        "operationId": "set_git_requirements_policy_api_v1_settings_git_requirements_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitRequirementsPolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitRequirementsPolicy"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Git Requirements Policy",
+        "tags": [
+          "settings"
+        ]
       }
     },
     "/api/v1/stats/ai-acceptance": {

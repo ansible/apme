@@ -395,10 +395,28 @@ export async function createRouter(options: RouterOptions): Promise<Router> {
 
   router.put(
     "/apme/settings",
-    jsonBody,
     requireApmeSettingsManage,
+    jsonBody,
     async (req, res) => {
       res.json(await settingsService.save(req.body ?? {}));
+    },
+  );
+
+  router.get(
+    "/apme/settings/git-requirements",
+    requireApmeSettingsView,
+    async (_req, res) => {
+      res.json(await apmeService.getGitRequirementsPolicy());
+    },
+  );
+  router.put(
+    "/apme/settings/git-requirements",
+    requireApmeSettingsManage,
+    jsonBody,
+    async (req, res) => {
+      if (typeof req.body?.enabled !== "boolean")
+        throw new InputError("enabled must be a boolean");
+      res.json(await apmeService.setGitRequirementsPolicy(req.body.enabled));
     },
   );
 
