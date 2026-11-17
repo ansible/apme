@@ -167,7 +167,10 @@ async def _destination(url: str) -> tuple[str, str]:
         ):
             raise ValueError("Git translation and tunnel destinations are restricted")
         prohibited = address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified
-        if prohibited or not (address.is_global or any(address in network for network in networks)):
+        site_local = isinstance(address, ipaddress.IPv6Address) and address.is_site_local
+        if prohibited or not (
+            (address.is_global and not site_local) or any(address in network for network in networks)
+        ):
             raise ValueError("Git destination is restricted by deployment network policy")
         addresses.append(address)
     address_text = str(addresses[0])

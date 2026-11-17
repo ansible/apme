@@ -24,6 +24,7 @@ from apme_gateway.scm import safe_fetch
         "10.0.0.1",
         "::1",
         "::ffff:127.0.0.1",
+        "fec0::10",
         "64:ff9b::7f00:1",
         "64:ff9b::a9fe:a9fe",
         "64:ff9b:1::7f00:1",
@@ -59,6 +60,26 @@ async def test_operator_private_allowlist_and_pinned_dns(monkeypatch: pytest.Mon
     assert url == "https://git.example:443/repo"
     assert pin == "git.example:443:10.20.30.40"
     lookup.assert_awaited_once()
+
+
+@pytest.mark.parametrize("literal", [True, False])  # type: ignore[untyped-decorator]
+async def test_site_local_requires_explicit_cidr(monkeypatch: pytest.MonkeyPatch, literal: bool) -> None:
+    """Site-local IPv6 is rejected by default and accepted only by explicit policy.
+
+    Args:
+        monkeypatch: Deployment settings and DNS overrides.
+        literal: Exercise an IPv6 literal or a hostname resolving to it.
+    """
+    lookup = AsyncMock(return_value=[(socket.AF_INET6, 0, 0, "", ("fec0::10", 443, 0, 0))])
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", lookup)
+    url = "https://[fec0::10]/repo" if literal else "https://git.example/repo"
+    monkeypatch.setenv("APME_GIT_PRIVATE_CIDRS", "")
+    with pytest.raises(ValueError, match="restricted"):
+        await safe_fetch._destination(url)
+    monkeypatch.setenv("APME_GIT_PRIVATE_CIDRS", "fec0::10/128")
+    canonical, pin = await safe_fetch._destination(url)
+    assert canonical == ("https://[fec0::10]:443/repo" if literal else "https://git.example:443/repo")
+    assert pin == ("" if literal else "git.example:443:[fec0::10]")
 
 
 async def test_mixed_dns_answers_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -36,8 +36,9 @@ still apply after checkout.
 ## Network policy
 
 Public unicast addresses are accepted. Private destinations require explicit
-CIDRs in the deployment-only `APME_GIT_PRIVATE_CIDRS` environment variable,
-for example `10.20.30.40/32,fd00:1234::10/128`. Prefer narrow ranges for actual Git
+CIDRs in the deployment-only `APME_GIT_PRIVATE_CIDRS` environment variable;
+this includes deprecated IPv6 site-local addresses (`fec0::/10`). For example,
+use `10.20.30.40/32,fd00:1234::10/128`. Prefer narrow ranges for actual Git
 servers. Loopback, link-local, multicast and unspecified destinations remain
 prohibited even if listed. Standard NAT64, 6to4 and Teredo ranges are also
 rejected, because translated destinations can conceal restricted IPv4 targets.
