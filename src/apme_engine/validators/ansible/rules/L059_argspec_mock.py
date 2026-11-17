@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import cast
 
 from apme_engine.validators.ansible.cache import plugin_cache
+from apme_engine.validators.ansible.module_defaults import (
+    apply_parameter_aliases,
+    has_invalid_choice,
+    is_dynamic,
+    may_omit_argument,
+    resolve_module_defaults,
+)
 
 RULE_ID = "L059"
 
@@ -168,10 +175,8 @@ def _check_tasks_against_specs(
             continue
         arg_spec = cast(dict[str, object], arg_spec_raw)
 
+        module_options = apply_parameter_aliases(module_options, arg_spec)
         user_keys = set(module_options.keys())
-
-        if any("{{" in str(v) for v in module_options.values()):
-            continue
 
         valid_params: set[str] = set(arg_spec.keys())
         valid_params.update(_ANSIBLE_INTERNAL_PARAMS)
@@ -182,7 +187,8 @@ def _check_tasks_against_specs(
                 for alias in pdef.get("aliases") or []:
                     valid_params.add(str(alias))
 
-        unknown = user_keys - valid_params
+        # A dynamic value may become Ansible's ``omit`` sentinel.
+        unknown = {key for key in user_keys - valid_params if not may_omit_argument(module_options[key])}
         if unknown:
             violations.append(
                 {
@@ -208,12 +214,12 @@ def _check_tasks_against_specs(
             if isinstance(pdef, dict) and pname in user_keys and pdef.get("choices"):
                 val = module_options[pname]
                 choices = pdef["choices"]
-                if val not in choices:
+                if has_invalid_choice(val, choices, pdef.get("type"), pdef.get("elements")):
                     violations.append(
                         {
                             "module": module,
                             "message": (
-                                f"Value '{val}' for parameter '{pname}' of {module} "
+                                f"Choice for parameter '{pname}' of {module} "
                                 f"is not one of: {', '.join(str(c) for c in choices)}"
                             ),
                             "task_key": task.get("key", ""),
@@ -225,7 +231,7 @@ def _check_tasks_against_specs(
             for group in me:
                 if not isinstance(group, list):
                     continue
-                present = [p for p in group if p in user_keys]
+                present = [p for p in group if p in user_keys and not may_omit_argument(module_options[p])]
                 if len(present) > 1:
                     violations.append(
                         {
@@ -241,7 +247,8 @@ def _check_tasks_against_specs(
                 if not isinstance(group, list):
                     continue
                 present = [p for p in group if p in user_keys]
-                if present and len(present) != len(group):
+                known_present = [p for p in present if not may_omit_argument(module_options[p])]
+                if known_present and len(present) != len(group):
                     missing = [p for p in group if p not in user_keys]
                     violations.append(
                         {
@@ -261,6 +268,8 @@ def run(
     task_nodes: list[dict[str, object]],
     venv_root: Path,
     env_extra: dict[str, str] | None = None,
+    defaults_resolved: bool = False,
+    unassessed_tasks: set[str] | None = None,
     **_kwargs: object,
 ) -> list[dict[str, object]]:
     """Run mock/patch-based argspec validation in the venv's Python.
@@ -272,20 +281,33 @@ def run(
         task_nodes: List of task node dicts.
         venv_root: Path to ansible venv root.
         env_extra: Optional extra environment variables.
+        defaults_resolved: Whether the caller already prepared inherited defaults.
+        unassessed_tasks: Optional output set of tasks with excluded contexts.
         **_kwargs: Ignored keyword arguments.
 
     Returns:
         List of violation dicts.
     """
+    coverage: list[dict[str, object]] = []
+    unassessed = unassessed_tasks if unassessed_tasks is not None else set()
+    if not defaults_resolved:
+        prepared = resolve_module_defaults(task_nodes, venv_root, env_extra)
+        task_nodes = prepared.tasks
+        coverage = [{**finding, "rule_id": RULE_ID} for finding in prepared.violations]
+        unassessed.update(prepared.unassessed_task_keys)
     task_modules: dict[str, bool] = {}
     tasks_for_check: list[dict[str, object]] = []
     for node in task_nodes:
         if node.get("args_templated") is True:
+            unassessed.add(str(node.get("key") or "*"))
             continue
         module = node.get("module", "")
         module_options = node.get("module_options")
         if not module or not isinstance(module_options, dict):
+            unassessed.add(str(node.get("key") or "*"))
             continue
+        if is_dynamic(module_options):
+            unassessed.add(str(node.get("key") or "*"))
         module_str = str(module)
         collections = node.get("collections_in_play", [])
         if (
@@ -293,6 +315,7 @@ def run(
             and isinstance(collections, list | tuple)
             and any(str(name) not in {"ansible.builtin", "ansible.legacy"} for name in collections)
         ):
+            unassessed.add(str(node.get("key") or "*"))
             continue
         task_modules[module_str] = True
         tasks_for_check.append(
@@ -302,11 +325,12 @@ def run(
                 "key": node.get("key", ""),
                 "file": node.get("file", ""),
                 "line": node.get("line"),
+                "module_defaults_used": node.get("module_defaults_used", False),
             }
         )
 
     if not tasks_for_check:
-        return []
+        return coverage
 
     venv_str = str(venv_root)
     all_modules = list(task_modules.keys())
@@ -319,9 +343,16 @@ def run(
             plugin_cache.put("mockspec", venv_str, name, spec)
         all_specs.update(fresh_specs)
 
+    for task in tasks_for_check:
+        spec = all_specs.get(str(task["module"]))
+        arguments = spec.get("argument_spec", {}) if isinstance(spec, dict) else None
+        if not isinstance(arguments, dict):
+            unassessed.add(str(task.get("key") or "*"))
+
     raw_violations = _check_tasks_against_specs(all_specs, tasks_for_check)
 
     task_by_key = {t["key"]: t for t in tasks_for_check}
+    inherited_keys = {t["key"] for t in tasks_for_check if t.get("module_defaults_used")}
     violations: list[dict[str, object]] = []
     for rv in raw_violations:
         task_key = rv.get("task_key", "")
@@ -337,10 +368,11 @@ def run(
                 "line": line_num,
                 "path": str(task_key),
                 "scope": "task",
+                **({"remediation_class": "manual-review"} if task_key in inherited_keys else {}),
             }
         )
 
-    return violations
+    return coverage + violations
 
 
 def _fetch_specs(

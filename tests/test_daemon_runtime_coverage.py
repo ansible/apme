@@ -2023,6 +2023,32 @@ def test_ansible_run_delegates_to_timing(tmp_path: Path) -> None:
     assert out == [{"rule_id": "L057"}]
 
 
+def test_ansible_run_forwards_syntax_controls(tmp_path: Path) -> None:
+    """Library callers keep supplied snapshot context for L057 dispatch.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.validators.ansible import AnsibleValidator
+    from apme_engine.validators.base import ScanContext
+
+    validator = AnsibleValidator(venv_root=tmp_path)
+    snapshot = {"molecule/default/converge.yml": b"- hosts: all\n  tasks: []\n"}
+    with patch.object(AnsibleValidator, "run_with_timing") as mock_timed:
+        mock_timed.return_value = MagicMock(violations=[])
+        validator.run(
+            ScanContext(hierarchy_payload={}, root_dir=str(tmp_path)),
+            content_graph_data=b"graph",
+            check_syntax=False,
+            file_snapshot=snapshot,
+        )
+    assert mock_timed.call_args.kwargs == {
+        "content_graph_data": b"graph",
+        "check_syntax": False,
+        "file_snapshot": snapshot,
+    }
+
+
 def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Missing root dir and no task nodes returns empty result.
 

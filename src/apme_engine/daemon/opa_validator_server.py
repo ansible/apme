@@ -106,6 +106,8 @@ class OpaValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 validator_name="opa",
                 request_id=req_id,
                 total_ms=total_ms,
+                # OPA reads the hierarchy payload only, so a zero file count is
+                # expected here and does not indicate a missing upload.
                 files_received=len(request.files),
                 violations_found=len(violations),
                 rule_timings=rule_timings,

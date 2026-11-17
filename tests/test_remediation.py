@@ -227,6 +227,24 @@ class TestPartition:
         for v in violations:
             assert "remediation_resolution" not in v
 
+    def test_manual_review_survives_routing_and_classification(self) -> None:
+        """Explicit manual findings remain manual even with a registered transform."""
+        registry = TransformRegistry()
+        registry.register("L058", node=lambda task, violation: False)
+        findings: list[ViolationDict] = [
+            {"rule_id": "L058", "remediation_class": "manual-review"},
+            {"rule_id": "L059", "remediation_class": RemediationClass.MANUAL_REVIEW},
+            {"rule_id": "L058"},
+        ]
+        tier1, tier2, tier3 = partition_violations(findings, registry)
+        assert tier1 == [findings[2]]
+        assert tier2 == []
+        assert tier3 == findings[:2]
+        add_classification_to_violations(findings)
+        counts = count_by_remediation_class(findings)
+        assert counts[RemediationClass.MANUAL_REVIEW.value] == 2
+        assert counts[RemediationClass.AI_CANDIDATE.value] == 1
+
     def test_count_by_remediation_class(self) -> None:
         """Verifies count_by_remediation_class returns correct counts."""
         violations: list[ViolationDict] = [

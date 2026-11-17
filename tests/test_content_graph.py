@@ -262,6 +262,393 @@ class TestGraphBuilderMinimal:
         assert graph.node_count() == 0
 
 
+def test_builder_copies_play_defaults_without_mutating_parsed_options() -> None:
+    """Dedicated play defaults survive graph transport alongside block/task layers."""
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+    from apme_engine.engine.models import ObjectList, Play, Playbook, Task
+
+    play_defaults: YAMLDict = {"ansible.builtin.file": {"owner": "root"}}
+    block_defaults: YAMLDict = {"ansible.builtin.file": {"mode": "0755"}}
+    task_defaults: YAMLDict = {"ansible.builtin.file": {}}
+    task = Task(module="ansible.builtin.file", options={"module_defaults": task_defaults})
+    block = Task(options=cast(YAMLDict, {"module_defaults": block_defaults, "block": [task]}))
+    original_options: YAMLDict = {"hosts": "all"}
+    play = Play(
+        module_defaults=play_defaults,
+        options=original_options,
+        tasks=[block],
+    )
+    playbook = Playbook(key="playbook site.yml", defined_in="site.yml", plays=[play])
+    graph = GraphBuilder({"definitions": {"playbooks": ObjectList(items=[playbook])}, "mappings": None}, {}).build()
+    play_node = graph.get_node("site.yml/plays[0]")
+    assert play_node is not None
+    assert play_node.options == {"hosts": "all", "module_defaults": play_defaults}
+    assert play_node.options is not original_options
+    assert play.options == {"hosts": "all"}
+    task_node = next(graph.nodes(NodeType.TASK))
+    assert content_node_to_opa_dict(task_node, graph)["module_defaults_contexts"] == [
+        [play_defaults, block_defaults, task_defaults]
+    ]
+
+
+def test_parsed_ordered_play_defaults_reach_task_payload() -> None:
+    """Real parsing preserves list-form defaults as one ordered raw scope layer."""
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+    from apme_engine.engine.model_loader import load_playbook
+    from apme_engine.engine.models import ObjectList, Play
+
+    source = (
+        "- hosts: all\n"
+        "  module_defaults:\n"
+        "    - ansible.builtin.file:\n"
+        "        owner: root\n"
+        "        mode: '0755'\n"
+        "    - ansible.builtin.file: {}\n"
+        "  tasks:\n"
+        "    - name: Create example\n"
+        "      ansible.builtin.file:\n"
+        "        path: /tmp/example\n"
+        "        state: touch\n"
+    )
+    playbook = load_playbook(path="site.yml", yaml_str=source, skip_playbook_format_error=False)
+    assert len(playbook.plays) == 1
+    play = playbook.plays[0]
+    assert isinstance(play, Play)
+    expected = [{"ansible.builtin.file": {"owner": "root", "mode": "0755"}}, {"ansible.builtin.file": {}}]
+    assert play.options["module_defaults"] == expected
+    graph = GraphBuilder({"definitions": {"playbooks": ObjectList(items=[playbook])}, "mappings": None}, {}).build()
+    task = next(graph.nodes(NodeType.TASK))
+    payload = content_node_to_opa_dict(task, graph)
+    assert payload["module_defaults_contexts"] == [[expected]]
+    assert payload["module_options"] == {"path": "/tmp/example", "state": "touch"}
+    assert "module_defaults_incomplete" not in payload
+    assert play.options["module_defaults"] == expected
+
+
+@pytest.mark.parametrize("module", ["include_tasks", "include_role"])  # type: ignore[untyped-decorator]
+def test_builder_retains_apply_defaults_for_include_targets(module: str) -> None:
+    """Actual builder edges carry applied layers without creating synthetic nodes.
+
+    Args:
+        module: Include kind whose target is present in parsed definitions.
+    """
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+    from apme_engine.engine.models import ExecutableType, ObjectList, Play, Playbook, Role, Task, TaskFile
+
+    applied: YAMLDict = {"ansible.builtin.file": {"owner": "root"}}
+    target_path = "roles/example/tasks/main.yml" if module == "include_role" else "shared.yml"
+    taskfile = TaskFile(
+        key="taskfile " + target_path,
+        defined_in=target_path,
+        tasks=[Task(module="ansible.builtin.file", module_options={"path": "/tmp/example"})],
+    )
+    caller = Task(
+        module="ansible.builtin." + module,
+        executable="example" if module == "include_role" else target_path,
+        executable_type=ExecutableType.ROLE_TYPE if module == "include_role" else ExecutableType.TASKFILE_TYPE,
+        module_options={"apply": {"module_defaults": applied}},
+    )
+    playbook = Playbook(key="playbook site.yml", defined_in="site.yml", plays=[Play(tasks=[caller])])
+    definitions = (
+        {
+            "playbooks": ObjectList(items=[playbook]),
+            "roles": ObjectList(
+                items=[Role(key="role example", name="example", defined_in="roles/example", taskfiles=[taskfile])]
+            ),
+        }
+        if module == "include_role"
+        else {
+            "playbooks": ObjectList(items=[playbook]),
+            "taskfiles": ObjectList(items=[taskfile]),
+        }
+    )
+    graph = GraphBuilder({"definitions": definitions, "mappings": None}, {}).build()
+    task = next(node for node in graph.nodes(NodeType.TASK) if node.module == "ansible.builtin.file")
+    assert content_node_to_opa_dict(task, graph)["module_defaults_contexts"] == [[applied]]
+
+
+def _parse_role_defaults_graph(tmp_path: Path, sources: dict[str, str], playbook: str = "") -> ContentGraph:
+    """Parse real role files and optional playbook into a complete graph.
+
+    Args:
+        tmp_path: Temporary project root.
+        sources: Role-relative source paths and YAML contents.
+        playbook: Optional calling playbook YAML.
+
+    Returns:
+        Graph built from parsed definitions without executing Ansible.
+    """
+    from apme_engine.engine.model_loader import load_playbook, load_role
+    from apme_engine.engine.models import ObjectList
+
+    for name, source in sources.items():
+        path = tmp_path / "roles" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    roles = [
+        load_role(str(directory), basedir=str(tmp_path), use_ansible_doc=False)
+        for directory in sorted((tmp_path / "roles").iterdir())
+    ]
+    role_objects = ObjectList()
+    for role in roles:
+        role_objects.add(role)
+    definitions = {"roles": role_objects}
+    if playbook:
+        definitions["playbooks"] = ObjectList(items=[load_playbook(path="site.yml", yaml_str=playbook)])
+    return GraphBuilder({"definitions": definitions, "mappings": None}, {}).build()
+
+
+def test_parsed_role_inner_import_has_no_inventory_context(tmp_path: Path) -> None:
+    """An inventoried inner file only inherits from its executable import path.
+
+    Args:
+        tmp_path: Real parsed role project.
+    """
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+
+    graph = _parse_role_defaults_graph(
+        tmp_path,
+        {
+            "demo/tasks/main.yml": (
+                "- import_tasks: inner.yml\n  module_defaults:\n    file:\n      path: /tmp/imported\n"
+            ),
+            "demo/tasks/inner.yml": "- file:\n    state: touch\n",
+        },
+        "- hosts: all\n  roles: [demo]\n",
+    )
+    task = next(node for node in graph.nodes(NodeType.TASK) if node.module == "file")
+    for current in (graph, ContentGraph.from_dict(graph.to_dict(slim=True))):
+        restored = current.get_node(task.node_id)
+        assert restored is not None
+        payload = content_node_to_opa_dict(restored, current)
+        assert payload["module_defaults_contexts"] == [[{"file": {"path": "/tmp/imported"}}]]
+        assert "module_defaults_incomplete" not in payload
+
+
+def test_parsed_static_role_calls_keep_edge_defaults_separate(tmp_path: Path) -> None:
+    """Repeated roles entries retain per-call defaults through graph round trips.
+
+    Args:
+        tmp_path: Real parsed role project.
+    """
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+
+    graph = _parse_role_defaults_graph(
+        tmp_path,
+        {"demo/tasks/main.yml": "- file:\n    state: touch\n"},
+        "- hosts: all\n  roles:\n"
+        "    - role: demo\n      module_defaults:\n        file:\n          path: /tmp/first\n"
+        "    - role: demo\n      module_defaults:\n        file:\n          path: /tmp/second\n",
+    )
+    for current in (graph, ContentGraph.from_dict(graph.to_dict())):
+        task = next(current.nodes(NodeType.TASK))
+        assert content_node_to_opa_dict(task, current)["module_defaults_contexts"] == [
+            [{"file": {"path": "/tmp/first"}}],
+            [{"file": {"path": "/tmp/second"}}],
+        ]
+
+
+@pytest.mark.parametrize("module", ["include_role", "import_role"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("selector", ["inner", "./inner", "nested/../inner"])  # type: ignore[untyped-decorator]
+def test_parsed_role_tasks_from_routes_each_invocation(tmp_path: Path, module: str, selector: str) -> None:
+    """An alternate entry bypasses main without contaminating another role call.
+
+    Args:
+        tmp_path: Real parsed role project.
+        module: Dynamic include or static import selecting an alternate entry.
+        selector: Alternate entry using literal or normalized relative spelling.
+    """
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+
+    graph = _parse_role_defaults_graph(
+        tmp_path,
+        {
+            "demo/tasks/main.yml": (
+                "- import_tasks: inner.yml\n  module_defaults:\n    file:\n      path: /tmp/main-import\n"
+            ),
+            "demo/tasks/inner.yml": "- file:\n    state: touch\n",
+        },
+        "- hosts: all\n  roles: [demo]\n  tasks:\n"
+        f"    - {module}:\n        name: demo\n        tasks_from: {selector}\n"
+        "      module_defaults:\n        file:\n          path: /tmp/alternate\n",
+    )
+    for current in (graph, ContentGraph.from_dict(graph.to_dict(slim=True))):
+        task = next(node for node in current.nodes(NodeType.TASK) if node.module == "file")
+        payload = content_node_to_opa_dict(task, current)
+        contexts = payload["module_defaults_contexts"]
+        assert isinstance(contexts, list) and len(contexts) == 2
+        assert [{"file": {"path": "/tmp/main-import"}}] in contexts
+        assert [{"file": {"path": "/tmp/alternate"}}] in contexts
+        assert "module_defaults_incomplete" not in payload
+
+
+def test_parsed_nested_role_dependency_defaults_are_edge_local(tmp_path: Path) -> None:
+    """Metadata role defaults survive dependencies resolved after all role loading.
+
+    Args:
+        tmp_path: Real role project whose dependencies are loaded after parents.
+    """
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+
+    graph = _parse_role_defaults_graph(
+        tmp_path,
+        {
+            "a_parent/tasks/main.yml": "- debug: {}\n",
+            "a_parent/meta/main.yml": (
+                "dependencies:\n  - role: b_middle\n    module_defaults:\n      file:\n        path: /tmp/middle\n"
+            ),
+            "b_middle/tasks/main.yml": "- debug: {}\n",
+            "b_middle/meta/main.yml": (
+                "dependencies:\n  - role: c_child\n    module_defaults:\n      file:\n        path: /tmp/child\n"
+            ),
+            "c_child/tasks/main.yml": "- file:\n    state: touch\n",
+        },
+        "- hosts: all\n  roles:\n    - role: a_parent\n"
+        "      module_defaults:\n        file:\n          path: /tmp/play\n",
+    )
+    task = next(node for node in graph.nodes(NodeType.TASK) if node.module == "file")
+    assert content_node_to_opa_dict(task, graph)["module_defaults_contexts"] == [
+        [
+            {"file": {"path": "/tmp/play"}},
+            {"file": {"path": "/tmp/middle"}},
+            {"file": {"path": "/tmp/child"}},
+        ]
+    ]
+
+
+@pytest.mark.parametrize("dependency_count", [2, 3])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("reverse_inventory", [False, True])  # type: ignore[untyped-decorator]
+def test_role_dependencies_execute_before_body_without_shifting_inventory(
+    tmp_path: Path, dependency_count: int, reverse_inventory: bool
+) -> None:
+    """Every dependency precedes the body while play and inventory order survive.
+
+    Args:
+        tmp_path: Parsed project containing static roles and role dependencies.
+        dependency_count: Several dependencies expose a position collision with
+            the role's task files and handlers.
+        reverse_inventory: Create files in the opposite order to exercise
+            filesystem-dependent inventory enumeration.
+    """
+    sources = {
+        "parent/tasks/main.yml": "- debug: {msg: parent}\n",
+        "parent/tasks/other.yml": "- debug: {msg: other}\n",
+        "parent/handlers/main.yml": "- name: Main handler\n  debug: {msg: main-handler}\n",
+        "parent/handlers/other.yml": "- name: Other handler\n  debug: {msg: other-handler}\n",
+        "after/tasks/main.yml": "- debug: {msg: after}\n",
+        "parent/meta/main.yml": "dependencies:\n",
+    }
+    # Authored dependency order differs from both load and lexical order.
+    names = ["z_first", "b_second", "a_third"][:dependency_count]
+    for index, name in enumerate(names):
+        sources[f"{name}/tasks/main.yml"] = f"- debug: {{msg: {name}}}\n"
+        declaration = f"  - role: {name}\n" if index % 2 else f"  - {name}\n"
+        sources["parent/meta/main.yml"] += declaration
+    graph = _parse_role_defaults_graph(
+        tmp_path,
+        dict(reversed(list(sources.items()))) if reverse_inventory else sources,
+        "- hosts: all\n"
+        "  pre_tasks:\n    - debug: {msg: before}\n"
+        "  roles: [parent, after]\n"
+        "  tasks:\n    - debug: {msg: task}\n"
+        "  post_tasks:\n    - debug: {msg: post}\n",
+    )
+    original_inventory: list[tuple[object, object, object]] | None = None
+    for current in (graph, ContentGraph.from_dict(graph.to_dict(slim=True))):
+        parent = next(node for node in current.nodes(NodeType.ROLE) if node.role_fqcn == "parent")
+        after = next(node for node in current.nodes(NodeType.ROLE) if node.role_fqcn == "after")
+        dependencies = current.edges_from(parent.node_id, EdgeType.DEPENDENCY)
+        role_ids = {node.role_fqcn: node.node_id for node in current.nodes(NodeType.ROLE)}
+        ordered = sorted(dependencies, key=lambda edge: int(str(edge[1]["position"])))
+        assert [node_id for node_id, _attrs in ordered] == [role_ids[name] for name in names]
+        assert all(int(str(attrs["position"])) < 0 for _node_id, attrs in ordered)
+        inventory = sorted(
+            current.edges_from(parent.node_id, EdgeType.CONTAINS),
+            key=lambda edge: int(str(edge[1]["position"])),
+        )
+        inventory_order = [(attrs["role_section"], attrs["role_file"], attrs["position"]) for _nid, attrs in inventory]
+        assert [position for _section, _file, position in inventory_order] == [0, 1, 2, 3]
+        assert {(section, file) for section, file, _position in inventory_order} == {
+            ("tasks", "main.yml"),
+            ("tasks", "other.yml"),
+            ("handlers", "main.yml"),
+            ("handlers", "other.yml"),
+        }
+        assert [section for section, _file, _position in inventory_order] == ["tasks", "tasks", "handlers", "handlers"]
+        if original_inventory is None:
+            original_inventory = inventory_order
+        else:
+            assert inventory_order == original_inventory
+        play = next(current.nodes(NodeType.PLAY))
+        play_roles = sorted(
+            current.edges_from(play.node_id, EdgeType.DEPENDENCY),
+            key=lambda edge: int(str(edge[1]["position"])),
+        )
+        assert [(nid, attrs["position"]) for nid, attrs in play_roles] == [
+            (parent.node_id, 1),
+            (after.node_id, 2),
+        ]
+        expected_flow = [
+            "site.yml",
+            play.node_id,
+            f"{play.node_id}/tasks[0]",
+            parent.node_id,
+        ]
+        for name in names:
+            role_id = role_ids[name]
+            expected_flow.extend([role_id, f"{role_id}/tasks/main.yml", f"{role_id}/tasks/main.yml/tasks[0]"])
+        for node_id, _attrs in inventory:
+            children = current.edges_from(node_id, EdgeType.CONTAINS)
+            assert len(children) == 1
+            expected_flow.extend([node_id, children[0][0]])
+        expected_flow.extend(
+            [
+                after.node_id,
+                f"{after.node_id}/tasks/main.yml",
+                f"{after.node_id}/tasks/main.yml/tasks[0]",
+                f"{play.node_id}/tasks[3]",
+                f"{play.node_id}/tasks[4]",
+            ]
+        )
+        expected_edges = list(zip(expected_flow, expected_flow[1:], strict=False))
+        execution = current.to_dict()["execution_edges"]
+        assert isinstance(execution, list)
+        assert {(edge["source"], edge["target"]) for edge in execution} == set(expected_edges)
+
+
+def test_standalone_parsed_role_defaults_start_at_main_tasks_and_handlers(tmp_path: Path) -> None:
+    """Standalone scans use main entries while keeping other files as inventory.
+
+    Args:
+        tmp_path: Standalone role files with uncalled alternative entries.
+    """
+    from unittest.mock import patch
+
+    from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
+    from apme_engine.validators.ansible.module_defaults import resolve_module_defaults
+
+    graph = _parse_role_defaults_graph(
+        tmp_path,
+        {
+            "demo/tasks/main.yml": "- file: {path: /tmp/main}\n",
+            "demo/tasks/unused.yml": "- file: {path: /tmp/unused}\n",
+            "demo/handlers/main.yml": "- name: Main handler\n  file: {path: /tmp/handler}\n",
+            "demo/handlers/unused.yml": "- name: Unused handler\n  file: {path: /tmp/unused-handler}\n",
+        },
+    )
+    for task in graph.nodes():
+        if task.node_type in {NodeType.TASK, NodeType.HANDLER}:
+            expected: list[object] = [[]] if task.file_path.endswith("/main.yml") else []
+            payload = content_node_to_opa_dict(task, graph)
+            assert payload["module_defaults_contexts"] == expected
+            assert payload.get("module_defaults_inactive", False) is (not expected)
+            if not expected:
+                with patch("apme_engine.validators.ansible.module_defaults._resolve", side_effect=AssertionError):
+                    result = resolve_module_defaults([cast(dict[str, object], payload)], tmp_path)
+                assert result.tasks == []
+                assert result.violations == []
+
+
 # ---------------------------------------------------------------------------
 # GraphBuilder — loop variant extraction
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ from apme_engine.cli.ansi import (
     table,
     yellow,
 )
+from apme_engine.violation_identity import diagnostic_discriminator
 
 
 def render_logs(logs: Iterable[ProgressUpdate], verbosity: int) -> None:
@@ -74,7 +75,7 @@ def sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
 
 
 def deduplicate_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
-    """Drop duplicate violations that share rule id, file, and line.
+    """Drop source duplicates while preserving distinct argspec diagnostics.
 
     Args:
         violations: Violation dicts to deduplicate.
@@ -82,13 +83,13 @@ def deduplicate_violations(violations: list[ViolationDict]) -> list[ViolationDic
     Returns:
         Deduplicated list.
     """
-    seen: set[tuple[str, str, str | int | list[int] | tuple[int, ...] | bool | None]] = set()
+    seen: set[tuple[str, str, str | int | tuple[int, ...] | bool | None, str]] = set()
     out: list[ViolationDict] = []
     for v in violations:
         line: str | int | list[int] | tuple[int, ...] | bool | None = v.get("line")
         if isinstance(line, list | tuple):
             line = tuple(line)
-        dedup_key = (str(v.get("rule_id", "")), str(v.get("file", "")), line)
+        dedup_key = (str(v.get("rule_id", "")), str(v.get("file", "")), line, diagnostic_discriminator(v))
         if dedup_key not in seen:
             seen.add(dedup_key)
             out.append(v)

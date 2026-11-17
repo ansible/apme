@@ -29,6 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 NATIVE_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
+FILE_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"
+ENGINE_SRC_DIR = REPO_ROOT / "src" / "apme_engine"
 OPA_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "opa" / "bundle"
 ANSIBLE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "ansible" / "rules"
 GITLEAKS_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "gitleaks"
@@ -117,6 +119,23 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
         print(f"WARNING: YAML parse error in {path}: {exc}; falling back to regex", file=sys.stderr)
     pairs = _KV.findall(raw)
     return {k: v.strip("\"'") for k, v in pairs}
+
+
+def _implementation_exists(implementation: str) -> bool:
+    """Resolve a file-rule ``implementation:`` path to real code.
+
+    File-rule docs keep their frontmatter next to the Native rule docs, but the
+    shared static analysis they point at may live outside the validator package
+    (e.g. the neutral ``apme_engine.molecule`` package). Names are therefore
+    resolved against the rule-doc directory first and the package root second.
+
+    Args:
+        implementation: ``implementation`` frontmatter value.
+
+    Returns:
+        True when the referenced file exists relative to either base.
+    """
+    return any((base / implementation).is_file() for base in (FILE_RULES_DIR.parent, ENGINE_SRC_DIR))
 
 
 def _get_severity(rule_id: str) -> str:
@@ -480,6 +499,25 @@ def _collect_native_rules() -> list[Rule]:
             )
         )
 
+    for md in sorted(FILE_RULES_DIR.glob("*.md")):
+        fm = _parse_frontmatter(md)
+        rid = fm.get("rule_id", "")
+        implementation = fm.get("implementation", "")
+        if not rid or not implementation:
+            continue
+        tests = _get_test_cache().get(rid, [])
+        rules.append(
+            Rule(
+                rule_id=rid,
+                validator="Native",
+                description=fm.get("description", ""),
+                has_impl=_implementation_exists(implementation),
+                impl_file=implementation,
+                has_doc=True,
+                has_test=bool(tests),
+                test_files=tests,
+            )
+        )
     return rules
 
 
