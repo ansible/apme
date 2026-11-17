@@ -126,7 +126,7 @@ jobs:
       consumer_tags: ${{ steps.tags.outputs.tags }}
       # Do not export owner_lc or quay_ns — GitHub may skip outputs that match
       # masked secrets (e.g. Quay org name). Downstream jobs compute these locally.
-      quay_enabled: ${{ steps.quay-check.outputs.enabled }}
+      quay_enabled: ${{ steps.quay-enable.outputs.enabled }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -142,10 +142,10 @@ jobs:
       - id: quay-check
         run: |
           if [ -n "$QUAY_USER" ] && [ -n "$QUAY_PASS" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "configured=true" >> "$GITHUB_OUTPUT"
             echo "ns=${QUAY_ORG:-$OWNER_LC}" >> "$GITHUB_OUTPUT"
           else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
         env:
           OWNER_LC: ${{ steps.owner.outputs.lc }}
@@ -161,12 +161,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        if: steps.quay-check.outputs.enabled == 'true'
+      # Invalid/stale Quay robot creds must not fail the whole release — GHCR is canonical.
+      - id: quay-login
+        if: steps.quay-check.outputs.configured == 'true'
+        continue-on-error: true
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.QUAY_REGISTRY }}
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
+
+      - id: quay-enable
+        run: |
+          if [ "${{ steps.quay-check.outputs.configured }}" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${{ steps.quay-login.outcome }}" = "success" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Quay publish skipped::Could not authenticate to Quay; publishing to GHCR only."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # Tag list only — image name is a placeholder; merge script applies tags per image.
       - id: meta
@@ -203,7 +219,7 @@ jobs:
           GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
           QUAY_REGISTRY: ${{ env.QUAY_REGISTRY }}
           OWNER_LC: ${{ steps.owner.outputs.lc }}
-          QUAY_ENABLED: ${{ steps.quay-check.outputs.enabled }}
+          QUAY_ENABLED: ${{ steps.quay-enable.outputs.enabled }}
           QUAY_NS: ${{ steps.quay-check.outputs.ns }}
           # Parallel imagetools create across images (merge was the wall-clock bottleneck).
           MERGE_PARALLELISM: "6"
@@ -265,19 +281,12 @@ jobs:
       - id: owner
         run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
-      # Same as merge-manifests: public ns via vars (not a masked secret).
+      # Namespace only when merge-manifests verified Quay auth (public ns via vars).
       - id: quay-check
-        run: |
-          if [ -n "$QUAY_USER" ] && [ -n "$QUAY_PASS" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "ns=${QUAY_ORG:-$OWNER_LC}" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
+        if: needs.merge-manifests.outputs.quay_enabled == 'true'
+        run: echo "ns=${QUAY_ORG:-$OWNER_LC}" >> "$GITHUB_OUTPUT"
         env:
           OWNER_LC: ${{ steps.owner.outputs.lc }}
-          QUAY_USER: ${{ secrets.QUAY_USERNAME }}
-          QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
           QUAY_ORG: ${{ vars.QUAY_NAMESPACE }}
 
       - name: Sign images and generate container SBOMs
@@ -285,7 +294,7 @@ jobs:
           GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
           QUAY_REGISTRY: ${{ env.QUAY_REGISTRY }}
           OWNER_LC: ${{ steps.owner.outputs.lc }}
-          QUAY_ENABLED: ${{ steps.quay-check.outputs.enabled }}
+          QUAY_ENABLED: ${{ needs.merge-manifests.outputs.quay_enabled }}
           QUAY_NS: ${{ steps.quay-check.outputs.ns }}
           # Cosign TUF metadata races when multiple sign/attest processes run in parallel.
           SUPPLY_CHAIN_PARALLELISM: "1"

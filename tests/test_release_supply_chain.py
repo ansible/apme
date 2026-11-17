@@ -123,6 +123,7 @@ def test_container_workflow_computes_owner_locally_in_supply_chain() -> None:
     merge_outputs = workflow["jobs"]["merge-manifests"]["outputs"]
     assert "owner_lc" not in merge_outputs
     assert "quay_ns" not in merge_outputs
+    assert merge_outputs["quay_enabled"] == "${{ steps.quay-enable.outputs.enabled }}"
 
     supply_steps = workflow["jobs"]["supply-chain"]["steps"]
     step_ids = [step.get("id", "") for step in supply_steps if isinstance(step, dict)]
@@ -135,7 +136,7 @@ def test_container_workflow_computes_owner_locally_in_supply_chain() -> None:
         if isinstance(step, dict) and step.get("name") == "Sign images and generate container SBOMs"
     )
     assert sign_step["env"]["OWNER_LC"] == "${{ steps.owner.outputs.lc }}"
-    assert sign_step["env"]["QUAY_ENABLED"] == "${{ steps.quay-check.outputs.enabled }}"
+    assert sign_step["env"]["QUAY_ENABLED"] == "${{ needs.merge-manifests.outputs.quay_enabled }}"
     assert sign_step["env"]["QUAY_NS"] == "${{ steps.quay-check.outputs.ns }}"
     assert sign_step["env"]["SUPPLY_CHAIN_PARALLELISM"] == "1"
 
@@ -151,15 +152,35 @@ def test_container_workflow_quay_namespace_is_repo_variable() -> None:
     assert content.count("${{ vars.QUAY_NAMESPACE }}") >= 2
 
     workflow = yaml.safe_load(content)
-    for job_name in ("merge-manifests", "supply-chain"):
-        quay_check = next(
-            step
-            for step in workflow["jobs"][job_name]["steps"]
-            if isinstance(step, dict) and step.get("id") == "quay-check"
-        )
-        assert quay_check["env"]["QUAY_ORG"] == "${{ vars.QUAY_NAMESPACE }}"
-        assert quay_check["env"]["QUAY_USER"] == "${{ secrets.QUAY_USERNAME }}"
-        assert quay_check["env"]["QUAY_PASS"] == "${{ secrets.QUAY_PASSWORD }}"
+    merge_quay_check = next(
+        step
+        for step in workflow["jobs"]["merge-manifests"]["steps"]
+        if isinstance(step, dict) and step.get("id") == "quay-check"
+    )
+    assert merge_quay_check["env"]["QUAY_ORG"] == "${{ vars.QUAY_NAMESPACE }}"
+    assert merge_quay_check["env"]["QUAY_USER"] == "${{ secrets.QUAY_USERNAME }}"
+    assert merge_quay_check["env"]["QUAY_PASS"] == "${{ secrets.QUAY_PASSWORD }}"
+
+    supply_quay_check = next(
+        step
+        for step in workflow["jobs"]["supply-chain"]["steps"]
+        if isinstance(step, dict) and step.get("id") == "quay-check"
+    )
+    assert supply_quay_check["if"] == "needs.merge-manifests.outputs.quay_enabled == 'true'"
+    assert supply_quay_check["env"]["QUAY_ORG"] == "${{ vars.QUAY_NAMESPACE }}"
+
+
+def test_merge_manifests_skips_quay_when_login_fails() -> None:
+    """Stale Quay secrets must not fail publish; GHCR merge must still run."""
+    workflow = yaml.safe_load(CONTAINER_WORKFLOW.read_text(encoding="utf-8"))
+    merge_steps = workflow["jobs"]["merge-manifests"]["steps"]
+    step_ids = [step.get("id", "") for step in merge_steps if isinstance(step, dict)]
+    assert "quay-login" in step_ids
+    assert "quay-enable" in step_ids
+
+    quay_login = next(step for step in merge_steps if isinstance(step, dict) and step.get("id") == "quay-login")
+    assert quay_login["continue-on-error"] is True
+    assert quay_login["if"] == "steps.quay-check.outputs.configured == 'true'"
 
 
 def test_container_workflow_runs_supply_chain_after_merge() -> None:
