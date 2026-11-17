@@ -2,16 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Button,
-  Form,
-  FormGroup,
-  FormSelect,
-  FormSelectOption,
-  Modal,
-  ModalBody,
-  ModalFooter,
-  ModalHeader,
-  TextArea,
-} from '@patternfly/react-core';
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  Link,
+  Select,
+  TextAreaField,
+} from '@backstage/ui';
 import { apmeApiUrl, useApmeApi } from '../api/apmeApiAdapter';
 
 export interface FeedbackPayload {
@@ -37,13 +35,26 @@ export interface FeedbackModalProps {
 }
 
 const ISSUE_TYPES = [
-  { value: 'false_positive', label: 'False Positive — rule should not have fired' },
-  { value: 'bad_ai_suggestion', label: 'Bad AI Suggestion — AI proposed wrong fix' },
+  {
+    value: 'false_positive',
+    label: 'False Positive — rule should not have fired',
+  },
+  {
+    value: 'bad_ai_suggestion',
+    label: 'Bad AI Suggestion — AI proposed wrong fix',
+  },
   { value: 'rule_misfire', label: 'Rule Misfire — rule logic is incorrect' },
 ];
 
-export function FeedbackModal({ isOpen, onClose, prefill, gatewayUrl = '' }: FeedbackModalProps) {
-  const [issueType, setIssueType] = useState<string>(prefill?.type ?? 'false_positive');
+export function FeedbackModal({
+  isOpen,
+  onClose,
+  prefill,
+  gatewayUrl = '',
+}: FeedbackModalProps) {
+  const [issueType, setIssueType] = useState<string>(
+    prefill?.type ?? 'false_positive',
+  );
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ url: string } | null>(null);
@@ -65,7 +76,12 @@ export function FeedbackModal({ isOpen, onClose, prefill, gatewayUrl = '' }: Fee
         source: prefill?.source ?? '',
         file: prefill?.file ?? '',
         scan_id: prefill?.scan_id ?? '',
-        context: prefill?.context ?? { violation_message: '', ai_proposal_diff: '', ai_explanation: '', source_snippet: '' },
+        context: prefill?.context ?? {
+          violation_message: '',
+          ai_proposal_diff: '',
+          ai_explanation: '',
+          source_snippet: '',
+        },
         user_comment: comment,
       };
       const { fetch: doFetch } = api;
@@ -79,7 +95,9 @@ export function FeedbackModal({ isOpen, onClose, prefill, gatewayUrl = '' }: Fee
         body: JSON.stringify(payload),
       });
       if (!resp.ok) {
-        const body = await resp.json().catch(() => ({ detail: resp.statusText }));
+        const body = await resp
+          .json()
+          .catch(() => ({ detail: resp.statusText }));
         throw new Error(body.detail || `HTTP ${resp.status}`);
       }
       const data = await resp.json();
@@ -99,62 +117,107 @@ export function FeedbackModal({ isOpen, onClose, prefill, gatewayUrl = '' }: Fee
   }, [onClose]);
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} variant="medium">
-      <ModalHeader title="Report Issue" />
-      <ModalBody>
+    <Dialog
+      isOpen={isOpen}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+      isDismissable
+      width={640}
+    >
+      <DialogHeader>Report Issue</DialogHeader>
+      <DialogBody>
         {result ? (
-          <Alert variant="success" title="Issue created">
-            <a href={result.url} target="_blank" rel="noopener noreferrer">{result.url}</a>
-          </Alert>
+          <Alert
+            status="success"
+            title="Issue created"
+            description={
+              <Link href={result.url} target="_blank" rel="noopener noreferrer">
+                {result.url}
+              </Link>
+            }
+          />
         ) : (
-          <Form>
-            {error && <Alert variant="danger" title="Submission failed">{error}</Alert>}
+          <form
+            id="apme-feedback-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSubmit();
+            }}
+          >
+            {error && (
+              <Alert
+                status="danger"
+                role="alert"
+                title="Submission failed"
+                description={error}
+              />
+            )}
 
-            <FormGroup label="Issue type" isRequired fieldId="feedback-type">
-              <FormSelect id="feedback-type" value={issueType} onChange={(_e, v) => setIssueType(v)}>
-                {ISSUE_TYPES.map((t) => (
-                  <FormSelectOption key={t.value} value={t.value} label={t.label} />
-                ))}
-              </FormSelect>
-            </FormGroup>
+            <Select
+              id="feedback-type"
+              label="Issue type"
+              isRequired
+              selectionMode="single"
+              value={issueType}
+              onChange={(value) => {
+                if (value != null) setIssueType(String(value));
+              }}
+              options={ISSUE_TYPES.map((type) => ({
+                id: type.value,
+                label: type.label,
+              }))}
+            />
 
             {prefill?.rule_id && (
-              <FormGroup label="Rule" fieldId="feedback-rule">
+              <div>
+                <div>Rule</div>
                 <code>{prefill.rule_id}</code>
-                {prefill.source && <span style={{ marginLeft: 8, opacity: 0.7 }}>({prefill.source})</span>}
-              </FormGroup>
+                {prefill.source && (
+                  <span style={{ marginLeft: 8, opacity: 0.7 }}>
+                    ({prefill.source})
+                  </span>
+                )}
+              </div>
             )}
 
             {prefill?.file && (
-              <FormGroup label="File" fieldId="feedback-file">
+              <div>
+                <div>File</div>
                 <code>{prefill.file}</code>
-              </FormGroup>
+              </div>
             )}
 
-            <FormGroup label="Comment" fieldId="feedback-comment">
-              <TextArea
-                id="feedback-comment"
-                value={comment}
-                onChange={(_e, v) => setComment(v)}
-                placeholder="Describe what went wrong..."
-                rows={4}
-              />
-            </FormGroup>
-          </Form>
+            <TextAreaField
+              id="feedback-comment"
+              label="Comment"
+              value={comment}
+              onChange={setComment}
+              placeholder="Describe what went wrong..."
+              rows={4}
+            />
+          </form>
         )}
-      </ModalBody>
-      <ModalFooter>
+      </DialogBody>
+      <DialogFooter>
         {result ? (
-          <Button onClick={handleClose}>Close</Button>
+          <Button onPress={handleClose}>Close</Button>
         ) : (
           <>
-            <Button onClick={handleSubmit} isLoading={submitting} isDisabled={submitting}>
+            <Button
+              type="submit"
+              form="apme-feedback-form"
+              isPending={submitting}
+              isDisabled={submitting}
+            >
               Submit
             </Button>
-            <Button variant="link" onClick={handleClose}>Cancel</Button>
+            <Button variant="tertiary" onPress={handleClose}>
+              Cancel
+            </Button>
           </>
         )}
-      </ModalFooter>
-    </Modal>
+      </DialogFooter>
+    </Dialog>
   );
 }

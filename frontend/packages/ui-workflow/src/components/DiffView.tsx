@@ -45,7 +45,7 @@ function classifyLine(
 const lineStyles: Record<string, React.CSSProperties> = {
   add: { backgroundColor: 'rgba(46, 160, 67, 0.15)', color: 'inherit' },
   remove: { backgroundColor: 'rgba(248, 81, 73, 0.15)', color: 'inherit' },
-  header: { color: 'var(--pf-t--global--color--status--info--default)', fontWeight: 600 },
+  header: { color: 'var(--bui-fg-info)', fontWeight: 600 },
   context: {},
 };
 
@@ -92,7 +92,8 @@ function diffVerifiesEscapeLines(
 ): boolean {
   if (!diff?.trim()) return false;
   const beforeLines = sourceLines(beforeText);
-  const afterLines = afterText === undefined ? undefined : sourceLines(afterText);
+  const afterLines =
+    afterText === undefined ? undefined : sourceLines(afterText);
   const escapeLines = new Set<number>();
   beforeLines.forEach((line, index) => {
     if (decodeEscapedProposalText(line) !== line) escapeLines.add(index + 1);
@@ -113,7 +114,8 @@ function diffVerifiesEscapeLines(
     if (hunk) {
       if (
         sawHunk &&
-        (consumedOldCount !== expectedOldCount || consumedNewCount !== expectedNewCount)
+        (consumedOldCount !== expectedOldCount ||
+          consumedNewCount !== expectedNewCount)
       ) {
         return false;
       }
@@ -219,7 +221,10 @@ export function resolveProposalYamlText(
 }
 
 /** Recover before/after text from a unified diff when the API omits them. */
-export function textsFromUnifiedDiff(diff: string): { before: string; after: string } {
+export function textsFromUnifiedDiff(diff: string): {
+  before: string;
+  after: string;
+} {
   const before: string[] = [];
   const after: string[] = [];
   let seenHunk = false;
@@ -376,13 +381,24 @@ function alignSideBySide(before: string, after: string): AlignedRow[] {
   return merged;
 }
 
-function UnifiedDiff({ diff, className }: { diff: string; className?: string }) {
+function UnifiedDiff({
+  diff,
+  className,
+}: {
+  diff: string;
+  className?: string;
+}) {
   const lines = diff.split('\n');
   let seenHunk = false;
   return (
     <pre
       className={className}
-      style={{ margin: 0, fontSize: '0.85em', lineHeight: 1.5, overflow: 'auto' }}
+      style={{
+        margin: 0,
+        fontSize: '0.85em',
+        lineHeight: 1.5,
+        overflow: 'auto',
+      }}
     >
       {lines.map((line, i) => {
         if (line.startsWith('@@')) {
@@ -392,7 +408,12 @@ function UnifiedDiff({ diff, className }: { diff: string; className?: string }) 
         return (
           <span
             key={i}
-            style={{ display: 'block', ...lineStyles[kind], paddingLeft: 4, paddingRight: 4 }}
+            style={{
+              display: 'block',
+              ...lineStyles[kind],
+              paddingLeft: 4,
+              paddingRight: 4,
+            }}
           >
             {line || '\u00A0'}
           </span>
@@ -439,7 +460,8 @@ function SideBySideDiff({
     >
       {sourceWarning ? (
         <div className="apme-diff-warning" role="status">
-          Current source may contain escaped text that could not be safely reconstructed, so it is shown as received.
+          Current source may contain escaped text that could not be safely
+          reconstructed, so it is shown as received.
         </div>
       ) : null}
       <div className="apme-diff-pane">
@@ -570,7 +592,8 @@ export function DiffView({
         <div>
           {partialSourceWarning && !completeDiff ? (
             <div className="apme-diff-warning" role="status">
-              Only the supplied diff context is shown; unchanged source lines may be omitted.
+              Only the supplied diff context is shown; unchanged source lines
+              may be omitted.
             </div>
           ) : null}
           <UnifiedDiff diff={diff} className={className} />
@@ -596,7 +619,8 @@ export function DiffView({
         <div>
           {partialSourceWarning ? (
             <div className="apme-diff-warning" role="status">
-              Only the supplied diff context is shown; unchanged source lines may be omitted.
+              Only the supplied diff context is shown; unchanged source lines
+              may be omitted.
             </div>
           ) : null}
           <UnifiedDiff diff={diff} className={className} />

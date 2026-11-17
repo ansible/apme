@@ -10,7 +10,6 @@ import {
   apmeHostApiRef,
 } from "../plugins/backstage-apme/src/api/apmeApi";
 import "@backstage/ui/css/styles.css";
-import "@patternfly/react-core/dist/styles/base.css";
 
 const ApmePageContent = lazy(() =>
   import("../plugins/backstage-apme/src/components/ApmePage").then((m) => ({

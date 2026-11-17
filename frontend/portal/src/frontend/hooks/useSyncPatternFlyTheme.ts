@@ -22,14 +22,15 @@ export const PF_V6_THEME_DARK = "pf-v6-theme-dark";
 
 let ownerCount = 0;
 let baselineHadClass = false;
+let baselineThemeMode: string | null = null;
 
 /**
  * While the APME Quality host is mounted, mirror Backstage/MUI dark mode onto
- * ``document.documentElement`` so PatternFly + ``@apme/ui-workflow`` pick up
- * dark design tokens (same class the native APME SPA sets).
+ * ``document.documentElement`` so remaining PatternFly consumers and the
+ * shared BUI workflow pick up their respective dark design tokens.
  *
- * A wrapper-only class is not enough — PF semantic tokens are scoped to
- * ``:root``. On unmount, restores the class state from before the first owner.
+ * Both theme markers live on the root so they also cover body-portaled UI.
+ * On unmount, restore their states from before the first owner.
  */
 export function useSyncPatternFlyTheme(): void {
   const theme = useTheme();
@@ -39,6 +40,7 @@ export function useSyncPatternFlyTheme(): void {
     const root = document.documentElement;
     if (ownerCount === 0) {
       baselineHadClass = root.classList.contains(PF_V6_THEME_DARK);
+      baselineThemeMode = root.getAttribute("data-theme-mode");
     }
     ownerCount += 1;
 
@@ -47,6 +49,7 @@ export function useSyncPatternFlyTheme(): void {
     } else {
       root.classList.remove(PF_V6_THEME_DARK);
     }
+    root.setAttribute("data-theme-mode", isDark ? "dark" : "light");
 
     return () => {
       ownerCount -= 1;
@@ -55,6 +58,11 @@ export function useSyncPatternFlyTheme(): void {
           root.classList.add(PF_V6_THEME_DARK);
         } else {
           root.classList.remove(PF_V6_THEME_DARK);
+        }
+        if (baselineThemeMode === null) {
+          root.removeAttribute("data-theme-mode");
+        } else {
+          root.setAttribute("data-theme-mode", baselineThemeMode);
         }
       }
     };
@@ -65,5 +73,7 @@ export function useSyncPatternFlyTheme(): void {
 export function __resetPatternFlyThemeSyncForTests(): void {
   ownerCount = 0;
   baselineHadClass = false;
+  baselineThemeMode = null;
   document.documentElement.classList.remove(PF_V6_THEME_DARK);
+  document.documentElement.removeAttribute("data-theme-mode");
 }

@@ -6,9 +6,23 @@
  * - Expand all / Collapse all when requested
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Button, Flex, ToggleGroup, ToggleGroupItem } from '@patternfly/react-core';
-import { AngleDownIcon, AngleRightIcon } from '@patternfly/react-icons';
+import {
+  useCallback,
+  useId,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import {
+  Button,
+  ButtonIcon,
+  Flex,
+  ToggleButtonGroup,
+  ToggleButton,
+} from '@backstage/ui';
+import { RiArrowDownSLine, RiArrowRightSLine } from '@remixicon/react';
 
 /** Per-node gate decision. ``ignored`` reserved for rule-based fix noqa. */
 export type NodeDecision = 'accepted' | 'declined' | 'pending' | 'ignored';
@@ -107,6 +121,7 @@ export function NodeReviewList({
   acceptRemainingLabel = 'Accept remaining',
   declineRemainingLabel = 'Decline remaining',
 }: NodeReviewListProps) {
+  const listId = useId();
   const expandables = useMemo(() => expandableIds(items), [items]);
   const itemKey = useMemo(() => items.map((i) => i.id).join('\0'), [items]);
   const [expanded, setExpanded] = useState<Set<string>>(() =>
@@ -198,8 +213,7 @@ export function NodeReviewList({
     items.length > 0;
   const showToolbar =
     (showExpandControls && expandables.length > 0) || showDecisionBulk;
-  const remainingDisabled =
-    pendingCount != null ? pendingCount === 0 : false;
+  const remainingDisabled = pendingCount != null ? pendingCount === 0 : false;
   const remainingLabel =
     pendingCount != null && pendingCount > 0 ? ` (${pendingCount})` : '';
 
@@ -212,30 +226,27 @@ export function NodeReviewList({
     <div>
       {showToolbar && (
         <Flex
-          justifyContent={{ default: 'justifyContentSpaceBetween' }}
-          alignItems={{ default: 'alignItemsCenter' }}
+          justify="between"
+          align="center"
           style={{ marginBottom: 8 }}
-          gap={{ default: 'gapMd' }}
+          gap="4"
         >
-          <Flex
-            gap={{ default: 'gapSm' }}
-            alignItems={{ default: 'alignItemsCenter' }}
-          >
+          <Flex gap="2" align="center">
             {showExpandControls && expandables.length > 0 && (
               <>
                 <Button
-                  variant="link"
-                  isInline
-                  onClick={expandAll}
+                  variant="tertiary"
+                  size="small"
+                  onPress={expandAll}
                   isDisabled={allExpanded}
                 >
                   Expand all
                 </Button>
                 <span style={{ opacity: 0.35 }}>|</span>
                 <Button
-                  variant="link"
-                  isInline
-                  onClick={collapseAll}
+                  variant="tertiary"
+                  size="small"
+                  onPress={collapseAll}
                   isDisabled={expanded.size === 0}
                 >
                   Collapse all
@@ -244,18 +255,16 @@ export function NodeReviewList({
             )}
           </Flex>
           {showDecisionBulk && (
-            <Flex
-              gap={{ default: 'gapSm' }}
-              alignItems={{ default: 'alignItemsCenter' }}
-            >
+            <Flex gap="2" align="center">
               {onAcceptRemaining && (
                 <Button
-                  variant="link"
-                  isInline
+                  variant="tertiary"
+                  size="small"
                   isDisabled={remainingDisabled}
-                  onClick={onAcceptRemaining}
+                  onPress={onAcceptRemaining}
                 >
-                  {acceptRemainingLabel}{remainingLabel}
+                  {acceptRemainingLabel}
+                  {remainingLabel}
                 </Button>
               )}
               {onAcceptRemaining && onDeclineRemaining && (
@@ -263,12 +272,13 @@ export function NodeReviewList({
               )}
               {onDeclineRemaining && (
                 <Button
-                  variant="link"
-                  isInline
+                  variant="tertiary"
+                  size="small"
                   isDisabled={remainingDisabled}
-                  onClick={onDeclineRemaining}
+                  onPress={onDeclineRemaining}
                 >
-                  {declineRemainingLabel}{remainingLabel}
+                  {declineRemainingLabel}
+                  {remainingLabel}
                 </Button>
               )}
               {onClearDecisions &&
@@ -277,10 +287,10 @@ export function NodeReviewList({
                 )}
               {onClearDecisions && (
                 <Button
-                  variant="link"
-                  isInline
+                  variant="tertiary"
+                  size="small"
                   isDisabled={decidedCount === 0}
-                  onClick={handleClear}
+                  onPress={handleClear}
                 >
                   Clear
                 </Button>
@@ -307,32 +317,32 @@ export function NodeReviewList({
                 .filter(Boolean)
                 .join(' ')}
             >
+              {/* eslint-disable-next-line a11y/click-events-have-key-events -- row click is a pointer shortcut; the separate expand button supplies keyboard access */}
               <div
                 className="apme-proposal-header"
-                role={canExpand ? 'button' : undefined}
-                tabIndex={canExpand ? 0 : undefined}
-                aria-expanded={canExpand ? isExpanded : undefined}
-                onClick={() => {
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest('button, a, input'))
+                    return;
                   if (canExpand) toggleExpand(item.id);
                 }}
-                onKeyDown={(e) => {
-                  if (!canExpand) return;
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    toggleExpand(item.id);
-                  }
-                }}
               >
-                <span
-                  className="apme-proposal-chevron"
-                  aria-hidden={!canExpand}
-                >
+                <span className="apme-proposal-chevron">
                   {canExpand ? (
-                    isExpanded ? (
-                      <AngleDownIcon />
-                    ) : (
-                      <AngleRightIcon />
-                    )
+                    <ButtonIcon
+                      variant="tertiary"
+                      size="small"
+                      aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${item.title}`}
+                      aria-expanded={isExpanded}
+                      aria-controls={`${listId}-${encodeURIComponent(item.id)}`}
+                      icon={
+                        isExpanded ? (
+                          <RiArrowDownSLine />
+                        ) : (
+                          <RiArrowRightSLine />
+                        )
+                      }
+                      onPress={() => toggleExpand(item.id)}
+                    />
                   ) : (
                     <span className="apme-proposal-chevron-spacer" />
                   )}
@@ -367,39 +377,49 @@ export function NodeReviewList({
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-                    <ToggleGroup
-                      isCompact
+                    <ToggleButtonGroup
+                      selectionMode="single"
+                      disallowEmptySelection
+                      selectedKeys={decision === 'pending' ? [] : [decision]}
+                      onSelectionChange={(keys) => {
+                        const next = [...keys][0];
+                        if (next)
+                          onDecisionChange?.(item.id, next as NodeDecision);
+                      }}
                       className="apme-decision-toggle"
                       aria-label={`Decision for ${item.title}`}
                     >
-                      <ToggleGroupItem
-                        text={acceptLabel}
+                      <ToggleButton
+                        id="accepted"
+                        size="small"
                         className="apme-decision-accept"
-                        isSelected={decision === 'accepted'}
-                        onChange={() => onDecisionChange?.(item.id, 'accepted')}
-                      />
-                      <ToggleGroupItem
-                        text={declineLabel}
+                      >
+                        {acceptLabel}
+                      </ToggleButton>
+                      <ToggleButton
+                        id="declined"
+                        size="small"
                         className="apme-decision-decline"
-                        isSelected={decision === 'declined'}
-                        onChange={() => onDecisionChange?.(item.id, 'declined')}
-                      />
+                      >
+                        {declineLabel}
+                      </ToggleButton>
                       {allowIgnore && (
-                        <ToggleGroupItem
-                          text="Ignore"
-                          isSelected={decision === 'ignored'}
-                          onChange={() =>
-                            onDecisionChange?.(item.id, 'ignored')
-                          }
-                        />
+                        <ToggleButton id="ignored" size="small">
+                          Ignore
+                        </ToggleButton>
                       )}
-                    </ToggleGroup>
+                    </ToggleButtonGroup>
                   </div>
                 )}
               </div>
 
               {isExpanded && item.detail != null && (
-                <div className="apme-proposal-detail">{item.detail}</div>
+                <div
+                  id={`${listId}-${encodeURIComponent(item.id)}`}
+                  className="apme-proposal-detail"
+                >
+                  {item.detail}
+                </div>
               )}
             </div>
           );

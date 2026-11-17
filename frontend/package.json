@@ -17,6 +17,7 @@
   "dependencies": {
     "@ansible/ansible-ui-framework": "file:./vendor/ansible-ui-framework",
     "@apme/ui-workflow": "workspace:*",
+    "@backstage/ui": "0.17.1",
     "@patternfly/patternfly": "6.6.1",
     "@patternfly/react-charts": "8.6.1",
     "@patternfly/react-core": "6.6.2",
@@ -31,6 +32,7 @@
     "react-dom": "^19.3.0",
     "react-i18next": "^17.0.11",
     "react-router": "^8.3.1",
+    "react-router-dom": "^6.30.6",
     "react-syntax-highlighter": "^16.1.2",
     "styled-components": "^6.6.0",
     "swr": "^2.5.1",

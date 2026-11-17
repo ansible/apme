@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Button } from '@patternfly/react-core';
+import { Button } from '@backstage/ui';
 import APME_LOGO_URL from './apme.svg';
 
 interface SvgExportButtonsProps {
@@ -48,7 +48,9 @@ function getLogoDataUri(): Promise<string | undefined> {
         if (!response.ok) throw new Error('Could not load the APME logo.');
         return response.text();
       })
-      .then((svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+      .then(
+        (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+      );
   }
   return logoDataUriPromise.catch(() => {
     logoDataUriPromise = undefined;
@@ -60,7 +62,8 @@ function findBackgroundColor(svg: SVGSVGElement, fallback = '#ffffff'): string {
   let element: Element | null = svg.parentElement;
   while (element) {
     const color = window.getComputedStyle(element).backgroundColor;
-    if (color && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') return color;
+    if (color && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)')
+      return color;
     element = element.parentElement;
   }
   return fallback;
@@ -69,8 +72,16 @@ function findBackgroundColor(svg: SVGSVGElement, fallback = '#ffffff'): string {
 function parseViewBox(svg: SVGSVGElement): [number, number, number, number] {
   const viewBox = svg.getAttribute('viewBox');
   if (viewBox) {
-    const values = viewBox.trim().split(/[\s,]+/).map(Number);
-    if (values.length === 4 && values.every(Number.isFinite) && values[2]! > 0 && values[3]! > 0) {
+    const values = viewBox
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number);
+    if (
+      values.length === 4 &&
+      values.every(Number.isFinite) &&
+      values[2]! > 0 &&
+      values[3]! > 0
+    ) {
       return [values[0]!, values[1]!, values[2]!, values[3]!];
     }
   }
@@ -88,17 +99,23 @@ async function createExportSvg(
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
 
-  const originalElements = [source, ...Array.from(source.querySelectorAll('*'))];
+  const originalElements = [
+    source,
+    ...Array.from(source.querySelectorAll('*')),
+  ];
   const clonedElements = [clone, ...Array.from(clone.querySelectorAll('*'))];
   originalElements.slice(1).forEach((element, index) => {
     const copiedElement = clonedElements[index + 1];
-    if (!(element instanceof SVGElement) || !(copiedElement instanceof SVGElement)) return;
+    if (
+      !(element instanceof SVGElement) ||
+      !(copiedElement instanceof SVGElement)
+    )
+      return;
     const computed = window.getComputedStyle(element);
-    const inlineStyles = STYLE_PROPERTIES
-      .map((property) => {
-        const value = computed.getPropertyValue(property);
-        return value ? `${property}:${value}` : '';
-      })
+    const inlineStyles = STYLE_PROPERTIES.map((property) => {
+      const value = computed.getPropertyValue(property);
+      return value ? `${property}:${value}` : '';
+    })
       .filter(Boolean)
       .join(';');
     if (inlineStyles) copiedElement.setAttribute('style', inlineStyles);
@@ -109,12 +126,18 @@ async function createExportSvg(
   const [minX, minY, width, height] = parseViewBox(clone);
   const exportWidth = Math.max(width, 180);
   const headerHeight = 64;
-  clone.setAttribute('viewBox', `${minX} ${minY - headerHeight} ${exportWidth} ${height + headerHeight}`);
+  clone.setAttribute(
+    'viewBox',
+    `${minX} ${minY - headerHeight} ${exportWidth} ${height + headerHeight}`,
+  );
   clone.setAttribute('width', String(exportWidth));
   clone.setAttribute('height', String(height + headerHeight));
   clone.removeAttribute('style');
 
-  const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  const background = document.createElementNS(
+    'http://www.w3.org/2000/svg',
+    'rect',
+  );
   background.setAttribute('x', String(minX));
   background.setAttribute('y', String(minY - headerHeight));
   background.setAttribute('width', String(exportWidth));
@@ -140,7 +163,10 @@ async function createExportSvg(
   badge.appendChild(panel);
 
   if (logoDataUri) {
-    const logo = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    const logo = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'image',
+    );
     logo.setAttribute('x', String(badgeX + 7));
     logo.setAttribute('y', String(badgeY + 7));
     logo.setAttribute('width', '40');
@@ -150,7 +176,10 @@ async function createExportSvg(
     badge.appendChild(logo);
   }
 
-  const wordmark = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  const wordmark = document.createElementNS(
+    'http://www.w3.org/2000/svg',
+    'text',
+  );
   wordmark.setAttribute('x', String(badgeX + 56));
   wordmark.setAttribute('y', String(badgeY + 30));
   wordmark.setAttribute('fill', '#151515');
@@ -163,7 +192,11 @@ async function createExportSvg(
   clone.insertBefore(badge, clone.firstChild?.nextSibling ?? null);
 
   const serialized = new XMLSerializer().serializeToString(clone);
-  return { source: serialized, width: exportWidth, height: height + headerHeight };
+  return {
+    source: serialized,
+    width: exportWidth,
+    height: height + headerHeight,
+  };
 }
 
 function saveBlob(blob: Blob, filename: string): void {
@@ -186,7 +219,10 @@ async function exportSvg(
 ): Promise<void> {
   const prepared = await createExportSvg(source, backgroundColor, prepareSvg);
   if (format === 'svg') {
-    saveBlob(new Blob([prepared.source], { type: 'image/svg+xml;charset=utf-8' }), filename);
+    saveBlob(
+      new Blob([prepared.source], { type: 'image/svg+xml;charset=utf-8' }),
+      filename,
+    );
     return;
   }
 
@@ -198,7 +234,8 @@ async function exportSvg(
   try {
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve();
-      image.onerror = () => reject(new Error('The graph image could not be rendered.'));
+      image.onerror = () =>
+        reject(new Error('The graph image could not be rendered.'));
       image.src = imageUrl;
     });
 
@@ -211,7 +248,8 @@ async function exportSvg(
     canvas.width = Math.max(1, Math.round(prepared.width * scale));
     canvas.height = Math.max(1, Math.round(prepared.height * scale));
     const context = canvas.getContext('2d');
-    if (!context) throw new Error('PNG export is not supported by this browser.');
+    if (!context)
+      throw new Error('PNG export is not supported by this browser.');
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
     const png = await new Promise<Blob>((resolve, reject) => {
@@ -230,7 +268,13 @@ async function exportSvg(
 }
 
 function safeFilename(filename: string): string {
-  return filename.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'apme-graph';
+  return (
+    filename
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'apme-graph'
+  );
 }
 
 /** Adds APME-branded PNG and SVG download controls for an SVG visualization. */
@@ -269,13 +313,29 @@ export function SvgExportButtons({
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <Button type="button" variant="secondary" size="sm" isDisabled={isExporting} onClick={() => void download('png')}>
+      <Button
+        type="button"
+        variant="secondary"
+        size="small"
+        isDisabled={isExporting}
+        onPress={() => void download('png')}
+      >
         Download PNG
       </Button>
-      <Button type="button" variant="secondary" size="sm" isDisabled={isExporting} onClick={() => void download('svg')}>
+      <Button
+        type="button"
+        variant="secondary"
+        size="small"
+        isDisabled={isExporting}
+        onPress={() => void download('svg')}
+      >
         Download SVG
       </Button>
-      {error && <span role="status" style={{ color: '#c9190b', fontSize: 12 }}>{error}</span>}
+      {error && (
+        <span role="status" style={{ color: '#c9190b', fontSize: 12 }}>
+          {error}
+        </span>
+      )}
     </span>
   );
 }

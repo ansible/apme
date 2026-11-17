@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ProposalReviewPanel } from '@apme/ui-workflow';
-import type { OperationProposal } from '@apme/ui-workflow';
+import { ProposalReviewPanel } from "@apme/ui-workflow";
+import type { OperationProposal } from "@apme/ui-workflow";
 
 const nodeProposals: OperationProposal[] = [
   {
@@ -35,10 +35,14 @@ describe("ProposalReviewPanel", () => {
       <ProposalReviewPanel proposals={nodeProposals} onApprove={vi.fn()} />,
     );
     expect(screen.getByText("playbook.yml::tasks[0]")).toBeInTheDocument();
-    expect(screen.getByText("L026")).toBeInTheDocument();
-    expect(screen.getByText("M001")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Expand all/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Collapse all/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "L026" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "M001" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Expand all/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Collapse all/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Next$/i })).toBeDisabled();
   });
 
@@ -49,8 +53,8 @@ describe("ProposalReviewPanel", () => {
       <ProposalReviewPanel proposals={nodeProposals} onApprove={onApprove} />,
     );
 
-    const acceptButtons = screen.getAllByRole("button", { name: /^Accept$/i });
-    const declineButtons = screen.getAllByRole("button", { name: /^Decline$/i });
+    const acceptButtons = screen.getAllByRole("radio", { name: /^Accept$/i });
+    const declineButtons = screen.getAllByRole("radio", { name: /^Decline$/i });
     await user.click(acceptButtons[0]!);
     await user.click(declineButtons[1]!);
     await user.click(screen.getByRole("button", { name: /^Next$/i }));
@@ -63,7 +67,9 @@ describe("ProposalReviewPanel", () => {
     render(
       <ProposalReviewPanel proposals={nodeProposals} onApprove={onApprove} />,
     );
-    await user.click(screen.getByRole("button", { name: /Decline remaining/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Decline remaining/i }),
+    );
     expect(screen.getByText("playbook.yml::tasks[0]")).toBeInTheDocument();
     expect(screen.getByText("other.yml::tasks[1]")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^Next$/i }));
@@ -89,7 +95,7 @@ describe("ProposalReviewPanel", () => {
     render(
       <ProposalReviewPanel proposals={nodeProposals} onApprove={onApprove} />,
     );
-    const declineButtons = screen.getAllByRole("button", { name: /^Decline$/i });
+    const declineButtons = screen.getAllByRole("radio", { name: /^Decline$/i });
     await user.click(declineButtons[0]!);
     await user.click(screen.getByRole("button", { name: /Accept remaining/i }));
     await user.click(screen.getByRole("button", { name: /^Next$/i }));
@@ -145,5 +151,59 @@ describe("ProposalReviewPanel", () => {
     await user.click(screen.getByRole("button", { name: /^Clear$/i }));
     expect(screen.getByRole("button", { name: /^Next$/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^Clear$/i })).toBeDisabled();
+  });
+  it("syncs per-location draft decisions and retains exclusive selection", async () => {
+    const user = userEvent.setup();
+    const onDraftUpdate = vi.fn();
+    render(
+      <ProposalReviewPanel
+        proposals={nodeProposals}
+        onApprove={vi.fn()}
+        onDraftUpdate={onDraftUpdate}
+      />,
+    );
+    const accepts = screen.getAllByRole("radio", { name: /^Accept$/i });
+    const declines = screen.getAllByRole("radio", { name: /^Decline$/i });
+    await user.click(accepts[0]!);
+    expect(accepts[0]).toBeChecked();
+    expect(declines[0]).not.toBeChecked();
+    await waitFor(() =>
+      expect(onDraftUpdate).toHaveBeenLastCalledWith([
+        { proposal_id: "t1-0000", status: "approved" },
+        { proposal_id: "t1-0001", status: "pending" },
+      ]),
+    );
+    act(() => declines[0]!.focus());
+    await user.keyboard(" ");
+    expect(declines[0]).toBeChecked();
+    expect(accepts[0]).not.toBeChecked();
+    await waitFor(() =>
+      expect(onDraftUpdate).toHaveBeenLastCalledWith([
+        { proposal_id: "t1-0000", status: "declined" },
+        { proposal_id: "t1-0001", status: "pending" },
+      ]),
+    );
+    expect(screen.getByRole("button", { name: /^Next$/i })).toBeDisabled();
+  });
+  it("exposes an independent keyboard expander beside the decision group", async () => {
+    const user = userEvent.setup();
+    render(
+      <ProposalReviewPanel proposals={nodeProposals} onApprove={vi.fn()} />,
+    );
+    const expander = screen.getByRole("button", {
+      name: "Collapse playbook.yml::tasks[0]",
+    });
+    expect(expander).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen
+        .getAllByRole("radio", { name: "Accept" })[0]!
+        .closest('[role="button"]'),
+    ).toBeNull();
+    act(() => expander.focus());
+    await user.keyboard(" ");
+    expect(expander).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getAllByRole("radio", { name: "Accept" })[0],
+    ).not.toBeChecked();
   });
 });

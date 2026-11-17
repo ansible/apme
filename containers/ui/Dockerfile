@@ -17,7 +17,10 @@ COPY frontend/package.json frontend/package-lock.json* ./
 COPY frontend/packages/ui-workflow/package.json ./packages/ui-workflow/
 COPY frontend/packages/apme-client/package.json ./packages/apme-client/
 COPY frontend/vendor ./vendor
-RUN npm ci
+# The shared workflow package is consumed by both the React 18 Backstage portal
+# and the React 19 standalone SPA, so npm's strict workspace peer resolver cannot
+# satisfy both host contracts in this combined image build.
+RUN npm ci --legacy-peer-deps
 COPY frontend/ .
 RUN npm run build
 

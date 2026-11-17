@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AiEscalationPanel } from '@apme/ui-workflow';
-import type { AssessFinding } from '@apme/ui-workflow';
+import { AiEscalationPanel } from "@apme/ui-workflow";
+import type { AssessFinding } from "@apme/ui-workflow";
 
 const candidates: AssessFinding[] = [
   {
@@ -35,7 +35,7 @@ describe("AiEscalationPanel", () => {
 
     expect(screen.getByRole("button", { name: /^Next$/i })).toBeDisabled();
 
-    const includeButtons = screen.getAllByRole("button", { name: /^Include$/i });
+    const includeButtons = screen.getAllByRole("radio", { name: /^Include$/i });
     await user.click(includeButtons[0]!);
     expect(screen.getByRole("button", { name: /^Next$/i })).toBeDisabled();
 

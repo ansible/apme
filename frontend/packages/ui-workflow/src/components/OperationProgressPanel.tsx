@@ -1,15 +1,7 @@
 import { useEffect, useRef } from 'react';
-import {
-  Button,
-  Card,
-  CardBody,
-  Icon,
-  Label,
-  Progress,
-  Split,
-  SplitItem,
-} from '@patternfly/react-core';
-import { ExclamationTriangleIcon, ExclamationCircleIcon } from '@patternfly/react-icons';
+import { Button, Card, CardBody, Badge, Flex } from '@backstage/ui';
+import { RiAlertLine, RiErrorWarningLine } from '@remixicon/react';
+import { WorkflowProgress } from './WorkflowProgress';
 import type { OperationProgress, OperationStatus } from '../types/operation';
 
 export interface OperationProgressPanelProps {
@@ -27,10 +19,10 @@ const STATUS_LABELS: Partial<Record<OperationStatus, string>> = {
 };
 
 const PHASE_WEIGHTS: Record<string, { start: number; end: number }> = {
-  cloning:    { start: 0,  end: 5 },
-  format:     { start: 5,  end: 15 },
-  tier1:      { start: 15, end: 90 },
-  ai:         { start: 15, end: 90 },
+  cloning: { start: 0, end: 5 },
+  format: { start: 5, end: 15 },
+  tier1: { start: 15, end: 90 },
+  ai: { start: 15, end: 90 },
 };
 
 function entryProgress(entry: OperationProgress): number | null {
@@ -45,7 +37,9 @@ function entryProgress(entry: OperationProgress): number | null {
   if (passMatch) {
     const current = parseInt(passMatch[1]!, 10);
     const total = parseInt(passMatch[2]!, 10);
-    return weight.start + (weight.end - weight.start) * Math.min(current / total, 1);
+    return (
+      weight.start + (weight.end - weight.start) * Math.min(current / total, 1)
+    );
   }
 
   if (/[Cc]onverged|[Ff]ully converged|Final scan/.test(entry.message)) {
@@ -96,32 +90,60 @@ export function OperationProgressPanel({
   return (
     <Card style={{ marginBottom: 16 }}>
       <CardBody>
-        <Split hasGutter>
-          <SplitItem isFilled><h2>{label}</h2></SplitItem>
-          <SplitItem><Button variant="secondary" onClick={onCancel}>Cancel</Button></SplitItem>
-        </Split>
-        <Progress
-          value={pct}
-          measureLocation={pct != null ? 'outside' : 'none'}
-          style={{ marginTop: 16 }}
-        />
-        <div className="apme-timeline" style={{ marginTop: 16, maxHeight: 200, overflowY: 'auto' }}>
+        <Flex gap="3" align="center">
+          <div style={{ flex: 1 }}>
+            <h2>{label}</h2>
+          </div>
+          <div>
+            <Button variant="secondary" onPress={onCancel}>
+              Cancel
+            </Button>
+          </div>
+        </Flex>
+        <WorkflowProgress value={pct} label={label} style={{ marginTop: 16 }} />
+        <div
+          className="apme-timeline"
+          style={{ marginTop: 16, maxHeight: 200, overflowY: 'auto' }}
+        >
           {progress.map((entry, i) => {
             const level = entry.level ?? 2;
-            const labelColor = level >= 4 ? 'red' : level >= 3 ? 'orange' : undefined;
+            const labelColor =
+              level >= 4
+                ? 'var(--bui-fg-danger)'
+                : level >= 3
+                  ? 'var(--bui-fg-warning)'
+                  : undefined;
             const msgStyle: React.CSSProperties =
-              level >= 4 ? { color: 'var(--pf-t--global--color--status--danger--default)' }
-              : level >= 3 ? { color: 'var(--pf-t--global--color--status--warning--default)' }
-              : level <= 1 ? { opacity: 0.6 } : {};
+              level >= 4
+                ? { color: 'var(--bui-fg-danger)' }
+                : level >= 3
+                  ? { color: 'var(--bui-fg-warning)' }
+                  : level <= 1
+                    ? { opacity: 0.6 }
+                    : {};
             const icon =
-              level >= 4 ? <Icon status="danger"><ExclamationCircleIcon /></Icon>
-              : level >= 3 ? <Icon status="warning"><ExclamationTriangleIcon /></Icon>
-              : null;
+              level >= 4 ? (
+                <RiErrorWarningLine
+                  size={16}
+                  aria-label="Error"
+                  style={{ color: 'var(--bui-fg-danger)' }}
+                />
+              ) : level >= 3 ? (
+                <RiAlertLine
+                  size={16}
+                  aria-label="Warning"
+                  style={{ color: 'var(--bui-fg-warning)' }}
+                />
+              ) : null;
             return (
               <div key={i} className="apme-timeline-entry">
-                <Label isCompact color={labelColor}>{entry.phase}</Label>
+                <Badge size="small" style={{ color: labelColor }}>
+                  {entry.phase}
+                </Badge>
                 {icon && <span style={{ marginLeft: 4 }}>{icon}</span>}
-                <span style={{ marginLeft: 8, ...msgStyle }}>{entry.message}</span>
+                <span style={{ marginLeft: 8, ...msgStyle }}>
+                  {entry.message}
+                </span>
               </div>
             );
           })}

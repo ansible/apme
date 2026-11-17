@@ -19,14 +19,6 @@ export default defineConfig({
         replacement: at("../../node_modules/@testing-library/react"),
       },
       {
-        find: "@patternfly/react-core",
-        replacement: at("../../node_modules/@patternfly/react-core"),
-      },
-      {
-        find: "@patternfly/react-icons",
-        replacement: at("../../node_modules/@patternfly/react-icons"),
-      },
-      {
         find: "typescript",
         replacement: at("../../node_modules/typescript/lib/typescript.js"),
       },
@@ -70,6 +62,7 @@ export default defineConfig({
     include: [
       "frontend/backstage/tests/**/*.test.{ts,tsx}",
       "frontend/packages/ui-workflow/src/**/*.test.{ts,tsx}",
+      "frontend/src/test/{AiEscalationPanel,AssessFindingsPanel,ProposalReviewPanel,DiffView,apmeApiProvider,nodeType,prDiffUrl,proposalTier,ruleFilter,sessionPersistence,severity,sseFetch,useProjectOperationActions,useProjectWorkflow,workflowSteps}.test.{ts,tsx}",
     ],
     setupFiles: [at("./tests/setup.ts")],
   },

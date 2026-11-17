@@ -39,7 +39,7 @@ describe("useSyncPatternFlyTheme", () => {
     __resetPatternFlyThemeSyncForTests();
   });
 
-  it("adds pf-v6-theme-dark on documentElement when MUI theme is dark", () => {
+  it("sets the root PatternFly and BUI markers for a dark theme", () => {
     const { unmount } = renderHook(() => useSyncPatternFlyTheme(), {
       wrapper: wrapperFor("dark"),
     });
@@ -47,11 +47,15 @@ describe("useSyncPatternFlyTheme", () => {
     expect(document.documentElement.classList.contains(PF_V6_THEME_DARK)).toBe(
       true,
     );
+    expect(document.documentElement.getAttribute("data-theme-mode")).toBe(
+      "dark",
+    );
 
     unmount();
     expect(document.documentElement.classList.contains(PF_V6_THEME_DARK)).toBe(
       false,
     );
+    expect(document.documentElement.getAttribute("data-theme-mode")).toBeNull();
   });
 
   it("does not add the class when MUI theme is light", () => {
@@ -61,6 +65,9 @@ describe("useSyncPatternFlyTheme", () => {
 
     expect(document.documentElement.classList.contains(PF_V6_THEME_DARK)).toBe(
       false,
+    );
+    expect(document.documentElement.getAttribute("data-theme-mode")).toBe(
+      "light",
     );
     unmount();
   });
@@ -82,5 +89,22 @@ describe("useSyncPatternFlyTheme", () => {
     );
 
     document.documentElement.classList.remove(PF_V6_THEME_DARK);
+  });
+
+  it("restores a pre-existing BUI theme mode after unmount", () => {
+    document.documentElement.setAttribute("data-theme-mode", "auto");
+
+    const { unmount } = renderHook(() => useSyncPatternFlyTheme(), {
+      wrapper: wrapperFor("dark"),
+    });
+
+    expect(document.documentElement.getAttribute("data-theme-mode")).toBe(
+      "dark",
+    );
+
+    unmount();
+    expect(document.documentElement.getAttribute("data-theme-mode")).toBe(
+      "auto",
+    );
   });
 });

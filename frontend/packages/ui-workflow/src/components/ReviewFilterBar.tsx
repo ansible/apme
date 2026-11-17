@@ -2,7 +2,7 @@
  * Shared filter pill row for workflow review steps (Assessment, Gate 1/2).
  */
 
-import { Flex, Label } from '@patternfly/react-core';
+import { Flex, ToggleButton } from '@backstage/ui';
 
 export type ReviewFilterLabelColor =
   | 'red'
@@ -51,17 +51,9 @@ export function ReviewFilterBar({ groups }: ReviewFilterBarProps) {
   if (visible.length === 0) return null;
 
   return (
-    <Flex
-      gap={{ default: 'gapMd' }}
-      alignItems={{ default: 'alignItemsCenter' }}
-      style={{ marginBottom: 12, flexWrap: 'wrap' }}
-    >
+    <Flex gap="4" align="center" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
       {visible.map((group) => (
-        <Flex
-          key={group.ariaLabel}
-          gap={{ default: 'gapSm' }}
-          alignItems={{ default: 'alignItemsCenter' }}
-        >
+        <Flex key={group.ariaLabel} gap="2" align="center">
           <span style={{ fontSize: 12, opacity: 0.7 }}>{group.label}</span>
           <div
             className="apme-filter-pills"
@@ -69,24 +61,26 @@ export function ReviewFilterBar({ groups }: ReviewFilterBarProps) {
             aria-label={group.ariaLabel}
           >
             {group.options.map((opt) => (
-              <Label
+              <ToggleButton
                 key={opt.id}
-                isCompact
-                variant={opt.selected ? 'filled' : 'outline'}
-                color={opt.color}
-                role="button"
-                tabIndex={0}
-                aria-pressed={opt.selected}
-                onClick={opt.onToggle}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    opt.onToggle();
-                  }
+                size="small"
+                isSelected={opt.selected}
+                onChange={opt.onToggle}
+                style={{
+                  color:
+                    opt.color === 'red' || opt.color === 'orangered'
+                      ? 'var(--bui-fg-danger)'
+                      : opt.color === 'green'
+                        ? 'var(--bui-fg-success)'
+                        : opt.color === 'orange' || opt.color === 'yellow'
+                          ? 'var(--bui-fg-warning)'
+                          : opt.color === 'grey'
+                            ? 'var(--bui-fg-secondary)'
+                            : 'var(--bui-fg-info)',
                 }}
               >
                 {opt.count != null ? `${opt.label} (${opt.count})` : opt.label}
-              </Label>
+              </ToggleButton>
             ))}
           </div>
         </Flex>

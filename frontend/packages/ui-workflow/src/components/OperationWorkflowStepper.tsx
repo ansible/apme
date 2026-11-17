@@ -6,8 +6,9 @@
  */
 
 import { useRef, type CSSProperties, type ReactNode } from 'react';
-import { Card, CardBody, Spinner } from '@patternfly/react-core';
-import { CheckIcon } from '@patternfly/react-icons';
+import { Card, CardBody } from '@backstage/ui';
+import { RiCheckLine } from '@remixicon/react';
+import { LoadingIndicator } from './WorkflowProgress';
 import type { ProjectOperationState } from '../hooks/useProjectOperationState';
 import {
   emptyWorkflowLatch,
@@ -68,7 +69,7 @@ const styles = {
     whiteSpace: 'nowrap' as const,
   },
   arrow: {
-    color: 'var(--pf-t--global--text--color--disabled)',
+    color: 'var(--bui-fg-disabled)',
     fontSize: 18,
     margin: '0 4px',
     userSelect: 'none' as const,
@@ -83,32 +84,32 @@ function badgeStyle(
   if (isDanger && isActive) {
     return {
       ...styles.badge,
-      backgroundColor: 'var(--pf-t--global--color--status--danger--default)',
-      color: 'var(--pf-t--global--text--color--on-status--danger--default, #fff)',
-      border: '2px solid var(--pf-t--global--color--status--danger--default)',
+      backgroundColor: 'var(--bui-bg-danger)',
+      color: 'var(--bui-fg-danger-on-bg)',
+      border: '2px solid var(--bui-bg-danger)',
     };
   }
   if (isComplete) {
     return {
       ...styles.badge,
-      backgroundColor: 'var(--pf-t--global--color--status--success--default)',
-      color: 'var(--pf-t--global--text--color--on-status--success--default, #fff)',
-      border: '2px solid var(--pf-t--global--color--status--success--default)',
+      backgroundColor: 'var(--bui-bg-success)',
+      color: 'var(--bui-fg-success-on-bg)',
+      border: '2px solid var(--bui-bg-success)',
     };
   }
   if (isActive) {
     return {
       ...styles.badge,
-      backgroundColor: 'var(--pf-t--global--color--brand--default)',
-      color: 'var(--pf-t--global--text--color--on-brand--default, #fff)',
-      border: '2px solid var(--pf-t--global--color--brand--default)',
+      backgroundColor: 'var(--bui-bg-solid)',
+      color: 'var(--bui-fg-solid)',
+      border: '2px solid var(--bui-bg-solid)',
     };
   }
   return {
     ...styles.badge,
-    backgroundColor: 'var(--pf-t--global--background--color--secondary--default)',
-    color: 'var(--pf-t--global--text--color--secondary)',
-    border: '2px solid var(--pf-t--global--border--color--default)',
+    backgroundColor: 'var(--bui-bg-neutral-2)',
+    color: 'var(--bui-fg-secondary)',
+    border: '2px solid var(--bui-border-1)',
   };
 }
 
@@ -116,19 +117,19 @@ function labelStyle(isActive: boolean, isPending: boolean): CSSProperties {
   if (isActive) {
     return {
       ...styles.label,
-      color: 'var(--pf-t--global--text--color--regular)',
+      color: 'var(--bui-fg-primary)',
       fontWeight: 600,
     };
   }
   if (isPending) {
     return {
       ...styles.label,
-      color: 'var(--pf-t--global--text--color--secondary)',
+      color: 'var(--bui-fg-secondary)',
     };
   }
   return {
     ...styles.label,
-    color: 'var(--pf-t--global--text--color--regular)',
+    color: 'var(--bui-fg-primary)',
   };
 }
 
@@ -138,10 +139,10 @@ function badgeContent(
   index: number,
 ): ReactNode {
   if (isComplete) {
-    return <CheckIcon style={{ width: 14, height: 14 }} />;
+    return <RiCheckLine aria-hidden style={{ width: 14, height: 14 }} />;
   }
   if (isSpinning) {
-    return <Spinner size="sm" aria-label="In progress" />;
+    return <LoadingIndicator size="small" label="In progress" />;
   }
   return index + 1;
 }
@@ -164,10 +165,15 @@ export function OperationWorkflowStepper({
   const defs = workflowStepDefs(includeAi, {
     skipTier1: latchRef.current.tier1GateSkipped,
   });
-  const currentId = resolveCurrentWorkflowStep(state, includeAi, latchRef.current, {
-    aiApplyFinished,
-    commitFinished,
-  });
+  const currentId = resolveCurrentWorkflowStep(
+    state,
+    includeAi,
+    latchRef.current,
+    {
+      aiApplyFinished,
+      commitFinished,
+    },
+  );
   const activeIndex = defs.findIndex((d) => d.id === currentId);
   const failed = state.status === 'failed' || state.status === 'expired';
 
@@ -195,7 +201,11 @@ export function OperationWorkflowStepper({
                 state.status === 'submitting_pr');
 
             return (
-              <span key={step.id} style={styles.step}>
+              <span
+                key={step.id}
+                style={styles.step}
+                aria-current={isActive ? 'step' : undefined}
+              >
                 {index > 0 && (
                   <span style={styles.arrow} aria-hidden>
                     →
@@ -207,7 +217,9 @@ export function OperationWorkflowStepper({
                 >
                   {badgeContent(isComplete, isSpinning, index)}
                 </span>
-                <span style={labelStyle(isActive, isPending)}>{step.label}</span>
+                <span style={labelStyle(isActive, isPending)}>
+                  {step.label}
+                </span>
               </span>
             );
           })}

@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Label } from '@patternfly/react-core';
+import { Alert, Badge } from '@backstage/ui';
 import type { AssessFinding } from '../hooks/useProjectOperationState';
 import {
   normalizeFindingNodeType,
@@ -16,15 +16,9 @@ import {
   orderPresentNodeTypes,
   type FindingNodeType,
 } from '../remediation/nodeType';
-import {
-  filterByRuleKeepingNodeContext,
-  presentRuleIds,
-} from '../remediation';
+import { filterByRuleKeepingNodeContext, presentRuleIds } from '../remediation';
 import { AssessNodeDetail } from './AssessFindingsPanel';
-import {
-  toggleInFilterSet,
-  type ReviewFilterGroup,
-} from './ReviewFilterBar';
+import { toggleInFilterSet, type ReviewFilterGroup } from './ReviewFilterBar';
 import { ReviewInventoryRow } from './ReviewInventoryRow';
 import { ReviewStepShell } from './ReviewStepShell';
 import { RuleFilterInput } from './RuleFilterInput';
@@ -145,9 +139,7 @@ export function AiEscalationPanel({
 
   useEffect(() => {
     const paths = pathKey ? pathKey.split('\0') : [];
-    setDecisions(
-      new Map(paths.map((p) => [p, 'pending' as NodeDecision])),
-    );
+    setDecisions(new Map(paths.map((p) => [p, 'pending' as NodeDecision])));
   }, [pathKey]);
 
   const presentSeverities = useMemo(
@@ -304,13 +296,27 @@ export function AiEscalationPanel({
           title: g.title,
           meta: (
             <>
-              <Label isCompact variant="outline">
+              <Badge size="small">
                 {g.findings.length} finding
                 {g.findings.length !== 1 ? 's' : ''}
-              </Label>
-              <Label isCompact color={nodeTypeLabelColor(nt)}>
+              </Badge>
+              <Badge
+                size="small"
+                style={{
+                  color: {
+                    red: 'var(--bui-fg-danger)',
+                    orange: 'var(--bui-fg-warning)',
+                    yellow: 'var(--bui-fg-warning)',
+                    blue: 'var(--bui-fg-info)',
+                    grey: 'var(--bui-fg-secondary)',
+                    green: 'var(--bui-fg-success)',
+                    teal: 'var(--bui-fg-info)',
+                    purple: 'var(--bui-fg-info)',
+                  }[nodeTypeLabelColor(nt)],
+                }}
+              >
                 {nodeTypeLabel(nt)}
-              </Label>
+              </Badge>
             </>
           ),
           hasDetail: g.findings.length > 0,
@@ -479,12 +485,12 @@ export function AiEscalationPanel({
     <>
       {error ? (
         <Alert
-          variant="danger"
+          status="danger"
+          role="alert"
           title="Could not start AI escalation"
+          description={error}
           style={{ marginBottom: 12 }}
-        >
-          {error}
-        </Alert>
+        ></Alert>
       ) : null}
       <ReviewStepShell
         title={title}
