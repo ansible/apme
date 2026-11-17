@@ -46,6 +46,7 @@ async def _exercise_https_snapshot(
     if mode == "transport":
         monkeypatch.setattr(safe_fetch, "_open_storage", lambda: os.open(mount, os.O_RDONLY | os.O_DIRECTORY))
     else:
+        inode_limit = 128 if mode in {"loose", "loose_single"} else 8192
         result = subprocess.run(
             [
                 *privileged_mount,
@@ -53,7 +54,7 @@ async def _exercise_https_snapshot(
                 "-t",
                 "tmpfs",
                 "-o",
-                f"size=4m,nr_inodes={128 if mode == 'loose' else 8192},mode=0700,uid={os.getuid()},gid={os.getgid()}",
+                f"size=4m,nr_inodes={inode_limit},mode=0700,uid={os.getuid()},gid={os.getgid()}",
                 "tmpfs",
                 str(mount),
             ],
@@ -89,7 +90,7 @@ async def _exercise_https_snapshot(
             capture_output=True,
         )
         subprocess.run(["git", "-C", str(source), "branch", "small"], check=True, capture_output=True)
-        if mode == "loose":
+        if mode in {"loose", "loose_single"}:
             for n in range(300):
                 (source / str(n)).write_text(f"object {n}\n")
         else:
@@ -198,11 +199,11 @@ async def _exercise_https_snapshot(
         async def run(command: list[str], env: dict[str, str], *, storage_fd: int | None = None) -> None:
             # Exercise both pack retention and unpack-objects under the same quota.
             if "fetch" in command:
-                command[1:1] = ["-c", f"fetch.unpackLimit={10000 if mode == 'loose' else 1}"]
+                command[1:1] = ["-c", f"fetch.unpackLimit={10000 if mode in {'loose', 'loose_single'} else 1}"]
             try:
                 await original_run(command, env, storage_fd=storage_fd)
             except RuntimeError:
-                if mode == "loose" and "fetch" in command:
+                if mode == "loose_single" and "fetch" in command:
                     objects = Path(env["TMPDIR"]) / ".git" / "objects"
                     assert any(objects.glob("[0-9a-f][0-9a-f]/*")), "Fetch must expand actual loose objects"
                     loose_failures.append(True)
@@ -222,6 +223,12 @@ async def _exercise_https_snapshot(
         assert not list(mount.iterdir())
         if mode == "transport":
             return
+        if mode == "loose_single":
+            with pytest.raises(RuntimeError, match="stage fetch.*storage quota exhausted"):
+                await fetch()
+            assert len(loose_failures) == 1
+            assert not list(mount.iterdir())
+            return
         if mode == "shared":
             # Each snapshot fits alone; retaining one must constrain the next.
             async with safe_fetch.git_snapshot(url, "HEAD") as first:
@@ -238,12 +245,19 @@ async def _exercise_https_snapshot(
         results = await asyncio.gather(fetch(), fetch(), return_exceptions=True)
         assert all(isinstance(value, RuntimeError) for value in results), results
         # Checkout writes can report only "unable to write file" without errno.
-        assert all(
-            "storage quota exhausted" in str(value) or (mode == "checkout" and "stage checkout" in str(value))
-            for value in results
-        ), results
         if mode == "loose":
-            assert len(loose_failures) == 2, "Both fetches must exhaust inodes during loose-object expansion"
+            # Either operation may run out of inodes before Git reaches fetch.
+            # At least one failure must identify quota exhaustion, while the other
+            # can fail in storage allocation or any Git stage as quota is shared.
+            assert any("storage quota exhausted" in str(value) for value in results), results
+            assert all(
+                "Git fetch failed" in str(value) or "storage allocation failed" in str(value) for value in results
+            )
+        else:
+            assert all(
+                "storage quota exhausted" in str(value) or (mode == "checkout" and "stage checkout" in str(value))
+                for value in results
+            ), results
         stats = os.statvfs(mount)
         assert stats.f_blocks * stats.f_frsize <= 4 * 1024 * 1024
         assert not list(mount.iterdir())
@@ -265,6 +279,16 @@ async def test_real_https_snapshot_succeeds(tmp_path: Path, monkeypatch: pytest.
         monkeypatch: Transport fixture configuration.
     """
     await _exercise_https_snapshot(tmp_path, monkeypatch, "transport")
+
+
+async def test_loose_objects_exhaust_inode_quota(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A single snapshot expands loose Git objects until the kernel inode limit.
+
+    Args:
+        tmp_path: Sources and private mountpoint.
+        monkeypatch: Deployment and DNS overrides.
+    """
+    await _exercise_https_snapshot(tmp_path, monkeypatch, "loose_single")
 
 
 @pytest.mark.parametrize("mode", ["packed", "checkout", "loose", "shared"])  # type: ignore[untyped-decorator]

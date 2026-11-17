@@ -71,6 +71,8 @@ a descriptive storage error and closes the held descriptor.
 a real 4 MiB tmpfs, covering packed objects, checkout expansion and loose-object
 inode exhaustion. A shared-budget case holds one individually valid 3 MiB
 snapshot while a second must fail, then verifies capacity recovers after cleanup.
+A separate single-fetch case verifies loose-object expansion and inode exhaustion
+without relying on how concurrent fetches are scheduled.
 CI runs this gate with mount privileges; inability to mount
 fails the gate. The normal unit suite skips these cases on unprivileged hosts.
 In the normal unit suite, TLS transport tests skip if Git, OpenSSL or
