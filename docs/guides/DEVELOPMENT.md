@@ -619,7 +619,7 @@ uv run python scripts/debug/ws-diag.py tests/fixtures/terrible-playbook
 
 | Prefix | Category | Examples |
 |--------|----------|----------|
-| **L** | Lint (style, correctness, best practice) | L002–L114 (with gaps) |
+| **L** | Lint (style, correctness, best practice) | L002–L119 (with gaps) |
 | **M** | Modernize (ansible-core metadata) | M001–M048 (with gaps) |
 | **R** | Risk/security and advisory rules | R101–R501 (with gaps) |
 | **P** | Policy (legacy, superseded by L058/L059) | P001–P004 |

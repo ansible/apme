@@ -426,6 +426,7 @@ class TestNativeDocRuleTestStatus:
             encoding="utf-8",
         )
         monkeypatch.setattr(_mod, "NATIVE_DIR", native_dir)
+        monkeypatch.setattr(_mod, "FILE_RULES_DIR", tmp_path / "file_rules")
         monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
         monkeypatch.setattr(_mod, "_TEST_CACHE", None)
 

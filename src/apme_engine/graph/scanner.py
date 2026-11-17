@@ -687,7 +687,7 @@ def expand_dirty_node_ids(
     rules: Sequence[GraphRule],
     dirty_node_ids: frozenset[str],
 ) -> frozenset[str]:
-    """Expand dirty nodes to include ancestors needed by aggregate-scope rules.
+    """Expand dirty nodes to include inherited descendants and aggregate ancestors.
 
     Task-local rescans are sufficient for task-scoped rules, but play-, role-,
     playbook-, block-, and collection-scoped rules may derive findings from
@@ -701,8 +701,8 @@ def expand_dirty_node_ids(
         dirty_node_ids: Node IDs directly modified since the last pass.
 
     Returns:
-        Dirty node IDs plus any structural ancestors required by enabled
-        aggregate-scope rules.
+        Dirty nodes, positional descendants, and structural ancestors required
+        by enabled aggregate-scope rules.
     """
     if not dirty_node_ids:
         return frozenset()
@@ -715,10 +715,18 @@ def expand_dirty_node_ids(
             frozenset(),
         )
     }
-    if not aggregate_node_types:
-        return dirty_node_ids
-
     expanded = set(dirty_node_ids)
+    # Defaults, entry selectors and include arguments can affect descendants
+    # even when the edited scope no longer contains module_defaults.
+    pending = list(dirty_node_ids)
+    seen = set(pending)
+    while pending:
+        source = pending.pop()
+        for target, attrs in graph.edges_from(source):
+            if target not in seen and graph.is_positional_edge(source, target, attrs.get("edge_type")):
+                seen.add(target)
+                expanded.add(target)
+                pending.append(target)
     for node_id in dirty_node_ids:
         node = graph.get_node(node_id)
         if node is None:

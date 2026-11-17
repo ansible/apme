@@ -7,6 +7,7 @@ Each rule module exports a run() function that returns a list of violation dicts
 import json
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -15,6 +16,7 @@ from apme_engine.engine.models import YAMLDict
 from apme_engine.validators.base import ScanContext
 
 from .cache import CacheSnapshot, plugin_cache
+from .module_defaults import resolve_module_defaults
 from .rules import L057_syntax, L058_argspec_doc, L059_argspec_mock, M001_M004_introspect
 
 NodeLookup = dict[str, list[tuple[int, int, str]]]
@@ -45,11 +47,14 @@ class AnsibleRunResult:
         metadata: Extra metadata: cumulative ``cache_<store>_hits/misses``
             counters plus per-scan ``scan_cache_<store>_hits/misses``
             deltas (zero when the scan touched nothing).
+        unassessed_argspec: Task IDs mapped to argspec rules with excluded contexts,
+            or None when assessment coverage could not be established.
     """
 
     violations: list[dict[str, object]] = field(default_factory=list)
     rule_timings: list[AnsibleRuleTiming] = field(default_factory=list)
     metadata: dict[str, int] = field(default_factory=dict)
+    unassessed_argspec: dict[str, set[str]] | None = None
 
 
 def _extract_task_nodes(hierarchy_payload: YAMLDict | None) -> list[dict[str, object]]:
@@ -225,17 +230,27 @@ class AnsibleValidator:
         self,
         context: ScanContext,
         content_graph_data: bytes = b"",
+        *,
+        check_syntax: bool = True,
+        file_snapshot: Mapping[str, bytes] | None = None,
     ) -> list[dict[str, object]]:
         """Run all ansible checks and return violation dicts.
 
         Args:
             context: Scan context with hierarchy payload and root dir.
             content_graph_data: Serialized ContentGraph for L057 node resolution.
+            check_syntax: Run project syntax checks; false for task-only rescans.
+            file_snapshot: Uploaded bytes for complete static scenario exclusions.
 
         Returns:
             List of violation dicts.
         """
-        return self.run_with_timing(context, content_graph_data=content_graph_data).violations
+        return self.run_with_timing(
+            context,
+            content_graph_data=content_graph_data,
+            check_syntax=check_syntax,
+            file_snapshot=file_snapshot,
+        ).violations
 
     def run_with_timing(
         self,
@@ -243,6 +258,7 @@ class AnsibleValidator:
         content_graph_data: bytes = b"",
         *,
         check_syntax: bool = True,
+        file_snapshot: Mapping[str, bytes] | None = None,
     ) -> AnsibleRunResult:
         """Run ansible checks and return violations + per-rule timing.
 
@@ -250,6 +266,7 @@ class AnsibleValidator:
             context: Scan context with hierarchy payload and root dir.
             content_graph_data: Serialized ContentGraph for L057 node resolution.
             check_syntax: Run project syntax checks; false for task-only rescans.
+            file_snapshot: Uploaded bytes for complete static scenario exclusions.
 
         Returns:
             AnsibleRunResult with violations and rule timings.
@@ -271,6 +288,7 @@ class AnsibleValidator:
                 venv_root=self._venv_root,
                 root_dir=root_dir,
                 env_extra=self._env_extra,
+                file_snapshot=file_snapshot,
             )
             elapsed = (time.monotonic() - t0) * 1000
             if node_lookup:
@@ -314,11 +332,17 @@ class AnsibleValidator:
         sys.stderr.write(f"  M001-M004/M048 (introspection): {len(m_violations)} issue(s) in {elapsed:.1f}ms\n")
 
         t0 = time.monotonic()
+        defaults = resolve_module_defaults(task_nodes, self._venv_root, self._env_extra)
+        unassessed_l058 = set(defaults.unassessed_task_keys)
+        unassessed_l059 = set(defaults.unassessed_task_keys)
         l058 = L058_argspec_doc.run(
-            task_nodes=task_nodes,
+            task_nodes=defaults.tasks,
             venv_root=self._venv_root,
             env_extra=self._env_extra,
+            defaults_resolved=True,
+            unassessed_tasks=unassessed_l058,
         )
+        l058 = defaults.violations + l058
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(l058)
         rule_timings.append(AnsibleRuleTiming(rule_id="L058", elapsed_ms=elapsed, violations=len(l058)))
@@ -326,9 +350,11 @@ class AnsibleValidator:
 
         t0 = time.monotonic()
         l059 = L059_argspec_mock.run(
-            task_nodes=task_nodes,
+            task_nodes=defaults.tasks,
             venv_root=self._venv_root,
             env_extra=self._env_extra,
+            defaults_resolved=True,
+            unassessed_tasks=unassessed_l059,
         )
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(l059)
@@ -342,4 +368,8 @@ class AnsibleValidator:
             violations=violations,
             rule_timings=rule_timings,
             metadata=metadata,
+            unassessed_argspec={
+                key: {rule for rule, keys in (("L058", unassessed_l058), ("L059", unassessed_l059)) if key in keys}
+                for key in unassessed_l058 | unassessed_l059
+            },
         )

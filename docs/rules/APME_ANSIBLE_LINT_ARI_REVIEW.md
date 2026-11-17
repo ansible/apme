@@ -111,7 +111,7 @@ Status terms:
 
 | ansible-lint rule or family | APME coverage | Status and notes |
 |---|---|---|
-| `args` | `L058`, `L059` | Partial. Both check unknown keys, required arguments, and choices; L059 also enforces mutually-exclusive and required-together groups. Both skip templated tasks and short names in custom collection contexts. Neither checks argument types, `required_if`, or `required_one_of`, and neither merges `module_defaults`. |
+| `args` | `L058`, `L059` | Partial. Both check unknown keys, required arguments, and choices, including inherited `module_defaults` and action groups; L059 also enforces mutually-exclusive and required-together groups. Unknown defaults context produces an explicit coverage notice. Dynamic values skip choice checks; templated task-level argument mappings and short names without defaults in custom collection contexts remain skipped. Neither checks argument types, `required_if`, or `required_one_of`. |
 | `galaxy` | `L027`, `L052`–`L055`, `L087`–`L088`, `L095`, `L103`–`L105`, `L114` | Partial collection/role metadata coverage, not the upstream rule as a whole. See the corrections below. |
 | `galaxy-version-incorrect` | `L052`, `L114` | Partial: L114 checks collection `galaxy.yml` semantic versions and requires at least 1.0.0. L052 separately checks a role's `meta/main.yml` `galaxy_info.version` format. |
 | `meta-incorrect` | `L053` | Different but related metadata check: APME validates selected field types and shape. Upstream flags placeholder defaults such as `your name`, `your description`, and `your company`; APME does not check those placeholders. |
