@@ -667,3 +667,73 @@ def test_role_name_rejects_structured_values(tmp_path: Path, value: object) -> N
     """
     with pytest.raises(ValueError, match="Invalid Git role name"):
         git._collect_files("roles", {"name": value}, tmp_path, tmp_path, "role.git")
+
+
+@pytest.mark.parametrize("discovered", [[], ["example.new"]])  # type: ignore[untyped-decorator]
+async def test_git_graph_uses_final_collection_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, discovered: list[str]
+) -> None:
+    """Rebuild the graph after hierarchy discovery changes the dependency environment.
+
+    Args:
+        tmp_path: Temporary fake environments.
+        monkeypatch: Scan and environment mocks.
+        discovered: Galaxy collections discovered in the initial hierarchy.
+    """
+    from apme_engine.daemon import engine_server, git_dependencies
+    from apme_engine.venv_manager import session as venv_module
+
+    initial_root, final_root = tmp_path / "initial", tmp_path / "final"
+    initial_root.mkdir()
+    final_root.mkdir()
+    initial = SimpleNamespace(venv_root=initial_root, failed_collections=[], installed_collections=[])
+    final = SimpleNamespace(venv_root=final_root, failed_collections=[], installed_collections=[])
+    manager = SimpleNamespace(
+        peek_warm=lambda sid, version, specs: final if specs else initial,
+        get=lambda *_: initial,
+    )
+    monkeypatch.setattr(engine_server.EngineServicer, "_get_venv_manager", lambda _: manager)
+    monkeypatch.setattr(venv_module, "_venv_site_packages", lambda root: root)
+    monkeypatch.setattr(git_dependencies, "_venv_site_packages", lambda root: root)
+    scan_dirs = []
+
+    def scan(*args: object, **kwargs: object) -> object:
+        dependency_dir = kwargs["dependency_dir"]
+        scan_dirs.append(dependency_dir)
+        # Both the initial and final graph loads must see the Git snapshot.
+        assert (Path(str(dependency_dir)) / "roles/demo/tasks/main.yml").read_bytes() == b"[]"
+        return SimpleNamespace(
+            hierarchy_payload={"collection_set": discovered, "loaded_from": dependency_dir}, scandata=None
+        )
+
+    def capture_request(**kwargs: object) -> object:
+        import json
+
+        hierarchy = json.loads(kwargs["hierarchy_payload"])  # type: ignore[arg-type]
+        assert hierarchy["loaded_from"] == str(final_root if discovered else initial_root)
+        raise RuntimeError("request captured")
+
+    monkeypatch.setattr(engine_server, "run_scan", scan)
+    monkeypatch.setattr(engine_server, "ValidateRequest", capture_request)
+    with pytest.raises(RuntimeError, match="request captured"):
+        await engine_server.EngineServicer()._execute_scan_pipeline(
+            tmp_path, [], "scan", session_id="project", dependency_files={"roles/demo/tasks/main.yml": b"[]"}
+        )
+    assert scan_dirs == ([str(initial_root), str(final_root)] if discovered else [str(initial_root)])
+
+
+def test_dependency_lookup_distinguishes_role_and_collection(tmp_path: Path) -> None:
+    """A role named like a collection cannot shadow the collection layout.
+
+    Args:
+        tmp_path: Dependency snapshot root.
+    """
+    from apme_engine.engine.dependency_loading import make_target_path
+    from apme_engine.engine.models import LoadType
+
+    role = tmp_path / "roles/demo.custom"
+    collection = tmp_path / "ansible_collections/demo/custom"
+    role.mkdir(parents=True)
+    collection.mkdir(parents=True)
+    assert make_target_path("", "", LoadType.ROLE, "demo.custom", str(tmp_path)) == str(role)
+    assert make_target_path("", "", LoadType.COLLECTION, "demo.custom", str(tmp_path)) == str(collection)

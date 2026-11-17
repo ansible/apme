@@ -1702,6 +1702,22 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             await asyncio.get_running_loop().run_in_executor(
                 None, install_git_dependencies, venv_session.venv_root, dependency_files
             )
+            if _requirements_hash(collection_specs) != _requirements_hash(initial_specs):
+                # Hierarchy discovery selected a different environment. Rebuild
+                # against its complete dependencies before serializing the graph.
+                dependency_dir = str(_venv_site_packages(venv_session.venv_root))
+                context_obj = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    ctx.run,
+                    lambda: run_scan(
+                        str(temp_dir),
+                        str(temp_dir),
+                        include_scandata=include_scandata,
+                        dependency_dir=dependency_dir,
+                    ),
+                )
+                if not context_obj.hierarchy_payload:
+                    context_obj.hierarchy_payload = {"hierarchy": []}
         logger.info(
             "Venv: ready (%d collections installed, session=%s, req=%s)",
             len(venv_session.installed_collections),
