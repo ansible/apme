@@ -48,27 +48,35 @@
     "eslint-plugin-a11y": "1.4.0",
     "eslint-plugin-jsdoc": "^65.4.3",
     "eslint-plugin-react-hooks": "7.1.1",
-    "jsdom": "^30.1.1",
+    "jsdom": "^31.0.1",
     "prettier": "^3.9.6",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.72.1",
+    "typescript-eslint": "8.73.0",
     "vite": "8.3.5",
     "vitest": "5.0.5",
-    "@red-hat-developer-hub/cli": "2.1.2",
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/user-event": "^14.6.1"
+    "@testing-library/user-event": "^14.6.1",
+    "@backstage/cli-module-build": "0.1.4"
   },
   "overrides": {
-    "minimatch@^10.0.1": "11.0.1",
-    "minimatch@^10.2.2": "11.0.1",
-    "minimatch@^10.2.4": "11.0.1",
-    "minimatch@^10.2.6": "11.0.1",
     "@module-federation/dts-plugin": {
       "undici": "7.30.1"
     },
-    "@red-hat-developer-hub/cli": {
-      "@backstage/cli-module-auth": "0.1.5",
-      "@backstage/cli-module-new": "0.1.8"
+    "prismjs": "1.30.0",
+    "sockjs": {
+      "uuid": "11.1.1"
+    },
+    "minimatch@>=7 <11": "11.0.9",
+    "glob@>=9 <14.0.2": "14.0.6",
+    "eslint-plugin-a11y": {
+      "jsdom": "$jsdom"
     }
+  },
+  "allowScripts": {
+    "@parcel/watcher@2.6.0": true,
+    "@swc/core@1.16.21": true,
+    "esbuild@0.28.2": true,
+    "core-js-pure": false,
+    "keytar": false
   }
 }

@@ -5,7 +5,11 @@
   "license": "Apache-2.0",
   "backstage": {
     "role": "frontend-plugin",
-    "pluginId": "apme"
+    "pluginId": "apme",
+    "features": {
+      ".": "@backstage/FrontendPlugin",
+      "./navigation": "@backstage/FrontendModule"
+    }
   },
   "main": "src/index.tsx",
   "exports": {

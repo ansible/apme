@@ -1,6 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { execFileSync } from "node:child_process";
 import {
+    cpSync,
     existsSync,
     mkdirSync,
     readFileSync,
@@ -17,17 +18,37 @@ const frontend = resolve(root, "containers/rhdh/plugin");
 execFileSync(
     process.execPath,
     [
-        resolve(root, "node_modules/@red-hat-developer-hub/cli/bin/rhdh-cli"),
-        "plugin",
-        "export",
+        resolve(
+            root,
+            "node_modules/@backstage/cli-module-build/bin/backstage-cli-module-build",
+        ),
+        "package",
+        "build",
+        "--module-federation",
     ],
-    { cwd: frontend, stdio: "inherit" },
+    { cwd: frontend, stdio: "inherit", env: { ...process.env, CI: "false" } },
 );
 
 // Frontend code and its private dependencies are compiled into federation assets.
 // The installer must not try to resolve unpublished workspace packages at startup.
 const frontendManifest = resolve(frontend, "dist-dynamic/package.json");
-const manifest = JSON.parse(readFileSync(frontendManifest, "utf8"));
+const sourceManifest = JSON.parse(
+    readFileSync(resolve(frontend, "package.json"), "utf8"),
+);
+const manifest = {
+    name: `${sourceManifest.name}-dynamic`,
+    version: sourceManifest.version,
+    private: true,
+    license: sourceManifest.license,
+    backstage: sourceManifest.backstage,
+    main: "./dist/remoteEntry.js",
+    files: ["dist"],
+    configSchema: "dist/.config-schema.json",
+};
+rmSync(resolve(frontend, "dist-dynamic"), { recursive: true, force: true });
+cpSync(resolve(frontend, "dist"), resolve(frontend, "dist-dynamic/dist"), {
+    recursive: true,
+});
 if (manifest.backstage?.features?.["."] !== "@backstage/FrontendPlugin") {
     throw new Error("RHDH export did not register the APME frontend feature");
 }
@@ -44,9 +65,30 @@ for (const asset of ["mf-manifest.json", "remoteEntry.js"]) {
         );
     }
 }
-delete manifest.dependencies;
-delete manifest.devDependencies;
+const federation = JSON.parse(
+    readFileSync(
+        resolve(frontend, "dist-dynamic/dist/mf-manifest.json"),
+        "utf8",
+    ),
+);
+for (const entry of Object.keys(manifest.backstage.features)) {
+    if (!federation.exposes?.some((exposed) => exposed.path === entry)) {
+        throw new Error(
+            `Federation build did not expose the declared feature ${entry}`,
+        );
+    }
+}
 writeFileSync(frontendManifest, `${JSON.stringify(manifest, null, 2)}\n`);
+const frontendSchema = (
+    await loadConfigSchema({
+        dependencies: [],
+        packagePaths: [resolve(frontend, "package.json")],
+    })
+).serialize();
+writeFileSync(
+    resolve(frontend, "dist-dynamic/dist/.config-schema.json"),
+    `${JSON.stringify(frontendSchema, null, 2)}\n`,
+);
 
 // The standard new-backend-system feature is bundled as CommonJS, keeping the
 // host's backend API shared so service/extension identities remain authoritative.

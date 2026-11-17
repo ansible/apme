@@ -33,7 +33,7 @@ such a mixed-install browser bundle is compatible.
 RHDH is pinned to the multi-platform community `next-2.1` manifest
 `sha256:be563de8b56deb0b7ccde68bfdff8d126de65229489c3883e836198f7504f45e`,
 source revision `7eb3a2ea50ef712488e2e46b960d0f55ff23370f` (Backstage 1.54.9).
-The frontend wrapper uses NFS and RHDH CLI 2.1.2; it lazily loads the shared page.
+The frontend wrapper uses NFS and Backstage build module 0.1.4; it lazily loads the shared page.
 The backend bundles private dependencies and shares the host backend API.
 Plugins are installed during the image build, so startup does not download them.
 This is a pinned community development image; host acceptance is tracked in TASK-005.
@@ -50,6 +50,27 @@ for host metadata; APME projects and scan history remain in the Gateway database
 Portal consumes the standard versioned release packages during its own image
 build and supplies its own catalog/identity/RBAC. It does not use this personal
 profile or the Local frontend wrapper.
+
+## Dependency maintenance
+
+Run `tox -e frontend-audit` for the workspace advisory report, or pass
+`-- --omit=dev` for production dependencies. The root overrides pin patched
+PrismJS and SockJS UUID dependencies and upgrade affected glob and minimatch
+ranges. Older glob callers retain their callback API. Compatibility tests cover
+file discovery, exclusions and cancellation through the Rollup and Backstage
+build consumers; also run `tox -e frontend-rhdh-export` after changing overrides.
+
+The root `allowScripts` policy approves only the reviewed versions of esbuild,
+SWC and Parcel watcher needed for native build tooling. Review their install
+scripts and update the version pins when upgrading. The core-js funding script
+and optional keytar credential-store build are denied. The plugin build does not
+use keytar; interactive CLI credential storage requires a separate review before
+enabling its native build. npm versions that support this policy enforce it;
+older npm versions do not.
+
+The UI image uses a build cache mount for npm downloads so the package cache is
+not copied into image layers. Dependency deprecation notices inherited from the
+host SDK remain visible, as do unresolved security advisories.
 
 ## Add a repository without repository configuration
 
@@ -105,11 +126,12 @@ tox -e frontend-build,frontend-lint,frontend-unit
 tox -e frontend-dev
 ```
 
-The ESLint dependency override keeps `minimatch` resolved by ESLint,
-`@eslint/config-array`, and `@typescript-eslint/typescript-estree` on the patched
-11.x line. `check-eslint-minimatch.mjs` checks those lockfile resolutions;
-update it together with the override if the ESLint toolchain changes. Other
-packages keep their own `minimatch` requirements. The 10.x line has no fix for
+The root dependency override upgrades affected `minimatch` ranges from 7.x
+through 10.x to the patched 11.x line. `check-eslint-minimatch.mjs` checks the
+ESLint, `@eslint/config-array`, and `@typescript-eslint/typescript-estree`
+resolutions; compatibility tests also cover other build consumers. Review all
+affected consumers when changing the override. Older ranges retain their own
+requirements. The 10.x line has no fix for
 [GHSA-g3hv-75wg-m249](https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249).
 
 ESLint covers APME-owned TypeScript and TSX. The only source exclusion is the
@@ -344,25 +366,24 @@ are still tracked in TASK-005; package tests do not certify running hosts.
 
 ## Dependency warnings and audit
 
-The RHDH export tool brings its own Backstage CLI, ESLint, bundler and template
-packages. Several upstream dependencies are deprecated (including ESLint 8,
-older glob releases and Material UI 4). Deprecation identifies an upstream
-maintenance concern; it does not by itself establish an exploitable vulnerability.
-Those warnings remain visible during `npm ci` in the image build.
+The exporter invokes the public Backstage build module command
+`package build --module-federation`, then packages its assets, declared
+`backstage.features` and config schema for the RHDH installer. Export fails if
+any declared feature is missing from the federation manifest. Backend packaging
+continues to use esbuild with the host backend API externalized.
 
-The root manifest scopes temporary security overrides to build tooling:
+The standalone RHDH CLI is not a dependency: its authentication, scaffolding,
+lint and Jest commands are unused by this workspace. Depending directly on
+`@backstage/cli-module-build` retains the federation builder while removing
+those unrelated dependency trees. The host image and plugin interfaces remain
+pinned; validate exporter changes with `tox -e up` and `tox -e ui` as well as
+frontend checks.
 
-- `@module-federation/dts-plugin` uses Undici 7.30.1 instead of its pinned 7.29.1.
-- RHDH CLI uses Backstage `cli-module-auth` 0.1.5 and `cli-module-new` 0.1.8,
-  whose upstream patch releases switch internal validation to Zod 4. This removes
-  their vulnerable Zod 3 copies, using the lockfile's patched Zod 4.6.7.
-
-See the [Undici advisory](https://github.com/advisories/GHSA-9fm3-97px-rjf6),
-[Zod advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) and upstream
-[auth](https://github.com/backstage/backstage/blob/v1.56.2/packages/cli-module-auth/CHANGELOG.md)
-and [new](https://github.com/backstage/backstage/blob/v1.56.2/packages/cli-module-new/CHANGELOG.md)
-module changelogs. Remove overrides when the parent tools select patched versions.
-The host Backstage/React/Router baseline is unchanged.
+Several remaining SDK/build dependencies are deprecated, including legacy
+ESLint, glob and Material UI releases. Their warnings remain visible during
+installation. The root manifest pins patched PrismJS, SockJS UUID, glob,
+minimatch and federation DTS Undici dependencies. Remove overrides when their
+parents select compatible patched releases.
 
 After `tox -e frontend-ci`, inspect current advisories through tox:
 
@@ -371,20 +392,13 @@ tox -e frontend-audit
 tox -e frontend-audit -- --omit=dev
 ```
 
-These commands return a nonzero status while findings remain. On 2026-10-31,
-this workspace reports 32 findings (18 low, 14 moderate, zero high/critical),
-down from 41 (including five high). Excluding development dependencies reports
-seven moderate findings through the Backstage/React Router chain. Counts include
-affected parent packages and do not represent distinct exploitable issues.
-A subsequent audit during the Local navigation investigation reports 88 entries
-(7 low, 81 moderate, no high/critical); the production-only report remains seven
-moderate entries. The report also flags glob/minimatch build-tool dependency
-chains. The earlier count is historical; use the audit commands for current data.
-The Router fix is in a newer major than the Router 6 host baseline; do not run
-`npm audit fix --force` or force Router 7 into these hosts. Remaining findings
-need upstream/host compatibility review. This npm audit covers the checkout's
-dependency tree, not the prebuilt RHDH image, OS packages or Node's embedded
-libraries; it does not certify the complete running image.
+These commands return a nonzero status while findings remain. Counts include
+inherited parent entries and can change as the advisory database changes. Use
+the current report rather than historical counts. The remaining picomatch
+advisory has no published patched release; React Router fixes require a newer
+major than the Router 6 host baseline. Do not force Router 7 into these hosts.
+The audit covers checkout dependencies, not the prebuilt host image, OS packages
+or Node's embedded libraries.
 
 RHDH Local exposes a **Color theme** selector in the expanded APME sidebar. Light,
 Dark and System use the host's persisted appearance preference; the existing

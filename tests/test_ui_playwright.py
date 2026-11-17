@@ -7,7 +7,6 @@ Run with ``tox -e up`` followed by ``tox -e ui``. The separate
 from __future__ import annotations
 
 import os
-import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,7 +35,11 @@ def local_app(page: Page) -> Page:
     """
     page.goto(_BASE, wait_until="domcontentloaded")
     brand = page.get_by_role("link", name="APME", exact=True)
-    guest_sign_in = page.get_by_role("button", name=re.compile("guest", re.I))
+    guest_sign_in = (
+        page.get_by_role("listitem")
+        .filter(has=page.get_by_text("Guest", exact=True))
+        .get_by_role("button", name="Enter", exact=True)
+    )
     expect(brand.or_(guest_sign_in).first).to_be_visible(timeout=20_000)
     if guest_sign_in.is_visible():
         guest_sign_in.click()
@@ -67,7 +70,7 @@ def test_local_apme_sections_navigate(
         label: Visible APME sidebar label.
         path: Expected application path.
     """
-    local_app.get_by_role("link", name=label, exact=True).click()
+    local_app.locator("#apme-local-sections").get_by_role("link", name=label, exact=True).click()
     expect(local_app).to_have_url(f"{_BASE}{path}")
     expect(local_app.locator(".apme-page")).to_be_visible()
 
@@ -108,8 +111,6 @@ def test_local_theme_selector_switches_variants(local_app: Page) -> None:
     expect(theme).to_be_visible()
     theme.select_option("light")
     root = local_app.locator("html")
-    assert not root.evaluate(
-        "element => element.classList.contains('pf-v6-theme-dark')",
-    )
+    expect(root).to_have_attribute("data-theme-mode", "light")
     theme.select_option("dark")
-    assert root.evaluate("element => element.classList.contains('pf-v6-theme-dark')")
+    expect(root).to_have_attribute("data-theme-mode", "dark")
