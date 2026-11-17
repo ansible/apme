@@ -1,4 +1,4 @@
-# ADR-076: Gateway resolution of Git requirements
+# ADR-078: Gateway resolution of Git requirements
 
 ## Status
 

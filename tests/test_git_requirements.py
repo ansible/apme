@@ -150,7 +150,9 @@ roles:
             (root / "tasks/main.yml").write_text("- ansible.builtin.debug:\n    msg: hello\n")
 
     monkeypatch.setattr(git, "git_snapshot", _snapshot_mock(fetch))
-    result = await git.resolve_git_requirements("project", str(tmp_path), scm_token=operation_token)
+    result = await git.resolve_git_requirements(
+        "project", str(tmp_path), repo_url="https://git.example/project", scm_token=operation_token
+    )
     assert calls == [("v1", expected), ("main", expected)]
     assert {f.path for f in result} == {
         "ansible_collections/demo/custom/galaxy.yml",
@@ -177,7 +179,7 @@ async def test_disabled_policy_blocks_fetch(tmp_path: Path, monkeypatch: pytest.
 
     monkeypatch.setattr(git, "get_session", session)
     with pytest.raises(ValueError, match="disabled"):
-        await git.resolve_git_requirements("project", str(tmp_path))
+        await git.resolve_git_requirements("project", str(tmp_path), repo_url="https://git.example/project")
 
 
 def test_git_collection_not_sent_to_galaxy() -> None:
@@ -321,7 +323,7 @@ async def test_fetch_cancellation_waits_for_child(monkeypatch: pytest.MonkeyPatc
         monkeypatch: Process lifecycle overrides.
     """
     created, stopped = asyncio.Event(), asyncio.Event()
-    process = SimpleNamespace(pid=12345, returncode=None)
+    process = SimpleNamespace(pid=12345, returncode=None, stdout=None, stderr=None)
 
     async def wait() -> int:
         await stopped.wait()
@@ -473,7 +475,7 @@ async def test_project_url_credentials_follow_same_origin_only(tmp_path: Path, m
         (tasks / "main.yml").write_text("[]")
 
     monkeypatch.setattr(git, "git_snapshot", _snapshot_mock(fetch))
-    await git.resolve_git_requirements("p", str(tmp_path))
+    await git.resolve_git_requirements("p", str(tmp_path), repo_url="https://user:secret@git.example/project")
     assert seen == [
         ("https://git.example/one.git", None, ("user", "secret")),
         ("https://other.example/two.git", None, None),
@@ -554,3 +556,58 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
         )
     assert galaxy_file.read_bytes() == b"git-version"
     assert (final_root / ".git-dependencies-ready").is_file()
+
+
+async def test_clone_origin_controls_credentials_after_project_url_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later project URL change cannot redirect the clone credential.
+
+    Args:
+        tmp_path: Disposable project directory.
+        monkeypatch: Isolated dependency overrides.
+    """
+    (tmp_path / "requirements.yml").write_text("roles:\n- src: git+https://new.example/role.git\n")
+    db = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=[
+                SimpleNamespace(enabled=True),
+                SimpleNamespace(
+                    requirements_token=None, scm_token=None, repo_url="https://new.example/project", scm_provider=None
+                ),
+            ]
+        )
+    )
+
+    @asynccontextmanager
+    async def session():  # type: ignore[no-untyped-def]
+        yield db
+
+    seen = []
+
+    async def fetch(
+        url: str,
+        ref: str,
+        dest: str,
+        token: str | None,
+        scm_provider: str | None = None,
+        url_userpass: tuple[str, str] | None = None,
+    ) -> None:
+        seen.append((token, url_userpass))
+        (Path(dest) / "main.yml").write_text("[]")
+
+    monkeypatch.setattr(git, "get_session", session)
+    monkeypatch.setattr(git, "git_snapshot", _snapshot_mock(fetch))
+    await git.resolve_git_requirements("p", str(tmp_path), repo_url="https://old.example/project", scm_token="secret")
+    assert seen == [(None, None)]
+
+
+def test_collection_metadata_rejects_alias_graph(tmp_path: Path) -> None:
+    """Reject structured metadata before converting an aliased graph to text.
+
+    Args:
+        tmp_path: Disposable Git checkout.
+    """
+    (tmp_path / "galaxy.yml").write_text("node: &node [a, b]\nnamespace: [*node, *node]\nname: valid\n")
+    with pytest.raises(ValueError, match="Invalid Git collection"):
+        git._collect_files("collections", {}, tmp_path, tmp_path, "collection.git")

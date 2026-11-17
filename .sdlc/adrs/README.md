@@ -60,7 +60,7 @@ Decisions that are fully reflected in the codebase.
 | [ADR-075](ADR-075-bounded-validator-request-streaming.md) | Bounded Streaming for Oversized Validator Requests | 2026-11-06 |
 | [ADR-076](ADR-076-native-file-validation.md) | File Validation in the Native Service | 2026-11-05 |
 | [ADR-077](ADR-077-bounded-git-fetch.md) | Gateway Git fetch network and storage boundaries | 2026-11-16 |
-| [ADR-076](ADR-076-git-requirements.md) | Gateway resolution of Git requirements | 2026-11-13 |
+| [ADR-078](ADR-078-git-requirements.md) | Gateway resolution of Git requirements | 2026-11-13 |
 
 ## Partially Implemented
 
@@ -120,7 +120,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-078)
+2. Use the next available number (currently ADR-079)
 3. Include:
    - Status (Proposed → Accepted → Partially Implemented → Implemented)
    - Date

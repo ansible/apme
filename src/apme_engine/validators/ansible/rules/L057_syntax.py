@@ -1,5 +1,6 @@
 """L057: Syntax check via ansible-playbook --syntax-check."""
 
+import json
 import os
 import posixpath
 import re

@@ -21,13 +21,14 @@ from apme_gateway.scm.tokens import select_usable_scm_token
 
 
 async def resolve_git_requirements(
-    project_id: str, project_root: str, *, scm_token: str | None = None, scm_provider: str | None = None
+    project_id: str, project_root: str, *, repo_url: str, scm_token: str | None = None, scm_provider: str | None = None
 ) -> list[File]:
     """Fetch declared Git dependencies using the project credential policy.
 
     Args:
         project_id: Owning project UUID.
         project_root: Temporary project clone.
+        repo_url: URL used for the project clone.
         scm_token: Effective project clone credential, including per-operation credentials.
         scm_provider: Effective project SCM provider.
 
@@ -51,11 +52,11 @@ async def resolve_git_requirements(
         token = select_usable_scm_token(
             project.requirements_token, scm_token, project.scm_token, GatewayConfig().scm_token
         )
-        project_origin = _origin(project.repo_url)
+        project_origin = _origin(repo_url)
         project_provider = scm_provider or project.scm_provider
         from apme_gateway.scan.driver import _url_embedded_userpass
 
-        url_userpass = _url_embedded_userpass(project.repo_url) if not token else None
+        url_userpass = _url_embedded_userpass(repo_url) if not token else None
     files: dict[str, File] = {}
     total = 0
     for kind, entry in declarations:
@@ -162,8 +163,8 @@ def _collect_files(
             metadata = manifest_data.get("collection_info") if isinstance(manifest_data, dict) else None
         if not isinstance(metadata, dict) or not metadata.get("namespace") or not metadata.get("name"):
             raise ValueError("Git collection metadata must include namespace and name")
-        namespace, name = str(metadata["namespace"]), str(metadata["name"])
-        if not all(re.fullmatch(r"[a-z][a-z0-9_]*", value) for value in (namespace, name)):
+        namespace, name = metadata["namespace"], metadata["name"]
+        if not all(isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_]*", value) for value in (namespace, name)):
             raise ValueError("Invalid Git collection namespace or name")
         prefix = f"ansible_collections/{namespace}/{name}"
     else:

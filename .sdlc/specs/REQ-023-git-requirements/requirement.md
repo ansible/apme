@@ -56,7 +56,7 @@ Direct declarations are supported; nested Git dependency manifests are not resol
 
 ## Dependencies
 
-ADR-020, ADR-029, ADR-039, ADR-045, [ADR-076](../../adrs/ADR-076-git-requirements.md).
+ADR-020, ADR-029, ADR-039, ADR-045, [ADR-078](../../adrs/ADR-078-git-requirements.md).
 
 ## Verification
 

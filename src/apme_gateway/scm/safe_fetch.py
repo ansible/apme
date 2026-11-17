@@ -105,7 +105,7 @@ def _create_checkout() -> tuple[int, tempfile.TemporaryDirectory[str]]:
 
 
 async def _destination(url: str) -> tuple[str, str]:
-    """Validate every DNS answer and pin one allowed address for libcurl.
+    """Validate every DNS answer and pin allowed addresses for libcurl.
 
     Args:
         url: HTTPS Git URL without userinfo.
@@ -173,9 +173,7 @@ async def _destination(url: str) -> tuple[str, str]:
         ):
             raise ValueError("Git destination is restricted by deployment network policy")
         addresses.append(address)
-    address_text = str(addresses[0])
-    if ":" in address_text:
-        address_text = f"[{address_text}]"
+    address_text = ",".join(f"[{a}]" if a.version == 6 else str(a) for a in dict.fromkeys(addresses))
     authority = f"[{host}]" if ":" in host else host
     canonical = urlunsplit(("https", f"{authority}:{port}", parsed.path, parsed.query, ""))
     # Numeric URLs already select their connection address. Older libcurl builds

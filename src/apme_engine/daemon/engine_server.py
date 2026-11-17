@@ -1033,6 +1033,31 @@ def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[s
     return list(specs.values()), found_paths
 
 
+def _has_git_collection_requirements(files: Sequence[File]) -> bool:
+    """Check uploaded collection requirements for a Git source.
+
+    Args:
+        files: Uploaded project files.
+
+    Returns:
+        Whether a collection declares a Git source.
+    """
+    import yaml
+
+    from apme_engine.git_requirements import git_entries
+
+    for file in files:
+        if file.path.replace("\\", "/").lstrip("/") not in _REQUIREMENTS_PATHS:
+            continue
+        try:
+            data = yaml.safe_load(file.content.decode("utf-8"))
+        except (UnicodeDecodeError, yaml.YAMLError):
+            continue
+        if any(kind == "collections" for kind, _ in git_entries(data)):
+            return True
+    return False
+
+
 def merge_collection_specs(
     request_specs: list[str],
     discovered_specs: list[str],
@@ -1601,6 +1626,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         # 2. Collection discovery
         discovered, requirements_found = _discover_collection_specs(files)
+        if not dependency_files and _has_git_collection_requirements(files):
+            logger.warning(
+                "Git collection requirements were skipped because no dependency snapshot was supplied (req=%s)", scan_id
+            )
         hierarchy_collections = context_obj.hierarchy_payload.get("collection_set", [])
         if not isinstance(hierarchy_collections, list):
             hierarchy_collections = []
