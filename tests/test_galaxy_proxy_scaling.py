@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import io
 import os
@@ -617,3 +618,58 @@ def test_tarball_byte_cap_trips_before_tarfile_parses(monkeypatch: pytest.Monkey
         _extract_tarball(tarball)
     # The header walk alone trips the cap: neither tarfile pass starts.
     assert counting.call_count == 0
+
+
+def test_base256_size_field_keeps_low_order_zero_bytes() -> None:
+    r"""A base-256 size is decoded from all 12 bytes, not a stripped field.
+
+    ``b"\\x80" + b"\\0" * 7 + b"\\x40\\0\\0\\0"`` declares 1 GiB. Stripping the
+    trailing NUL bytes before testing the GNU marker truncates that to 64, so
+    the walk would skip a single block and let ``tarfile`` buffer the whole
+    payload.
+    """
+    from galaxy_proxy.converter import _header_declared_size
+
+    header = bytearray(512)
+    header[124:136] = b"\x80" + b"\0" * 7 + b"\x40\0\0\0"
+
+    assert _header_declared_size(bytes(header)) == 1024**3
+
+
+def test_base256_extension_size_is_bounded_before_parsing() -> None:
+    """A GNU long-name header using a large base-256 size stays bounded.
+
+    The raw walk must see the full declared size even when the low-order size
+    bytes are zero, otherwise the following block (a valid header, so the walk
+    keeps going) hides the oversized payload from the bound.
+    """
+    from galaxy_proxy.converter import _assert_extension_headers_bounded
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.GNU_FORMAT) as tf:
+        info = tarfile.TarInfo("/".join(["n" * 90] * 8))
+        info.size = 0
+        tf.addfile(info, io.BytesIO(b""))
+    raw = bytearray(buf.getvalue())
+
+    # Rewrite the long-name header's size field as base-256 1 GiB.
+    assert raw[156:157] == b"L"
+    raw[124:136] = b"\x80" + b"\0" * 7 + b"\x40\0\0\0"
+    _recompute_checksum(raw, 0)
+
+    with pytest.raises(ValueError, match="extension header too large"):
+        _assert_extension_headers_bounded(gzip.compress(bytes(raw)), max_bytes=64 * 1024 * 1024)
+
+
+def _recompute_checksum(block: bytearray, offset: int) -> None:
+    """Write a valid tar header checksum into one 512-byte block.
+
+    Args:
+        block: Raw archive bytes.
+        offset: Byte offset of the header block inside ``block``.
+    """
+    header = block[offset : offset + 512]
+    header[148:156] = b" " * 8
+    block[offset : offset + 512] = header
+    checksum = f"{sum(header):06o}\0 "
+    block[offset + 148 : offset + 156] = checksum.encode()

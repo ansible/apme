@@ -163,12 +163,15 @@ def _header_declared_size(header: bytes) -> int | None:
         Declared payload size, or ``None`` when the field is unparseable
         (a corrupt archive that ``tarfile`` rejects on its own).
     """
-    raw = header[124:136].rstrip(b"\0 ")
+    field = header[124:136]
+    if field[:1] and field[0] & 0x80:
+        # GNU base-256 encoding: the high bit of the first byte is the marker.
+        # Every byte is significant, so the field must not be stripped: a value
+        # whose low-order bytes are zero otherwise decodes far too small.
+        return int.from_bytes(field, "big") & ((1 << (8 * len(field) - 1)) - 1)
+    raw = field.rstrip(b"\0 ")
     if not raw:
         return 0
-    if raw[0] & 0x80:
-        # GNU base-256 encoding: the high bit is the marker.
-        return int.from_bytes(raw, "big") & ((1 << (8 * len(raw) - 1)) - 1)
     try:
         return int(raw, 8)
     except ValueError:
