@@ -19,6 +19,7 @@ _RULE_DOC_DIRS = [
     _APME_ENGINE_DIR / "graph" / "rules",
     _APME_ENGINE_DIR / "validators" / "opa" / "bundle",
     _APME_ENGINE_DIR / "validators" / "ansible" / "rules",
+    _APME_ENGINE_DIR / "validators" / "native" / "rules",
 ]
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _KV_RE = re.compile(r'^(\w+):\s*"?([^"\n]+)"?\s*$', re.MULTILINE)

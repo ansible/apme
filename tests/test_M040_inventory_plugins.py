@@ -2,10 +2,13 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from apme.v1 import common_pb2, validate_pb2
 from apme_engine.daemon.engine_server import _deduplicate_violations
 from apme_engine.daemon.native_validator_server import NativeValidatorServicer
 from apme_engine.rule_catalog import _collect_native_rules
+from apme_engine.validators.native.rules import M040 as m040_module
 from apme_engine.validators.native.rules.M040 import validate_inventory_plugins
 
 
@@ -53,3 +56,30 @@ def test_m040_keeps_separate_calls_on_one_line() -> None:
         {"inventory_plugins/custom.py": b"self._compose(disable_lookups=True); self._compose(disable_lookups=False)"}
     )
     assert len(_deduplicate_violations(findings)) == 2
+
+
+def test_m040_bounds_repeated_excerpt_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Findings past the diagnostic byte budget omit excerpts and report it.
+
+    Repeated findings on one long line must not retain or serialize the full
+    source line once the per-upload byte budget is exhausted; positions stay
+    complete and affected findings state the incomplete assessment.
+
+    Args:
+        monkeypatch: Temporary diagnostic byte budget override.
+    """
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 4_000)
+    line = b"self._compose(disable_lookups=True); " * 20
+    findings = validate_inventory_plugins({"inventory_plugins/custom.py": line})
+    assert len(findings) == 20
+    assert len({finding["path"] for finding in findings}) == 20
+    full = [finding for finding in findings if finding["message"] == m040_module._MESSAGE]
+    omitted = [finding for finding in findings if finding["message"] != m040_module._MESSAGE]
+    # Each in-budget finding is charged its full excerpt plus serialization
+    # overhead, so only the first three findings of this 740-byte line fit.
+    assert len(full) == 3
+    assert all(finding["original_yaml"] == line.decode() for finding in full)
+    assert full[0]["original_yaml"] is full[1]["original_yaml"] is full[2]["original_yaml"]
+    assert len(omitted) == 17
+    assert all(finding["original_yaml"] == m040_module._EXCERPT_OMITTED for finding in omitted)
+    assert all(finding["message"] == m040_module._MESSAGE + m040_module._INCOMPLETE_SUFFIX for finding in omitted)

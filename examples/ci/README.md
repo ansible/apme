@@ -54,12 +54,13 @@ operation_url="$project_url/operation"
 response=$(curl --fail --silent --show-error --max-time 30 \
   --request POST "$project_url/scans") || exit 2
 operation_id=$(jq -er '.operation_id' <<< "$response") || exit 2
+scan_id=$(jq -er '.scan_id' <<< "$response") || exit 2
 
 deadline=$((SECONDS + 600))
 while (( SECONDS < deadline )); do
   snapshot=$(curl --fail --silent --show-error --max-time 10 "$operation_url") || exit 2
   if ! jq -e --arg id "$operation_id" '.operation_id == $id' <<< "$snapshot" >/dev/null; then
-    echo 'The project now has a different operation.' >&2
+    printf 'The project now has a different operation. Retrieve scan %s from /api/v1/activity/%s.\n' "$scan_id" "$scan_id" >&2
     exit 2
   fi
   status=$(jq -er '.status' <<< "$snapshot") || exit 2
