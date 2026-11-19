@@ -1719,17 +1719,20 @@ class TestSpliceModifications:
         assert outcome.contributors == {"/workspace/site.yml": {qualified.node_id}}
 
     def test_contributors_include_every_owner_of_the_same_applied_edit(self) -> None:
-        """Two owners proposing one changing edit are both credited.
+        """Two distinct owners proposing one changing edit are both credited.
 
-        The merged splice applies the replacement once, but both agents proposed
-        a fix that is in the output, so neither may be dropped.
+        A task and its module node cover the same source span and both propose
+        the same qualification. The merged splice applies the replacement once,
+        but both owners proposed a fix that is in the output, so neither may be
+        dropped — and the patch must not carry the replacement twice.
         """
         graph = ContentGraph()
-        first = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
-        second = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
-        graph.add_node(first)
-        graph.add_node(second)
-        for node in (first, second):
+        task = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        module = _make_node("site.yml/plays[0]/tasks[0]/module", line_start=1, line_end=4)
+        graph.add_node(task)
+        graph.add_node(module)
+        assert task.node_id != module.node_id
+        for node in (task, module):
             node.record_state(0, "scanned")
             node.update_from_yaml(_TASK_YAML_FQCN)
             node.record_state(1, "transformed")
@@ -1738,7 +1741,8 @@ class TestSpliceModifications:
         outcome = splice_with_outcome(graph, {"/workspace/site.yml": _TASK_YAML_APT})
 
         assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
-        assert outcome.contributors == {"/workspace/site.yml": {first.node_id, second.node_id}}
+        assert outcome.patches[0].patched == _TASK_YAML_FQCN
+        assert outcome.contributors == {"/workspace/site.yml": {task.node_id, module.node_id}}
 
     def test_contributors_exclude_a_node_without_a_source_edit(self) -> None:
         """A snapshot change that produces no line edit lands for no node.

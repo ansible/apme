@@ -273,12 +273,22 @@ A 409 does not settle it either: the Gateway also returns 409 when an earlier
 tokened submit has claimed the scan or recorded no branch yet, and in both
 cases the original push or PR may still be running, or may have finished
 without being recorded. Settle the original first by re-sending the unchanged
-body with the same key. The outcome counts as known only when that key returns
-a result, or when SCM shows the branch or the PR — a 409 on its own leaves it
-unknown, and so does an empty SCM check. Until then keep the key and do not
-start a new intent. Use a fresh key file only after one of those two
-conditions holds and neither the branch nor the PR exists in SCM — that is the
-case where nothing landed and a new intent is genuinely needed
+body with the same key.
+
+The outcome counts as known only when that key returns a result, or when SCM
+shows evidence attributable to *this* submit: the commit it published on the
+branch, plus the PR when `create_pr` was requested. Branch existence alone
+proves nothing — the branch may be one the request named explicitly and that
+already existed before the submit ran — and a branch that still points at its
+previous head means the push never landed. When `create_pr` is true, a visible
+branch is not a finished submit either: PR creation may still be running, so
+keep the key until the PR itself appears. A 409 on its own leaves the outcome
+unknown, and so does an empty SCM check.
+
+Until one of those conditions holds, keep the key and do not start a new
+intent. Use a fresh key file only after the original outcome is known to be
+unrecorded *and* SCM shows neither the submitted commit nor the PR — that is
+the case where nothing landed and a new intent is genuinely needed
 (`set -o noclobber` also stops an accidental reuse).
 
 Omitting the header is the only way to start an unclaimed operation; `apme

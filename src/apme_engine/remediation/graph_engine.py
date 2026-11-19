@@ -1697,7 +1697,7 @@ def splice_with_outcome(
     # back to the original left nothing behind, a replacement may write the
     # text already in the file, and a node whose snapshot changed without a
     # line-level edit (e.g. a trailing newline) landed nothing either.
-    landed = {patch.path: landed_by_file.get(patch.path, set()) for patch in patches}
+    landed = {patch.path: landed_by_file[patch.path] for patch in patches}
     return SpliceOutcome(patches=patches, unpatched=sorted(unpatched), contributors=landed)
 
 
