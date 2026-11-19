@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import posixpath
 import re
 from collections.abc import Mapping
 from typing import cast
@@ -18,6 +17,11 @@ from typing import cast
 from apme.v1.common_pb2 import File
 from apme.v1.engine_pb2 import ScanChunk
 from apme_engine.config_env import get_env_int
+from apme_engine.daemon.fs_utils import (
+    canonicalize_upload_entries,
+    canonicalize_upload_relpath,
+    is_trivial_respelling,
+)
 from apme_engine.daemon.session import SessionState
 
 logger = logging.getLogger("apme.engine")
@@ -51,10 +55,14 @@ if _SESSION_MAX_UPLOAD_BYTES <= 0 or _SESSION_MAX_UPLOAD_FILES <= 0:
 def _normalize_upload_path(path: str) -> str:
     """Normalize an upload path to a session-relative posix key.
 
-    Upload keys must match materialized file paths: posix-style separators,
-    no leading slash, ``.``/``..`` collapsed. Paths escaping the session
-    root are rejected so ``original_files`` keys always match the files
-    written by ``write_chunked_fs``.
+    Single source of truth: delegates to
+    :func:`apme_engine.daemon.fs_utils.canonicalize_upload_relpath`, the same
+    helper the Gateway WebSocket upload and ``write_chunked_fs`` use, so a
+    path is accepted or rejected identically on every ingress. Backslashes
+    become slashes, ``.``/``//`` collapse, and absolute, drive-absolute
+    (``C:...``), blank, or root-escaping paths are rejected so
+    ``original_files`` keys always match the files written by
+    ``write_chunked_fs``.
 
     Args:
         path: Raw ``File.path`` from an upload chunk.
@@ -63,13 +71,9 @@ def _normalize_upload_path(path: str) -> str:
         Normalized relative posix path.
 
     Raises:
-        ValueError: If the path is empty or escapes the session root.
-    """
-    posix = path.replace("\\", "/").lstrip("/")
-    normalized = posixpath.normpath(posix)
-    if not normalized or normalized == "." or normalized == ".." or normalized.startswith("../"):
-        raise ValueError(f"Upload path escapes session root or is empty: {path!r}")
-    return normalized
+        ValueError: If the path is empty, absolute, or escapes the session root.
+    """  # noqa: DOC502 -- the raise lives in canonicalize_upload_relpath
+    return canonicalize_upload_relpath(path)
 
 
 def validate_dependency_path(path: str) -> str:
@@ -116,6 +120,52 @@ def _hash_upload_files(files: Mapping[str, bytes]) -> str:
     return digest.hexdigest()
 
 
+def plan_upload_raw_path_provenance(provenance: Mapping[str, str], raw_paths: list[str]) -> dict[str, str]:
+    r"""Reject cross-chunk raw-path collisions and return the paths to record.
+
+    Each chunk is canonicalized on its own, so ``a\b.yml`` in one chunk and
+    ``a/b.yml`` in the next both pass the per-chunk check — yet on POSIX they
+    are different files, and ``original_files`` keeps only the canonical key,
+    so the later chunk would silently replace the earlier file (the Gateway
+    rejects that same sequence, so the engine must agree). Raw provenance is
+    retained on the session for the whole upload so the check spans chunks.
+    Exact repeats and trivial respellings (``./a.yml`` vs ``a.yml``,
+    ``a//b.yml`` vs ``a/b.yml``) stay last-wins, matching the intra-chunk
+    rule in :func:`canonicalize_upload_entries`. Checks run for every path
+    before anything is returned, and the result is *not* applied to
+    *provenance*: an ingress must commit it only once its own validation
+    (dependency paths, byte/file caps) passes, otherwise a rejected chunk
+    poisons the retained session and a valid retry collides with a file the
+    engine never accepted.
+
+    Args:
+        provenance: Canonical-key to first-raw-spelling map for this upload
+            (``SessionState.upload_raw_paths``, or a local map for one-shot
+            stream ingresses). Read only.
+        raw_paths: Raw ``File.path`` values from this chunk, in arrival order.
+
+    Returns:
+        Canonical-key to first-raw-spelling entries to merge into
+        *provenance* once the chunk is accepted (empty for known keys).
+
+    Raises:
+        ValueError: If a raw path maps to a canonical key already claimed by a
+            genuinely different raw spelling, or escapes the session root.
+    """
+    planned: dict[str, str] = {}
+    for raw_path in raw_paths:
+        key = canonicalize_upload_relpath(raw_path)
+        previous = planned.get(key, provenance.get(key))
+        if previous is not None and previous != raw_path and not is_trivial_respelling(previous, raw_path):
+            msg = (
+                f"Upload paths collide after canonicalization: {previous!r} and {raw_path!r} "
+                f"both map to {key!r} across upload chunks; rename one file"
+            )
+            raise ValueError(msg)
+        planned.setdefault(key, raw_path)
+    return planned
+
+
 def _hash_upload_chunk(chunk: ScanChunk) -> str:
     """Hash a chunk's payload with the same normalize+dedup as append.
 
@@ -132,11 +182,11 @@ def _hash_upload_chunk(chunk: ScanChunk) -> str:
         Hex digest of the chunk payload.
 
     Raises:
-        ValueError: If a path escapes the session root.
-    """  # noqa: DOC502 -- the raise lives in _normalize_upload_path
-    staged: dict[str, bytes] = {}
-    for f in chunk.files:
-        staged[_normalize_upload_path(f.path)] = f.content  # type: ignore[attr-defined]
+        ValueError: If a path escapes the session root or two distinct raw
+            paths collapse onto one canonical key.
+    """  # noqa: DOC502 -- the raise lives in canonicalize_upload_entries
+    entries = canonicalize_upload_entries([(f.path, f.content) for f in chunk.files])  # type: ignore[attr-defined]
+    staged: dict[str, bytes] = dict(entries)
     for f in dependency_upload_files(chunk):
         staged[".git-dependencies/" + _normalize_upload_path(f.path)] = f.content
     return _hash_upload_files(staged)
@@ -145,9 +195,12 @@ def _hash_upload_chunk(chunk: ScanChunk) -> str:
 def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
     """Append upload chunk files using normalized session-relative keys.
 
-    Paths are normalized with :func:`_normalize_upload_path` — the same
-    helper applied on the materialization path — so ``original_files``
-    keys always match materialized files. Per-session aggregate caps
+    Paths are canonicalized with
+    :func:`apme_engine.daemon.fs_utils.canonicalize_upload_entries` — the same
+    helper applied on the materialization path and on the Gateway upload — so
+    ``original_files`` keys always match materialized files and a genuine
+    post-canonicalization collision is rejected instead of silently dropping
+    a file. Per-session aggregate caps
     (``APME_SESSION_MAX_UPLOAD_BYTES`` / ``APME_SESSION_MAX_UPLOAD_FILES``)
     are enforced before mutating any state.
 
@@ -159,14 +212,26 @@ def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
     Raises:
         ValueError: If the session already processed its terminal chunk
             (post-seal uploads are rejected — start a new session), if a
-            path escapes the session root, or if an aggregate upload cap
-            would be exceeded.
+            path escapes the session root, if two distinct raw paths collapse
+            onto one canonical key (within this chunk or across chunks of the
+            same upload), or if an aggregate upload cap would be exceeded.
     """
     if session.upload_sealed:
         raise ValueError("Session upload already processed: start a new session for additional files")
     if any(_normalize_upload_path(f.path).startswith(".git-dependencies/") for f in chunk.files):  # type: ignore[attr-defined]
         raise ValueError("Reserved dependency upload path")
-    staged = [(_normalize_upload_path(f.path), f.content) for f in chunk.files]  # type: ignore[attr-defined]
+    planned_provenance = plan_upload_raw_path_provenance(
+        session.upload_raw_paths,
+        [f.path for f in chunk.files],  # type: ignore[attr-defined]
+    )
+    dependency_files = dependency_upload_files(chunk)
+    if dependency_files:
+        planned_provenance.update(
+            plan_upload_raw_path_provenance(
+                session.upload_raw_paths, [".git-dependencies/" + f.path for f in dependency_files]
+            )
+        )
+    staged = canonicalize_upload_entries([(f.path, f.content) for f in chunk.files])  # type: ignore[attr-defined]
     for f in dependency_upload_files(chunk):
         path = validate_dependency_path(f.path)
         staged.append((".git-dependencies/" + path, f.content))
@@ -196,3 +261,8 @@ def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
             continue
         session.original_files[path] = content
         session.working_files[path] = content
+    # Provenance is committed only now: the chunk passed dependency-path
+    # validation and both aggregate caps, so an over-limit chunk can no
+    # longer poison a retained unsealed session against a valid retry.
+    for key, raw_path in planned_provenance.items():
+        session.upload_raw_paths.setdefault(key, raw_path)

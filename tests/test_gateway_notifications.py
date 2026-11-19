@@ -428,6 +428,94 @@ class TestGenerateNotifications:
         finally:
             unsubscribe(queue)
 
+    async def test_generation_does_not_lock_the_scan_row(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Notification generation never blocks a concurrent scan-row write.
+
+        Regression: generation used ``SELECT ... FOR UPDATE`` on the ``scans``
+        row, so ``link_scan_to_project`` waited on that lock for the whole
+        generation — indefinitely, since the Gateway sets no ``lock_timeout``.
+        The duplicate-notification race is already closed by
+        ``uq_notifications_scan_id_type``, so the lock must not come back.
+
+        Args:
+            monkeypatch: Test dependency patcher used to park generation
+                mid-flight while the link runs.
+        """
+        from apme_gateway import notifications as notifications_module
+        from apme_gateway.db import queries as q
+        from apme_gateway.grpc_reporting.servicer import _generate_scan_notifications
+
+        project_id = "proj-notification-nolock"
+        scan_id = "scan-notification-nolock"
+        async with get_session() as db:
+            db.add(
+                Project(
+                    id=project_id,
+                    name="No Lock Project",
+                    repo_url="https://github.com/test/nolock.git",
+                    branch="main",
+                    created_at="2026-09-04T00:00:00Z",
+                    health_score=80,
+                )
+            )
+            await db.commit()
+        await _seed_session_and_scan(scan_id=scan_id, session_id="sess-notification-nolock", project_id=None)
+
+        original_should_write = notifications_module._should_write_scan_complete
+        generation_parked = asyncio.Event()
+        link_done = asyncio.Event()
+        parked_once = False
+
+        async def park_generation(
+            db: AsyncSession,
+            existing: Notification | None,
+            scan: Scan,
+        ) -> bool:
+            nonlocal parked_once
+            if not parked_once:
+                parked_once = True
+                generation_parked.set()
+                # No timeout here: if generation were to expire its own
+                # timeout it would roll back (releasing the lock) and let the
+                # link succeed, so the test could pass with the lock restored.
+                # The link below carries the bounded timeout instead, and the
+                # task await is bounded so a wedge still fails the suite.
+                await link_done.wait()
+            return await original_should_write(db, existing, scan)
+
+        monkeypatch.setattr(notifications_module, "_should_write_scan_complete", park_generation)
+
+        generated: list[bool] = []
+
+        async def generation() -> None:
+            async with get_session() as db:
+                generated.append(await _generate_scan_notifications(db, scan_id))
+
+        generation_task = asyncio.create_task(generation())
+        try:
+            await asyncio.wait_for(generation_parked.wait(), timeout=10)
+            # Generation is parked inside its open transaction here. Linking
+            # writes the same ``scans`` row and must not wait on it.
+            async with get_session() as db:
+                linked = await asyncio.wait_for(
+                    q.link_scan_to_project(db, scan_id, project_id, trigger="ui", scan_type="check", source="gateway"),
+                    timeout=10,
+                )
+            assert linked is True
+            link_done.set()
+            await asyncio.wait_for(generation_task, timeout=10)
+            # A rolled-back generation (its own timeout firing first) would
+            # return False here instead of silently passing the test.
+            assert generated == [True]
+        finally:
+            link_done.set()
+            if not generation_task.done():
+                generation_task.cancel()
+                await asyncio.gather(generation_task, return_exceptions=True)
+
     async def test_unlinked_grpc_notification_is_replaced_after_scan_link(
         self,
         monkeypatch: pytest.MonkeyPatch,

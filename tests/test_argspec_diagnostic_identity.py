@@ -642,7 +642,7 @@ async def test_ansible_adapter_emits_coverage_separately_from_diagnostics(tmp_pa
     run = _validate_argspec_tasks([{"type": "taskcall", "key": _NODE_ID, "module_defaults_incomplete": True}], tmp_path)
     with patch("apme_engine.daemon.ansible_validator_server._run_ansible_validate", return_value=_AnsibleResult(run)):
         response = await AnsibleValidatorServicer().Validate(ValidateRequest(hierarchy_payload=b"{}"), MagicMock())
-    assert {finding.rule_id for finding in response.violations} == {"L058"}  # type: ignore[attr-defined]
-    assert decode_argspec_coverage(response.diagnostics.metadata.get(ARGSPEC_COVERAGE_KEY)) == {  # type: ignore[attr-defined]
+    assert {finding.rule_id for finding in response.violations} == {"L058"}
+    assert decode_argspec_coverage(response.diagnostics.metadata.get(ARGSPEC_COVERAGE_KEY)) == {
         _NODE_ID: ARGSPEC_RULE_IDS
     }

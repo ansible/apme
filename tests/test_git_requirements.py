@@ -504,7 +504,7 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
         venv_root=final_root, failed_collections=["unavailable.collection"], installed_collections=[]
     )
 
-    def peek(sid: str, version: str, specs: list[str]) -> object:
+    def peek(sid: str, version: str, specs: list[str], galaxy_server_configs: object = None) -> object:
         calls.append((sid, tuple(specs)))
         return final if specs else initial
 
@@ -689,7 +689,7 @@ async def test_git_graph_uses_final_collection_environment(
     initial = SimpleNamespace(venv_root=initial_root, failed_collections=[], installed_collections=[])
     final = SimpleNamespace(venv_root=final_root, failed_collections=[], installed_collections=[])
     manager = SimpleNamespace(
-        peek_warm=lambda sid, version, specs: final if specs else initial,
+        peek_warm=lambda sid, version, specs, galaxy_server_configs=None: final if specs else initial,
         get=lambda *_: initial,
     )
     monkeypatch.setattr(engine_server.EngineServicer, "_get_venv_manager", lambda _: manager)

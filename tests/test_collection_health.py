@@ -239,7 +239,7 @@ class TestCollectionHealthServicer:
         request = ValidateRequest(request_id="test-1", venv_path="")
         ctx = MagicMock()
         resp = await servicer.Validate(request, ctx)
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
+        assert len(resp.violations) == 0
 
     async def test_validate_with_findings(self) -> None:
         """Returns violations from collection scanning."""
@@ -266,9 +266,9 @@ class TestCollectionHealthServicer:
         with patch("apme_engine.daemon.collection_health_server._run_scan", return_value=violations):
             resp = await servicer.Validate(request, ctx)
 
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        assert resp.diagnostics.validator_name == "collection_health"  # type: ignore[attr-defined]
+        assert resp.diagnostics.validator_name == "collection_health"
 
     async def test_health(self) -> None:
         """Health returns ok (collection scanner is pure Python)."""

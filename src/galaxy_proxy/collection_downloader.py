@@ -22,6 +22,47 @@ from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
+_COLLECTION_SPEC_RE = re.compile(r"^[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+(:([A-Za-z0-9_.,<>=!~-]+|\*))?$")
+
+
+def validate_collection_spec(spec: str) -> str:
+    """Validate a Galaxy collection spec against option-injection boundaries.
+
+    Accepts ``namespace.name`` with an optional ``:version`` suffix
+    (e.g. ``community.general:>=9.0``). Rejects empty specs, leading
+    ``-`` (option injection), inner whitespace, and characters outside
+    the allowlist so a spec can never become an ``ansible-galaxy`` flag
+    or shell metachar. ``*`` is accepted only as the entire version
+    (``ns.name:*``, meaning any version) — never embedded in a range
+    such as ``>=1.0.*``. PEP 440 operators (``==``, ``>=``, ``~=``, ``!=``,
+    compound ``,`` ranges) are accepted; ``~`` is allowed for ``~=``.
+
+    Spaces are normalized before validation (all ``" "`` removed, then
+    validated), identically on every path that accepts specs, so
+    ``"ns.name: >= 9.0"`` and ``"ns.name:>=9.0"`` validate identically.
+
+    Args:
+        spec: Raw collection specifier.
+
+    Returns:
+        The space-normalized spec when valid.
+
+    Raises:
+        ValueError: When the spec is empty, starts with ``-``, or fails
+            the allowlist regex.
+    """
+    value = (spec or "").strip().replace(" ", "")
+    if not value:
+        msg = "Collection spec must not be empty"
+        raise ValueError(msg)
+    if value.startswith("-"):
+        msg = f"Collection spec must not start with '-': {value[:60]}"
+        raise ValueError(msg)
+    if not _COLLECTION_SPEC_RE.match(value):
+        msg = f"Invalid collection spec: {value[:80]}"
+        raise ValueError(msg)
+    return value
+
 
 def read_server_validate_certs(parser: configparser.ConfigParser, name: str) -> bool | None:
     """Resolve native TLS policy with environment precedence and Ansible booleans.
@@ -174,6 +215,35 @@ def write_temp_ansible_cfg(
     return cfg_path
 
 
+def write_isolated_ansible_cfg(dest_dir: Path) -> Path:
+    """Write a minimal ``ansible.cfg`` that suppresses default discovery.
+
+    Used for request-scoped Galaxy servers, whose credentials are injected as
+    ``ANSIBLE_GALAXY_SERVER_*`` environment variables. Pointing
+    ``ANSIBLE_CONFIG`` at this file keeps ansible from falling back to a
+    discovered ``ansible.cfg`` (cwd, ``~/.ansible.cfg``, ``/etc/ansible``)
+    whose same-named ``[galaxy_server.<name>]`` section could supply a token
+    or ``auth_url`` for a request-supplied URL. TLS verification stays on, as
+    for any other generated config; an explicit ``ANSIBLE_GALAXY_IGNORE=true``
+    in the environment still opts out.
+
+    Args:
+        dest_dir: Directory to write the config file into.
+
+    Returns:
+        Path to the written ``ansible.cfg``.
+    """
+    cfg = configparser.ConfigParser(interpolation=None)
+    cfg.add_section("galaxy")
+    cfg.set("galaxy", "ignore_certs", "false")
+
+    cfg_path = dest_dir / "ansible.cfg"
+    fd = os.open(str(cfg_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        cfg.write(f)
+    return cfg_path
+
+
 def _find_tarballs(directory: Path) -> list[Path]:
     """Find all ``.tar.gz`` files in a directory (non-recursive).
 
@@ -227,8 +297,14 @@ def _inject_galaxy_env(env: dict[str, str], servers: list[GalaxyServerConfig]) -
         env[f"{prefix}URL"] = s.url
         if s.token:
             env[f"{prefix}TOKEN"] = s.token
+        else:
+            # A scoped server that omits its credential must not inherit the
+            # pod environment's value: it would be sent to the caller's URL.
+            env.pop(f"{prefix}TOKEN", None)
         if s.auth_url:
             env[f"{prefix}AUTH_URL"] = s.auth_url
+        else:
+            env.pop(f"{prefix}AUTH_URL", None)
         if s.validate_certs is not None:
             env[f"{prefix}VALIDATE_CERTS"] = str(s.validate_certs).lower()
         else:
@@ -317,6 +393,9 @@ async def download_collections(
 
     Returns:
         DownloadResult with paths to downloaded tarballs and any failures.
+        Specs failing validation are recorded in ``failed_specs`` (batch
+        continues with the valid remainder) instead of raising, so one
+        invalid spec cannot abort the batch or escape as a 502.
 
     Raises:
         ValueError: When both ``ansible_cfg_path`` and ``servers`` are provided.
@@ -327,6 +406,20 @@ async def download_collections(
 
     if not collection_specs:
         return DownloadResult()
+
+    validated_specs: list[str] = []
+    invalid_specs: list[str] = []
+    for spec in collection_specs:
+        try:
+            validated_specs.append(validate_collection_spec(spec))
+        except ValueError as exc:
+            logger.warning("Skipping invalid collection spec %r: %s", spec, exc)
+            invalid_specs.append(spec)
+    if not validated_specs:
+        return DownloadResult(
+            failed_specs=list(collection_specs),
+            stderr="No valid collection specs",
+        )
 
     if servers is not None and not servers:
         return DownloadResult(
@@ -344,7 +437,7 @@ async def download_collections(
     )
 
     normalized_specs = []
-    for spec in collection_specs:
+    for spec in validated_specs:
         if ":" in spec:
             fqcn, version = spec.split(":", 1)
             normalized_specs.append(f"{fqcn.strip()}:{version.strip()}")
@@ -360,6 +453,7 @@ async def download_collections(
     ]
     if not include_dependencies:
         cmd.append("--no-deps")
+    cmd.append("--")
     cmd.extend(normalized_specs)
 
     env = dict(os.environ)
@@ -373,7 +467,22 @@ async def download_collections(
         # ansible.cfg (their galaxy.ignore_certs setting must win).
         if ansible_cfg_path is None:
             env.setdefault("ANSIBLE_GALAXY_IGNORE", "false")
-        if servers:
+        if servers and ansible_cfg_path is None:
+            # Request-scoped servers are the only trusted Galaxy config source
+            # for this download. Isolate it from default ansible.cfg discovery
+            # so a same-named section cannot inject credentials, while keeping
+            # the env-var injection path (ADR-045) as the primary mechanism.
+            temp_cfg_dir = Path(tempfile.mkdtemp(prefix="apme-galaxy-proxy-"))
+            try:
+                _inject_galaxy_env(env, servers)
+                env["ANSIBLE_CONFIG"] = str(write_isolated_ansible_cfg(temp_cfg_dir))
+            except ValueError:
+                for key in list(env):
+                    if key == "ANSIBLE_GALAXY_SERVER_LIST" or key.startswith("ANSIBLE_GALAXY_SERVER_"):
+                        env.pop(key, None)
+                env["ANSIBLE_CONFIG"] = str(write_temp_ansible_cfg(servers, temp_cfg_dir))
+                logger.info("Falling back to temp ansible.cfg for Galaxy config because server names are not env-safe")
+        elif servers:
             try:
                 _inject_galaxy_env(env, servers)
             except ValueError:
@@ -415,6 +524,9 @@ async def download_collections(
                 download_error_summary(stderr_text or stdout_text),
             )
             failed = _compute_failed_specs(collection_specs, tarballs)
+            for spec in invalid_specs:
+                if spec not in failed:
+                    failed.append(spec)
             return DownloadResult(
                 tarball_paths=tarballs,
                 failed_specs=failed,
@@ -423,7 +535,11 @@ async def download_collections(
 
         logger.info("galaxy_backend_response operation=download status=200 tarballs=%d", len(tarballs))
         status = "ok"
-        return DownloadResult(tarball_paths=tarballs, stderr=stderr_text)
+        return DownloadResult(
+            tarball_paths=tarballs,
+            failed_specs=list(invalid_specs),
+            stderr=stderr_text,
+        )
 
     except TimeoutError:
         status = "timeout"

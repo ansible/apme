@@ -8,7 +8,6 @@ Galaxy URL encoded-literal rejection, and Gateway-side HTTPS validation.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -54,18 +53,19 @@ async def test_accumulate_chunks_dedups_repeated_normalized_paths() -> None:
 async def test_drain_through_keeps_queue_accounting_stable() -> None:
     """Retained newer-generation items do not inflate unfinished_tasks.
 
-    After draining and consuming the retained item, ``join()`` must
-    return promptly — without the matching ``task_done()`` it would hang
-    on a phantom outstanding item.
+    After draining and consuming the retained item, ``empty()`` must
+    report no queued answers — without the matching ``task_done()`` the
+    internal join would hang on a phantom outstanding item.
     """
     queue: OperatorAnswerQueue[str] = OperatorAnswerQueue()
     queue.begin_prompt()
     await queue.put("old")
     await queue.put("new", for_generation=99)
     assert queue.drain_through(1) == 1
-    queue._items.get_nowait()
-    queue._items.task_done()
-    await asyncio.wait_for(queue._items.join(), timeout=1.0)
+    assert not queue.empty()
+    got = await queue.next_answer(1.0, "Test wait", "defaulting", expected_generation=99)
+    assert got == "new"
+    assert queue.empty()
 
 
 async def test_next_answer_preserves_newer_item_without_losing_it() -> None:
@@ -74,8 +74,9 @@ async def test_next_answer_preserves_newer_item_without_losing_it() -> None:
     queue.begin_prompt()
     await queue.put("future", for_generation=99)
     assert await queue.next_answer(0.01, "Test wait", "defaulting") is None
-    assert queue._items.qsize() == 1
+    assert not queue.empty()
     assert await queue.next_answer(0.05, "Future wait", "defaulting", expected_generation=99) == "future"
+    assert queue.empty()
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]

@@ -54,9 +54,9 @@ class TestOpaValidatorServicer:
         with patch("apme_engine.daemon.opa_validator_server._run_opa", return_value=violations):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == "L024"  # type: ignore[attr-defined]
-        assert resp.request_id == "test-req-1"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == "L024"
+        assert resp.request_id == "test-req-1"
 
     async def test_validate_returns_diagnostics(self) -> None:
         """Validate returns ValidatorDiagnostics with rule timings."""
@@ -78,7 +78,7 @@ class TestOpaValidatorServicer:
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        diag = resp.diagnostics  # type: ignore[attr-defined]
+        diag = resp.diagnostics
         assert diag.validator_name == "opa"
         assert diag.request_id == "diag-opa-1"
         assert diag.violations_found == 3
@@ -99,10 +99,10 @@ class TestOpaValidatorServicer:
 
         with patch("apme_engine.daemon.opa_validator_server._run_opa", return_value=[]):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
-        assert resp.request_id == "test-req-2"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 0
+        assert resp.request_id == "test-req-2"
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        assert resp.diagnostics.violations_found == 0  # type: ignore[attr-defined]
+        assert resp.diagnostics.violations_found == 0
 
     async def test_validate_opa_error_returns_infra_violation(self) -> None:
         """Validate returns R902 when OPA evaluation fails."""
@@ -119,9 +119,9 @@ class TestOpaValidatorServicer:
             "apme_engine.daemon.opa_validator_server._run_opa", side_effect=RuntimeError("opa binary not found")
         ):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
-        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR
 
     async def test_validate_opa_infra_error_returns_infra_violation(self) -> None:
         """Validate returns R902 when OPA infrastructure fails."""
@@ -140,9 +140,9 @@ class TestOpaValidatorServicer:
             side_effect=OpaInfrastructureError("OPA binary is not available"),
         ):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
-        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR
 
     async def test_health_returns_ok(self) -> None:
         """Health always returns ok (no external dependency)."""
@@ -187,9 +187,9 @@ class TestNativeValidatorServicer:
         with patch("apme_engine.daemon.native_validator_server._run_graph", return_value=mock_result) as mock_run:
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == "L026"  # type: ignore[attr-defined]
-        assert resp.request_id == "native-1"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == "L026"
+        assert resp.request_id == "native-1"
         mock_run.assert_called_once_with(graph_data, None, [])
 
     async def test_validate_passes_graph_rule_opt_in(self) -> None:
@@ -253,7 +253,7 @@ class TestNativeValidatorServicer:
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        diag = resp.diagnostics  # type: ignore[attr-defined]
+        diag = resp.diagnostics
         assert diag.validator_name == "native"
         assert diag.request_id == "diag-native-1"
         assert diag.violations_found == 2
@@ -267,7 +267,7 @@ class TestNativeValidatorServicer:
         servicer = NativeValidatorServicer()
 
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
+        assert len(resp.violations) == 0
 
     async def test_validate_bad_graph_data_returns_infra_violation(self) -> None:
         """Validate with invalid content_graph_data returns R902."""
@@ -280,9 +280,9 @@ class TestNativeValidatorServicer:
         )
         servicer = NativeValidatorServicer()
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
-        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR
 
     async def test_health_returns_ok(self) -> None:
         """Health returns ok for Native validator."""
@@ -363,7 +363,7 @@ class TestNativeValidatorServicer:
         _data, dirty_arg, opt_in_arg = mock_run.call_args[0]
         assert dirty_arg == frozenset({"node-a", "node-b"})
         assert opt_in_arg == []
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
+        assert len(resp.violations) == 0
 
     async def test_validate_empty_dirty_node_ids_triggers_full_scan(self) -> None:
         """Validate with empty dirty_node_ids calls full graph scan."""
@@ -414,7 +414,7 @@ class TestGitleaksValidatorServicerDiagnostics:
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        diag = resp.diagnostics  # type: ignore[attr-defined]
+        diag = resp.diagnostics
         assert diag.validator_name == "gitleaks"
         assert diag.request_id == "diag-gl-1"
         assert diag.violations_found == 1
@@ -431,7 +431,7 @@ class TestGitleaksValidatorServicerDiagnostics:
         request = validate_pb2.ValidateRequest(request_id="diag-gl-2")
         servicer = GitleaksValidatorServicer()
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
+        assert len(resp.violations) == 0
 
 
 class TestAnsibleValidatorServicerMigration:
@@ -486,7 +486,7 @@ class TestAnsibleValidatorServicerMigration:
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        diag = resp.diagnostics  # type: ignore[attr-defined]
+        diag = resp.diagnostics
         assert diag.validator_name == "ansible"
         assert diag.request_id == "diag-ans-1"
         assert diag.violations_found == 1
@@ -522,7 +522,7 @@ class TestAnsibleValidatorServicerMigration:
         with patch("apme_engine.daemon.ansible_validator_server._run_ansible_validate", return_value=result) as run:
             response = await AnsibleValidatorServicer().ValidateStream(chunks(), FakeGrpcContext())  # type: ignore[arg-type]
 
-        assert response.diagnostics.request_id == "streamed-ans-1"  # type: ignore[attr-defined]
+        assert response.diagnostics.request_id == "streamed-ans-1"
         sent_files = run.call_args.args[0]
         assert [(file.path, file.content) for file in sent_files] == [("plugin.py", b"plugin source")]
 
@@ -861,7 +861,7 @@ class TestRequestIdPropagation:
     def test_validate_response_has_request_id_field(self) -> None:
         """ValidateResponse has request_id field."""
         resp = validate_pb2.ValidateResponse(request_id="abc-123")
-        assert resp.request_id == "abc-123"  # type: ignore[attr-defined]
+        assert resp.request_id == "abc-123"
 
     def test_validate_response_has_diagnostics_field(self) -> None:
         """ValidateResponse has diagnostics field."""
@@ -875,8 +875,8 @@ class TestRequestIdPropagation:
             diagnostics=diag,
         )
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        assert resp.diagnostics.validator_name == "test"  # type: ignore[attr-defined]
-        assert resp.diagnostics.total_ms == 10.0  # type: ignore[attr-defined]
+        assert resp.diagnostics.validator_name == "test"
+        assert resp.diagnostics.total_ms == 10.0
 
 
 class TestDiagnosticsProtoMessages:

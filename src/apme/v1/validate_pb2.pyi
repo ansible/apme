@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 
-from apme.v1.common_pb2 import ProgressUpdate
+from apme.v1.common_pb2 import ProgressUpdate, ValidatorDiagnostics, Violation
 
 class ValidateRequestChunk:
     serialized_request_chunk: bytes
@@ -39,5 +39,8 @@ class ValidateRequest:
     def FromString(cls, data: bytes) -> ValidateRequest: ...
 
 class ValidateResponse:
+    violations: list[Violation]
+    request_id: str
+    diagnostics: ValidatorDiagnostics
     logs: list[ProgressUpdate]
     def __init__(self, **kwargs: object) -> None: ...

@@ -63,6 +63,34 @@ apme daemon status    # check if running
 apme daemon stop      # stop the background daemon
 ```
 
+## Topology: CLI-local XOR Gateway-managed
+
+APME has two exclusive operating modes for the same project content —
+pick one per workflow (shared-space rule):
+
+- **CLI-local (default):** `apme check`, `apme remediate`, `apme format`
+  talk to the local Engine daemon over gRPC. No Gateway, no PostgreSQL,
+  no persistent history. Fast, single-user, CI-friendly.
+- **Gateway-managed:** registered projects (`POST /api/v1/projects`)
+  run via Gateway REST + SSE (`POST /operation`, `POST /operate`,
+  `GET /operation/events`). History, health, SBOM, and PR submit live in
+  Gateway + PostgreSQL. The Engine is still the scanner; the Gateway is
+  the orchestrator and system of record. `POST /operate` is an
+  agent-oriented one-call convenience; the UI drives the stepped
+  `/operation` flow (no UI wrapper by design).
+
+Bridge between the spaces (additive, opt-in only):
+
+```bash
+apme check --json . > check.json
+apme check . --report-to-gateway --gateway-url http://localhost:8080
+# POSTs check JSON to Gateway POST /api/v1/scans/import (stored as activity).
+apme check . --report-to-gateway --project-id <uuid>  # link to a project
+```
+
+There is no auto-sync: CLI-local runs stay local unless `--report-to-gateway`
+is passed. Gateway-managed runs never write to the CLI-local tree.
+
 ## Commands
 
 ### `apme check` — scan for violations
@@ -78,6 +106,7 @@ apme check -v .                           # summary diagnostics + top 10 slow ru
 apme check -vv .                          # full per-rule timing breakdown
 apme check --diff .                       # show what remediate would change
 apme check --ansible-version 2.17 .       # target a specific ansible-core version
+apme check . --report-to-gateway --gateway-url http://localhost:8080
 ```
 
 **Exit codes:** 0 = clean, 1 = violations found, 2 = error.
@@ -146,15 +175,178 @@ apme suppress add --rule-id L046 --mode rule_only .                # suppress al
 apme suppress add --rule-id L046 --original-yaml 'name: example' . # suppress a specific occurrence (full mode)
 apme suppress list .                                               # show active suppressions
 apme suppress remove FINGERPRINT_PREFIX .                          # remove a suppression
+apme suppress fingerprint --rule-id L046 --file snippet.yml        # dry-run: print hash only
 ```
 
 Suppressions are stored in `.apme/suppressions.yml` within your project.
+
+> `--mode rule_module` is deprecated: it warns on stderr and behaves as
+> `rule_only`. Violation rows do not store resolved module FQCNs, so a
+> rule_module suppression could never match server-side.
+
+Violations → suppress recipe (fingerprint uses the same canonical hash
+as the Gateway `_violation_fingerprint` server computation, ADR-055):
+
+```bash
+apme check --json . | jq -r '.violations[0].original_yaml' > snippet.yml
+apme suppress fingerprint --rule-id L046 --file snippet.yml
+apme suppress add --rule-id L046 --fingerprint <hash> --reason "justified" .
+```
 
 ### `apme sbom` — software bill of materials
 
 ```bash
 apme sbom PROJECT_ID                      # CycloneDX SBOM (requires Gateway)
 apme sbom PROJECT_ID -o sbom.json         # write to file
+apme sbom --path ./project -o sbom.json   # local SBOM, no registered project
+```
+
+`--path` builds a CycloneDX SBOM from local manifests
+(`requirements.yml`, `requirements.txt`, ansible-core pin) without a
+registered project. Register → scan → sbom recipe (Gateway-managed):
+
+```bash
+curl -X POST $GW/api/v1/projects -H 'Content-Type: application/json' -d '{"name":"demo","repo_url":"https://..."}'
+curl -X POST $GW/api/v1/projects/<id>/operate -H 'Content-Type: application/json' -d '{"action":"check"}'
+apme sbom <id> -o sbom.json
+```
+
+### `apme submit` — branch/PR from remediation (thin Gateway shim)
+
+```bash
+apme submit <project-id> --gateway-url http://localhost:8080
+apme submit <project-id> --branch apme/fix-001 --no-pr
+apme submit <project-id> --activity-id <scan-id> --json
+apme submit <project-id> --idempotency-key <key>   # replay an earlier submit
+```
+
+Calls Gateway `POST /api/v1/projects/{id}/operation/submit` (Gateway owns
+SCM push, ADR-056). Every submit carries an `Idempotency-Key` header: the
+Gateway stores the token with the resulting operation, so repeating the call
+with the same token returns that operation instead of pushing a second
+branch. `apme submit` mints a fresh token per invocation; when a submit times
+out (or returns 409/500/502/503/504) it prints `--idempotency-key <token>` —
+reuse that token to replay rather than push again.
+
+REST equivalent — create one key, keep it, and send it on the first request
+too. A replay is only possible if the retry carries the same key as the
+original call, so a key minted after a timeout cannot recover the earlier
+operation:
+
+```bash
+# Once, before the first attempt: persist a replayable key at a stable path,
+# one file per operation. Write it before the request so a crashed shell, a
+# lost variable, or a dropped session cannot lose the key for an operation
+# that may have landed.
+KEY_FILE=".apme-submit-keys/$(date -u +%Y%m%dT%H%M%SZ)-apme-remediate-abc123.key"
+mkdir -p "$(dirname "$KEY_FILE")"
+set -o noclobber  # a later submit must never overwrite an unresolved key
+python -c 'import uuid; print(uuid.uuid4().hex)' > "$KEY_FILE"
+
+curl -X POST $GW/api/v1/projects/<id>/operation/submit \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(cat "$KEY_FILE")" \
+  -d '{"branch_name":"apme/remediate-abc123","create_pr":true}'
+```
+
+Each submit gets its own file, so starting a second submit from the same
+directory cannot overwrite the key of an earlier one that is still unresolved.
+Keep the file until the outcome is settled, then delete it: remove it only
+after the call succeeded or a replay/409 response told you the operation's
+final state, and keep the file name (or the key inside it) in your notes when
+you escalate a 409. Deleting it while the outcome is unknown (timeout, 5xx)
+throws away the only key that can recover the operation.
+
+Re-send the *unchanged* body with the same key (read it back from
+`$KEY_FILE`) when the call times out or fails with 500/502/503/504: the
+outcome is unknown or retryable, so the key recovers the stored result instead
+of pushing twice. A 409 is different — the Gateway already has a definitive
+answer, so follow its message. Changing the branch, activity, or patch set
+under the same key is rejected (409), and resending that request unchanged
+repeats the conflict.
+
+A timeout or 5xx is *not* settled by a branch/PR check. The Gateway stops
+waiting on the provider call, but the request it already sent can still
+complete afterwards, so an empty SCM check is only a snapshot and a new intent
+started from it can publish a second branch or PR when the original lands.
+A 409 does not settle it either: the Gateway also returns 409 when an earlier
+tokened submit has claimed the scan or recorded no branch yet, and in both
+cases the original push or PR may still be running, or may have finished
+without being recorded. Settle the original first by re-sending the unchanged
+body with the same key.
+
+The outcome counts as known only when that key returns a result, or when SCM
+shows evidence attributable to *this* submit: the commit it published on the
+branch, plus the PR when `create_pr` was requested. Branch existence alone
+proves nothing — the branch may be one the request named explicitly and that
+already existed before the submit ran — and a branch that still points at its
+previous head means the push never landed. When `create_pr` is true, a visible
+branch is not a finished submit either: PR creation may still be running, so
+keep the key until the PR itself appears. A 409 on its own leaves the outcome
+unknown, and so does an empty SCM check.
+
+Until one of those conditions holds, keep the key and do not start a new
+intent. Use a fresh key file only after the original outcome is known to be
+unrecorded *and* SCM shows neither the submitted commit nor the PR — that is
+the case where nothing landed and a new intent is genuinely needed
+(`set -o noclobber` also stops an accidental reuse).
+
+#### Stranded claims
+
+The Gateway releases a submit claim on cancellation, on a timeout, and on an
+SCM error raised before any mutation. A claim recorded before an interruption
+that bypasses those handlers — a Gateway restart, or a release update that
+failed — stays in place with no branch on the scan. Every later attempt then
+fails the same way, and because no published branch exists it is also the one
+state where the SCM check above can never be satisfied:
+
+```text
+409 idempotency_conflict — A prior tokened submit claimed this scan but did not
+complete. Verify SCM state; if no publish occurred, start a new operation with a
+new token.
+```
+
+The Gateway has no endpoint that reports claim state, so decide from SCM:
+
+1. Look for the commit this submit would have published, and for the PR when
+   `create_pr` was requested. A branch at its previous head, or the absence of
+   any commit attributable to the submit, means no publish occurred.
+2. With that evidence, the 409 above *is* the Gateway's own instruction to start
+   a new operation with a new token — take a fresh key file and submit again.
+   The old key cannot be reused: its claim is the one blocking you.
+3. If you cannot rule out a publish still in flight — for example the SCM API is
+   unavailable, or a push is still running against the same branch — keep the
+   key and escalate to a Gateway operator rather than starting a second intent.
+   Gateway-side claim-state reporting, which would remove that inference, is
+   tracked in [#913](https://github.com/ansible/apme/issues/913).
+
+Omitting the header is the only way to start an unclaimed operation; `apme
+submit --no-idempotency-key` does that deliberately, and the call then cannot be
+replayed safely.
+
+### `apme format` via REST (Gateway-managed alternative)
+
+CLI-local `apme format` uses Engine `FormatStream` gRPC. The
+Gateway-managed equivalent is additive:
+
+```bash
+curl -X POST $GW/api/v1/projects/<id>/format | jq '.diffs | length'
+```
+
+`POST /projects/{id}/format` is an intentional read-only preview: the
+Gateway never writes formatted content back to the repo (apply via
+`apme format --apply` on a local checkout, or run `apme remediate`).
+Recipe — preview on the registered project, apply locally:
+
+```bash
+preview_file=$(mktemp)
+trap 'rm -f "$preview_file"' EXIT
+curl -fsS -X POST "$GW/api/v1/projects/<id>/format" -o "$preview_file"
+jq -r '.diffs[] | .path' "$preview_file"
+commit=$(jq -r '.commit' "$preview_file")
+git clone --branch <project-branch> --single-branch <repo-url> ./project
+git -C ./project checkout --detach "$commit"
+apme format --apply ./project
 ```
 
 ## CI usage
