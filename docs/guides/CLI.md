@@ -143,7 +143,7 @@ apme health-check --timeout 5             # custom timeout (seconds)
 
 ```bash
 apme suppress add --rule-id L046 --mode rule_only .                # suppress all instances of a rule
-apme suppress add --rule-id L046 --original-yaml $'name: Example\nansible.builtin.command: whoami' .
+apme suppress add --rule-id L046 --original-yaml $'- name: Example\n  ansible.builtin.command: whoami' .
 apme suppress list .                                               # show active suppressions
 apme suppress remove FINGERPRINT_PREFIX .                          # remove a suppression
 ```

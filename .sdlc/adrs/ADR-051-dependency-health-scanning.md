@@ -128,8 +128,9 @@ vulnerability databases.
 **Mechanism:**
 
 1. Receives `ValidateRequest` with `venv_path`.
-2. Runs `pip-audit --json --strict -l --path {venv_site_packages}` in
-   `run_in_executor()` to audit installed packages against OSV.dev.
+2. Runs `pip-audit -f json --strict --path {venv_site_packages}` in
+   `run_in_executor()` to audit installed packages. Pip-audit defaults to
+   PyPI and can query OSV.dev when configured in the validator environment.
 3. Parses JSON output; maps each vulnerability to a `Violation`:
    - `rule_id`: `R200` (supply-chain risk category per ADR-008 `R` prefix)
    - `severity`: Mapped from CVSS score — Critical ≥ 9.0, High ≥ 7.0,
@@ -144,9 +145,9 @@ vulnerability databases.
 
 **Offline mode:** The validator inherits pip-audit's default PyPI service.
 Set `PIP_AUDIT_VULNERABILITY_SERVICE=osv` in the validator environment to
-query OSV.dev. In the command above, `-l` / `--local` means "audit the
-locally installed environment" (not an offline database mode). For offline or
-air-gapped environments, vulnerability data distribution is a separate
+query OSV.dev. The `--path` argument selects installed packages and
+still requires an advisory service. For offline or air-gapped
+environments, vulnerability data distribution is a separate
 concern: a pre-populated `pip-audit` cache (`--cache-dir`) and/or a mirrored
 vulnerability data source. A future APME enhancement could standardize how
 that cache or mirrored vulnerability data is packaged and distributed for
