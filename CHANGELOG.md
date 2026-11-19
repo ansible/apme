@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **M047** — Flag stale top-level `disable_lookups` keys in Constructable inventory
   YAML (removed in ansible-core 2.23). Python `_compose(disable_lookups=...)`
-  in custom inventory plugins remains planned in REQ-018 as **M040**.
+  in custom inventory plugins is checked separately by **M040**.
 - **M048** — Prefer `ansible.builtin` when a non-builtin FQCN has a builtin
   equivalent, resolved authoritatively via the session venv's
   `find_plugin_with_context()` ([#714](https://github.com/ansible/apme/issues/714)).

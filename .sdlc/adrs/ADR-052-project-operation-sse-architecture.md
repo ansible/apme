@@ -83,11 +83,11 @@ All under `/api/v1/projects/{project_id}/operation`:
 | POST | `/create-pr` | Create PR from remediation |
 | GET | `/events` | SSE stream (snapshot + deltas) |
 
-For CI scans of registered projects (#199), the supported trigger is POST
-with `{"action":"check"}` on the operation endpoint. Clients can poll GET
-or read the SSE stream, then fetch the persisted results from
-`GET /api/v1/activity/{scan_id}`. This flow supersedes the proposed
-`POST /api/v1/projects/{project_id}/scans` trigger for polling clients.
+For CI scans of registered projects (#199), `POST /api/v1/projects/{project_id}/scans`
+starts a check through the same operation lifecycle and returns HTTP 202 with
+the operation and scan IDs. Its `Location` header points to the operation
+snapshot. Clients can poll that URL or read its SSE stream, then fetch the
+persisted results from `GET /api/v1/activity/{scan_id}`.
 
 Removal of the legacy `WS /projects/{project_id}/ws/operate` endpoint
 remains pending.

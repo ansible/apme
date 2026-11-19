@@ -23,7 +23,7 @@ Scans Constructable inventory plugin configs (`plugin: constructed` or
 `inventory/constructed.yml`, …) adjacent to playbooks for a stale top-level
 `disable_lookups` key. Static inventories with a group named
 `disable_lookups` are not flagged. Python `_compose(disable_lookups=...)`
-calls in plugin source require the planned REQ-018 rule M040.
+calls in plugin source are checked by M040.
 
 Sample inventory plugin config with the deprecated argument:
 
@@ -47,5 +47,4 @@ compose:
 Delete the `disable_lookups` key; template composition behaves identically
 without it.
 
-REQ-018 describes the planned M040 rule (`constructable_disable_lookups`)
-for Python plugin source.
+See [M040](../../validators/native/rules/M040.md) for Python plugin source.

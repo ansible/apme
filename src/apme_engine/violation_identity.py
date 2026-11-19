@@ -21,13 +21,14 @@ _ARGSPEC_MODULE = re.compile(
 
 
 def diagnostic_discriminator(violation: Mapping[str, object]) -> str:
-    """Distinguish argspec and Molecule diagnostics sharing a source and rule.
+    """Distinguish diagnostics sharing a source and rule.
 
     L058/L059 can report coverage warnings and several argument errors for
     different invocations of one task. Severity overrides and module spelling
     changes during FQCN remediation do not change the diagnostic's identity.
     Molecule L115-L119 findings distinguish YAML paths and diagnostic messages,
-    including separate keys in one flow mapping. Other rules retain their
+    including separate keys in one flow mapping. M040 distinguishes multiple
+    keyword positions on a single source line. Other rules retain their
     existing per-node, per-rule identity.
 
     Args:
@@ -37,6 +38,8 @@ def diagnostic_discriminator(violation: Mapping[str, object]) -> str:
         Stable diagnostic digest, or an empty legacy discriminator.
     """
     rule_id = normalize_rule_id(str(violation.get("rule_id", "")))
+    if rule_id == "M040":
+        return str(violation.get("path") or "")
     if rule_id in {"L115", "L116", "L117", "L118", "L119"}:
         identity = [str(violation.get("path") or ""), str(violation.get("message") or "")]
         return hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode("utf-8")).hexdigest()

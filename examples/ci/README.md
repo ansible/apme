@@ -39,7 +39,7 @@ pip install apme-engine
 
 ### Check a registered project through the Gateway
 
-Use the Gateway's REST operation API when CI needs to check a project
+Use the Gateway's REST scan endpoint when CI needs to check a project
 registered with a running APME deployment. The request starts a check of
 the project's configured repository and branch. It does not upload the
 CI checkout.
@@ -49,10 +49,10 @@ Run this Bash example with `curl` and `jq` available. Set
 registered project ID.
 
 ```bash
-operation_url="${APME_GATEWAY_URL%/}/api/v1/projects/${APME_PROJECT_ID}/operation"
+project_url="${APME_GATEWAY_URL%/}/api/v1/projects/${APME_PROJECT_ID}"
+operation_url="$project_url/operation"
 response=$(curl --fail --silent --show-error --max-time 30 \
-  --header 'Content-Type: application/json' \
-  --data '{"action":"check"}' "$operation_url") || exit 2
+  --request POST "$project_url/scans") || exit 2
 operation_id=$(jq -er '.operation_id' <<< "$response") || exit 2
 
 deadline=$((SECONDS + 600))
@@ -81,7 +81,8 @@ echo 'Timed out waiting for the Gateway check.' >&2
 exit 2
 ```
 
-The POST returns HTTP 201 and an `operation_id`. HTTP 409 means the
+The POST returns HTTP 202, an `operation_id`, a `scan_id`, and a
+`Location` header for polling the operation. HTTP 409 means the
 project already has an active operation. This example exits with 0 for
 a clean check, 1 for findings, or 2 for an operation or client error.
 For progress, subscribe to `GET /api/v1/projects/{project_id}/operation/events`

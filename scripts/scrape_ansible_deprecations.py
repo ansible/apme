@@ -174,9 +174,12 @@ _DEV_KW = [
 ]
 
 
+def _is_python_disable_lookups(filepath: str, message: str) -> bool:
+    return filepath == "plugins/inventory/__init__.py" and message.lower() == "the disable_lookups arg has no effect."
+
+
 def _classify_audience(filepath: str, message: str) -> str:
-    msg_lower = message.lower()
-    if filepath == "plugins/inventory/__init__.py" and msg_lower == "the disable_lookups arg has no effect.":
+    if _is_python_disable_lookups(filepath, message):
         # This branch is reached by callers of Constructable._compose() in Python plugins.
         return "developer"
     for p in _CONTENT_PATHS:
@@ -185,6 +188,7 @@ def _classify_audience(filepath: str, message: str) -> str:
     for p in _DEV_PATHS:
         if p in filepath:
             return "developer"
+    msg_lower = message.lower()
     for kw in _CONTENT_KW:
         if kw in msg_lower:
             return "content"
@@ -583,6 +587,8 @@ def _match_deprecation_to_rules(dep: DeprecationEntry, rules: dict[str, RuleInfo
     Returns:
         List of rule_id strings that appear to cover this deprecation.
     """
+    if _is_python_disable_lookups(dep.source_file, dep.message):
+        return ["M040"] if "M040" in rules else []
     matches = []
     dep_msg = dep.message.lower()
     dep_file = dep.source_file.lower()

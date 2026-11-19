@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 operation_router = APIRouter(prefix="/api/v1/projects/{project_id}/operation")
+project_scan_router = APIRouter(prefix="/api/v1/projects/{project_id}")
 
 
 async def _retire_approval_gate_on_timeout(
@@ -143,6 +144,16 @@ class OperateResponse(BaseModel):  # type: ignore[misc]
     operation_id: str
 
 
+class ProjectScanAccepted(OperateResponse):
+    """Identifiers for an asynchronously accepted project check.
+
+    Attributes:
+        scan_id: Identifier used to retrieve persisted scan results.
+    """
+
+    scan_id: str
+
+
 class ApproveRequest(BaseModel):  # type: ignore[misc]
     """Body for ``POST /approve``.
 
@@ -218,10 +229,47 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
 
     Returns:
         The new operation identifier.
+    """
+    state = await _start_project_operation(project_id, body)
+    return OperateResponse(operation_id=state.operation_id)
+
+
+@project_scan_router.post(  # type: ignore[untyped-decorator]
+    "/scans",
+    status_code=202,
+    responses={
+        202: {"headers": {"Location": {"description": "Operation status URL", "schema": {"type": "string"}}}},
+        404: {"description": "Project not found"},
+        409: {"description": "Project already has an active operation"},
+    },
+)
+async def trigger_project_scan(project_id: str, response: Response) -> ProjectScanAccepted:
+    """Start an asynchronous check of the project's configured repository and branch.
+
+    Args:
+        project_id: Target project UUID.
+        response: HTTP response that receives the status URL.
+
+    Returns:
+        Operation and scan identifiers. Poll the Location header for status.
+    """
+    state = await _start_project_operation(project_id, OperateRequest(action="check"))
+    response.headers["Location"] = f"/api/v1/projects/{state.project_id}/operation"
+    return ProjectScanAccepted(operation_id=state.operation_id, scan_id=state.scan_id)
+
+
+async def _start_project_operation(project_id: str, body: OperateRequest) -> OperationState:
+    """Reserve and start an operation using the project's current configuration.
+
+    Args:
+        project_id: Target project UUID.
+        body: Action and options payload.
+
+    Returns:
+        The newly registered operation state.
 
     Raises:
-        HTTPException: 404 if project not found; 409 if operation active or
-            ``working_set_in_progress`` without abandon opt-in.
+        HTTPException: Project missing, active operation, or working set conflict.
     """
     from apme_gateway._galaxy_inject import load_galaxy_server_defs
     from apme_gateway.config import load_config
@@ -307,7 +355,7 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
     state.grpc_task = task
     registry.start_reaper()
 
-    return OperateResponse(operation_id=operation_id)
+    return state
 
 
 @operation_router.get("")  # type: ignore[untyped-decorator]

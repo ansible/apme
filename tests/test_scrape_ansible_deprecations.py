@@ -11,7 +11,8 @@ def test_inventory_plugin_api_deprecation_is_for_developers(tmp_path: Path) -> N
         tmp_path: Temporary ansible-core source root.
     """
     scraper = Path(__file__).resolve().parents[1] / "scripts" / "scrape_ansible_deprecations.py"
-    scan_file = runpy.run_path(str(scraper))["scan_file"]
+    module = runpy.run_path(str(scraper))
+    scan_file = module["scan_file"]
     inventory = tmp_path / "plugins" / "inventory" / "__init__.py"
     inventory.parent.mkdir(parents=True)
     inventory.write_text(
@@ -26,3 +27,5 @@ def test_inventory_plugin_api_deprecation_is_for_developers(tmp_path: Path) -> N
         ("The disable_lookups arg has no effect.", "developer"),
         ("The inventory option legacy_key is deprecated.", "content"),
     ]
+    rules = module["inventory_existing_rules"]()
+    assert module["_match_deprecation_to_rules"](entries[0], rules) == ["M040"]
