@@ -17,6 +17,9 @@ from apme_engine.log_bridge import RequestLogHandler, attach_collector, install_
 # ``RequestLogHandler.emit`` fails fast with a diagnostic and — unlike the
 # default executor's non-daemon threads, which CPython joins at interpreter
 # shutdown — can never keep the test process (or the CI job) alive afterwards.
+# On timeout the request log handler is also detached from the root logger,
+# because the wedged worker holds that handler's lock inside ``emit`` and any
+# later log record would otherwise block the rest of the suite on it.
 _WORKER_TIMEOUT_SECONDS = 30.0
 
 
@@ -47,10 +50,18 @@ def test_worker_thread_propagates_collector_sink_via_copy_context() -> None:
         worker.start()
         worker.join(_WORKER_TIMEOUT_SECONDS)
         if worker.is_alive():
+            # A wedged worker is blocked inside ``Handler.handle``, which holds
+            # the handler's lock across ``emit``. Detach the request log handler
+            # so later log records from the rest of the suite cannot block on
+            # that lock; the daemon worker is then abandoned with the process.
+            for handler in root.handlers[:]:
+                if isinstance(handler, RequestLogHandler):
+                    root.removeHandler(handler)
             pytest.fail(
                 f"log-bridge worker thread did not finish within {_WORKER_TIMEOUT_SECONDS}s; "
                 "the thread appears wedged (logging handler lock or stderr stall?) and is "
-                "left running as a daemon so the test process can still exit"
+                "left running as a daemon while its request log handler is detached, so "
+                "the test process and the rest of the suite can still finish"
             )
         entries = sink.entries
 
