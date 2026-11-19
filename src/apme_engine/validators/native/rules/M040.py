@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from collections.abc import Mapping
 from itertools import pairwise
 from pathlib import PurePosixPath
@@ -14,17 +15,33 @@ from apme_engine.graph.types import RuleScope
 RULE_ID = "M040"
 
 _MESSAGE = "Remove the disable_lookups keyword from _compose(); it has no effect."
-#: Upper bound on the serialized diagnostic output M040 retains for one upload.
+#: Upper bound on the serialized M040 diagnostic output for one upload. Charges
+#: use JSON-escaped sizes, which upper-bound every transport form.
 _DIAGNOSTIC_BUDGET_BYTES = 256 * 1024
-#: Serialized bytes charged per finding beyond its excerpt text.
+#: Serialized bytes charged per finding beyond its excerpt and upload path:
+#: message, position, metadata, and JSON structure.
 _FINDING_OVERHEAD_BYTES = 512
-#: Bytes reserved so the terminal incomplete-assessment notice always fits.
-_NOTICE_RESERVE_BYTES = 1024
+#: Bytes reserved so the terminal incomplete-assessment notice always fits,
+#: including its truncated upload path in escaped form.
+_NOTICE_RESERVE_BYTES = 2048
 #: Marker appended when the notice's upload path is truncated.
 _PATH_TRUNCATION_MARKER = "<truncated>"
 #: Longest upload path in bytes the suppression notice echoes.
 _MAX_NOTICE_PATH_BYTES = 512
 _EXCERPT_OMITTED = "<source line omitted: M040 diagnostic byte budget exceeded>"
+
+
+def _json_size(value: str) -> int:
+    """Measure a string in its most expanded serialized form.
+
+    Args:
+        value: Excerpt or upload path text.
+
+    Returns:
+        JSON-escaped length in bytes, which upper-bounds the UTF-8 protobuf
+        and non-escaping JSON transports.
+    """
+    return len(json.dumps(value, ensure_ascii=True))
 
 
 def _notice_file(path: str) -> str:
@@ -52,10 +69,11 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
 
     Returns:
         Manual findings at the removed keyword's source line. Serialized
-        diagnostic output — excerpts, upload paths, and finding metadata —
-        is bounded by a per-upload byte budget; once the budget is
-        exhausted, the remaining positions are summarized by one
-        incomplete-assessment notice instead of further findings.
+        diagnostic output — excerpts, upload paths, and finding metadata,
+        measured in JSON-escaped form — is bounded by a per-upload byte
+        budget; once the budget is exhausted, the remaining positions are
+        summarized by one incomplete-assessment notice instead of further
+        findings.
     """
     findings: list[ViolationDict] = []
     remaining = _DIAGNOSTIC_BUDGET_BYTES - _NOTICE_RESERVE_BYTES
@@ -72,8 +90,8 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
         except (SyntaxError, ValueError, RecursionError):
             continue
         lines = content.splitlines()
-        path_bytes = len(path.encode("utf-8", errors="replace"))
-        excerpts: dict[int, str] = {}
+        path_charge = _json_size(path)
+        excerpts: dict[int, tuple[str, int]] = {}
         for node in ast.walk(tree):
             if (
                 not isinstance(node, ast.Call)
@@ -85,15 +103,18 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
                 if keyword.arg != "disable_lookups":
                     continue
                 line = keyword.lineno
-                raw_line = lines[line - 1]
-                if len(raw_line) + path_bytes + _FINDING_OVERHEAD_BYTES > remaining:
+                if line in excerpts:
+                    excerpt, excerpt_charge = excerpts[line]
+                else:
+                    excerpt = lines[line - 1].decode("utf-8", errors="replace")
+                    excerpt_charge = _json_size(excerpt)
+                if excerpt_charge + path_charge + _FINDING_OVERHEAD_BYTES > remaining:
                     suppressed_count += 1
                     if first_suppressed is None:
                         first_suppressed = (path, line, keyword.col_offset)
                     continue
-                remaining -= len(raw_line) + path_bytes + _FINDING_OVERHEAD_BYTES
-                if line not in excerpts:
-                    excerpts[line] = raw_line.decode("utf-8", errors="replace")
+                remaining -= excerpt_charge + path_charge + _FINDING_OVERHEAD_BYTES
+                excerpts[line] = (excerpt, excerpt_charge)
                 findings.append(
                     {
                         "rule_id": RULE_ID,
@@ -102,7 +123,7 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
                         "file": path,
                         "line": line,
                         "path": f"$[{line}][{keyword.col_offset}]",
-                        "original_yaml": excerpts[line],
+                        "original_yaml": excerpt,
                         "scope": RuleScope.INVENTORY.value,
                         "remediation_class": "manual-review",
                         "source": "native",

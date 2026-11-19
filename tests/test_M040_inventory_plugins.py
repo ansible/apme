@@ -69,13 +69,13 @@ def test_m040_bounds_total_diagnostic_output(monkeypatch: pytest.MonkeyPatch) ->
     Args:
         monkeypatch: Temporary diagnostic byte budget override.
     """
-    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 5_000)
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 6_000)
     line = b"self._compose(disable_lookups=True); " * 20
     findings = validate_inventory_plugins({"inventory_plugins/custom.py": line})
-    # The 1,024-byte notice reserve leaves 3,976 bytes; each finding is
-    # charged its 740-byte excerpt, the 26-byte upload path, and
-    # serialization overhead, so three findings fit before the remaining
-    # 17 are suppressed.
+    # The 2,048-byte notice reserve leaves 3,952 bytes; each finding is
+    # charged its 742-byte JSON-escaped excerpt, the 28-byte escaped
+    # upload path, and serialization overhead, so three findings fit
+    # before the remaining 17 are suppressed.
     assert len(findings) == 4
     full, notice = findings[:3], findings[3]
     assert all(finding["message"] == m040_module._MESSAGE for finding in full)
@@ -89,7 +89,7 @@ def test_m040_bounds_total_diagnostic_output(monkeypatch: pytest.MonkeyPatch) ->
         " the assessment is incomplete with 17 further findings suppressed."
     )
     assert notice["original_yaml"] == m040_module._EXCERPT_OMITTED
-    assert len(json.dumps(findings).encode("utf-8")) <= 5_000
+    assert len(json.dumps(findings).encode("utf-8")) <= 6_000
 
 
 def test_m040_charges_upload_path_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,9 +106,9 @@ def test_m040_charges_upload_path_bytes(monkeypatch: pytest.MonkeyPatch) -> None
     long_path = "inventory_plugins/" + "p" * 2_000 + ".py"
     content = b"self._compose(disable_lookups=True)\n" * 6
     findings = validate_inventory_plugins({long_path: content})
-    # Each finding costs its 36-byte line, the 2,023-byte upload path, and
-    # serialization overhead, so only one of the six calls fits the 4,976
-    # bytes left after the notice reserve.
+    # Each finding costs its 38-byte JSON-escaped line, the 2,023-byte
+    # escaped upload path, and serialization overhead, so only one of the
+    # six calls fits the 3,952 bytes left after the notice reserve.
     assert len(findings) == 2
     admitted, notice = findings
     assert admitted["file"] == long_path
@@ -119,3 +119,57 @@ def test_m040_charges_upload_path_bytes(monkeypatch: pytest.MonkeyPatch) -> None
     assert notice_file.endswith(m040_module._PATH_TRUNCATION_MARKER)
     assert notice_file.startswith("inventory_plugins/p")
     assert len(json.dumps(findings).encode("utf-8")) <= 6_000
+
+
+def test_m040_charges_decoded_excerpt_expansion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bytes gained by decoding with replacement consume the budget.
+
+    A Latin-1 source line parses under its coding cookie, but each invalid
+    UTF-8 byte in the excerpt decodes to a three-byte replacement character
+    and escapes to six JSON bytes, so the budget charges the decoded,
+    escaped size rather than the raw byte length.
+
+    Args:
+        monkeypatch: Temporary diagnostic byte budget override.
+    """
+    prefix = b"self._compose(disable_lookups=True)  # "
+    content = b"# -*- coding: latin-1 -*-\n" + prefix + b"\xe9" * 300
+    excerpt = prefix.decode("ascii") + "\ufffd" * 300
+    charge = (
+        len(json.dumps(excerpt)) + len(json.dumps("inventory_plugins/custom.py")) + m040_module._FINDING_OVERHEAD_BYTES
+    )
+    # The budget fits the finding under raw-byte accounting but not once
+    # decoding expansion is charged, so the call is suppressed.
+    budget = m040_module._NOTICE_RESERVE_BYTES + charge - 1
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", budget)
+    findings = validate_inventory_plugins({"inventory_plugins/custom.py": content})
+    assert len(findings) == 1
+    notice = findings[0]
+    assert str(notice["message"]).endswith("the assessment is incomplete with 1 further findings suppressed.")
+    assert len(json.dumps(findings).encode("utf-8")) <= budget
+
+
+def test_m040_charges_escaped_path_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """JSON escaping of upload path characters consumes the budget.
+
+    Quotes in an upload path each escape to two JSON bytes, so a path
+    whose escaped form exceeds the budget is suppressed even though its
+    raw byte length would fit.
+
+    Args:
+        monkeypatch: Temporary diagnostic byte budget override.
+    """
+    quoted_path = "inventory_plugins/" + '"' * 100 + ".py"
+    line = b"self._compose(disable_lookups=True)"
+    content = line + b"\n"
+    charge = len(json.dumps(line.decode("ascii"))) + len(json.dumps(quoted_path)) + m040_module._FINDING_OVERHEAD_BYTES
+    # The budget fits the finding when the path is charged unescaped but
+    # not once JSON escaping is charged, so the call is suppressed.
+    budget = m040_module._NOTICE_RESERVE_BYTES + charge - 1
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", budget)
+    findings = validate_inventory_plugins({quoted_path: content})
+    assert len(findings) == 1
+    notice = findings[0]
+    assert str(notice["message"]).endswith("the assessment is incomplete with 1 further findings suppressed.")
+    assert str(notice["file"]) == quoted_path
+    assert len(json.dumps(findings).encode("utf-8")) <= budget
