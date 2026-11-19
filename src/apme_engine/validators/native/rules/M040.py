@@ -26,7 +26,7 @@ _FINDING_OVERHEAD_BYTES = 512
 _NOTICE_RESERVE_BYTES = 2048
 #: Marker appended when the notice's upload path is truncated.
 _PATH_TRUNCATION_MARKER = "<truncated>"
-#: Longest upload path in bytes the suppression notice echoes.
+#: Longest upload path in JSON-escaped bytes the suppression notice echoes.
 _MAX_NOTICE_PATH_BYTES = 512
 _EXCERPT_OMITTED = "<source line omitted: M040 diagnostic byte budget exceeded>"
 
@@ -51,14 +51,22 @@ def _notice_file(path: str) -> str:
         path: Upload path of the first suppressed finding.
 
     Returns:
-        The full path when it fits the notice budget, else a head slice
-        with an explicit truncation marker of bounded byte length.
+        The full path when its escaped form fits the notice budget, else a
+        head slice with an explicit truncation marker whose escaped length
+        stays within the budget.
     """
-    encoded = path.encode("utf-8", errors="replace")
-    if len(encoded) <= _MAX_NOTICE_PATH_BYTES:
+    if _json_size(path) <= _MAX_NOTICE_PATH_BYTES:
         return path
-    keep = _MAX_NOTICE_PATH_BYTES - len(_PATH_TRUNCATION_MARKER)
-    return encoded[:keep].decode("utf-8", errors="ignore") + _PATH_TRUNCATION_MARKER
+    budget = _MAX_NOTICE_PATH_BYTES - _json_size(_PATH_TRUNCATION_MARKER)
+    encoded = path.encode("utf-8", errors="replace")
+    low, high = 0, len(encoded)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if _json_size(encoded[:mid].decode("utf-8", errors="ignore")) <= budget:
+            low = mid
+        else:
+            high = mid - 1
+    return encoded[:low].decode("utf-8", errors="ignore") + _PATH_TRUNCATION_MARKER
 
 
 def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict]:
@@ -91,7 +99,7 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
             continue
         lines = content.splitlines()
         path_charge = _json_size(path)
-        excerpts: dict[int, tuple[str, int]] = {}
+        excerpts: dict[int, tuple[str | None, int]] = {}
         for node in ast.walk(tree):
             if (
                 not isinstance(node, ast.Call)
@@ -112,6 +120,11 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
                     suppressed_count += 1
                     if first_suppressed is None:
                         first_suppressed = (path, line, keyword.col_offset)
+                    # Cache the charge, not the decoded text, so repeated
+                    # calls on an over-budget line skip re-decoding while
+                    # memory stays bounded by the admitted output.
+                    if excerpt is not None:
+                        excerpts[line] = (None, excerpt_charge)
                     continue
                 remaining -= excerpt_charge + path_charge + _FINDING_OVERHEAD_BYTES
                 excerpts[line] = (excerpt, excerpt_charge)

@@ -115,7 +115,7 @@ def test_m040_charges_upload_path_bytes(monkeypatch: pytest.MonkeyPatch) -> None
     assert admitted["message"] == m040_module._MESSAGE
     assert str(notice["message"]).endswith("the assessment is incomplete with 5 further findings suppressed.")
     notice_file = str(notice["file"])
-    assert len(notice_file.encode("utf-8")) <= m040_module._MAX_NOTICE_PATH_BYTES
+    assert m040_module._json_size(notice_file) <= m040_module._MAX_NOTICE_PATH_BYTES
     assert notice_file.endswith(m040_module._PATH_TRUNCATION_MARKER)
     assert notice_file.startswith("inventory_plugins/p")
     assert len(json.dumps(findings).encode("utf-8")) <= 6_000
@@ -173,3 +173,66 @@ def test_m040_charges_escaped_path_bytes(monkeypatch: pytest.MonkeyPatch) -> Non
     assert str(notice["message"]).endswith("the assessment is incomplete with 1 further findings suppressed.")
     assert str(notice["file"]) == quoted_path
     assert len(json.dumps(findings).encode("utf-8")) <= budget
+
+
+def test_m040_bounds_notice_path_by_escaped_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Control characters in the notice path are bounded by escaped size.
+
+    Control characters cost one UTF-8 byte but six JSON bytes, so the
+    notice path is truncated by its serialized size and the whole notice
+    fits its reserve.
+
+    Args:
+        monkeypatch: Temporary diagnostic byte budget override.
+    """
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 3_000)
+    control_path = "inventory_plugins/" + "\x01" * 600 + ".py"
+    content = b"self._compose(disable_lookups=True)\n"
+    findings = validate_inventory_plugins({control_path: content})
+    # The escaped path (3,623 bytes) cannot fit the 952 bytes left after
+    # the notice reserve, so the call is suppressed and the notice echoes
+    # a bounded escaped head slice of the path.
+    assert len(findings) == 1
+    notice = findings[0]
+    assert str(notice["message"]).endswith("the assessment is incomplete with 1 further findings suppressed.")
+    notice_file = str(notice["file"])
+    assert m040_module._json_size(notice_file) <= m040_module._MAX_NOTICE_PATH_BYTES
+    assert notice_file.endswith(m040_module._PATH_TRUNCATION_MARKER)
+    assert notice_file.startswith("inventory_plugins/")
+    assert len(json.dumps(findings).encode("utf-8")) <= 3_000
+
+
+def test_m040_caches_suppressed_line_charges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repeated calls on an over-budget line decode it once.
+
+    A line whose charge exceeds the budget is measured once and the
+    charge is cached for its remaining calls, so many calls on one large
+    line stay linear in the line's size instead of re-decoding per call.
+
+    Args:
+        monkeypatch: Counting _json_size wrapper and budget override.
+    """
+    original_size = m040_module._json_size
+    measurements: list[str] = []
+
+    def counting_size(value: str) -> int:
+        """Record the measured value and defer to the original helper.
+
+        Args:
+            value: Excerpt or path text being measured.
+
+        Returns:
+            The original helper's JSON-escaped length.
+        """
+        measurements.append(value)
+        return original_size(value)
+
+    monkeypatch.setattr(m040_module, "_json_size", counting_size)
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 4_000)
+    line = b"self._compose(disable_lookups=True); " * 40 + b"# " + b"x" * 4_000
+    findings = validate_inventory_plugins({"inventory_plugins/custom.py": line})
+    assert len(findings) == 1
+    assert str(findings[0]["message"]).endswith("the assessment is incomplete with 40 further findings suppressed.")
+    # One path measurement, one excerpt measurement for the shared line,
+    # and one notice-path measurement — not one per suppressed call.
+    assert len(measurements) == 3
