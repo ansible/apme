@@ -1059,8 +1059,10 @@ class SpliceOutcome:
             whose diff may be truncated.
         contributors: Node IDs whose edits are present in each patched
             file's output. Only files that produced a patch are listed,
-            and a node skipped for a missing baseline is absent even
-            when a sibling in the same file did land — callers that
+            only nodes that contributed a line-level source edit are
+            listed (a snapshot change that produced no edit landed
+            nothing), and a node skipped for a missing baseline is absent
+            even when a sibling in the same file did land — callers that
             certify findings as fixed must key off these nodes, not off
             the patched file path.
     """
@@ -1660,10 +1662,12 @@ def splice_with_outcome(
             f"splice_with_outcome: {len(unpatched)} modified file(s) could not be spliced: {sorted(unpatched)}"
         )
 
-    # Only a file that produced a patch carries its contributors: an edit set
-    # that normalises back to the original left no bytes behind, so nothing
-    # landed for its nodes.
-    landed = {patch.path: set(contributors[patch.path]) for patch in patches}
+    # Only a file that produced a patch carries its contributors, and only the
+    # nodes that contributed a source edit count: an edit set that normalises
+    # back to the original left no bytes behind, and a node whose snapshot
+    # changed without a line-level edit (e.g. a trailing newline) landed
+    # nothing either.
+    landed = {patch.path: {edit.owner_id for edit in modified_by_file[patch.path]} for patch in patches}
     return SpliceOutcome(patches=patches, unpatched=sorted(unpatched), contributors=landed)
 
 

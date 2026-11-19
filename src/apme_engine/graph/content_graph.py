@@ -943,6 +943,11 @@ class ContentGraph:
                 existing.fixed_in_pass = None
             else:
                 existing.violation = v
+                # This pass still reports the finding, so the bytes were not
+                # fixed: a queued patch that has not reached the file (or did
+                # not address this finding) must not later promote the record
+                # to ``fixed`` just because a sibling edit on the node landed.
+                existing.patch_pending = False
 
     def resolve_violations(
         self,
@@ -1215,6 +1220,11 @@ class ContentGraph:
         finding whose fix is in the file, and its next graph pass would resolve
         it again. Promoting it here keeps the ledger (the source of truth for
         report rebuilds) and the returned report in agreement.
+
+        Only a marker still standing at promotion time is honoured: a rescan
+        that reports the finding again clears it in ``register_violations``, so
+        a newer confirmation of the finding is never hidden by a sibling patch
+        landing on the same node.
 
         Callers must pass only nodes whose own edits were spliced, not every
         node in a patched file: a sibling skipped for a missing baseline still

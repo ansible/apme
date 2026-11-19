@@ -1489,6 +1489,58 @@ def test_spec_without_a_prepared_candidate_is_left_alone() -> None:
     assert bound == [("ansible.posix:1.0.0", "ansible-collection-ansible-posix==1.0.0")]
 
 
+def test_batch_constraints_narrow_the_bound_wheel() -> None:
+    """A second requirement on the same distribution narrows the binding.
+
+    The URL pin removes the resolver's freedom to step back, so binding the
+    highest wheel the first requirement allows would make an install fail that
+    the index could satisfy. The intersection of every batch constraint picks
+    the artifact, and a trailing-newline sibling requirement stays a no-op.
+    """
+    from apme_engine.venv_manager.session import _bind_prepared_pip_specs
+
+    prepared = [
+        "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl",
+        "ansible_collection_ansible_posix-2.0.0-py3-none-any.whl",
+    ]
+    base_url = "http://proxy/wheels/"
+
+    bound = _bind_prepared_pip_specs(
+        [
+            ("ansible.posix:>=1,<3", "ansible-collection-ansible-posix>=1,<3"),
+            ("ansible.posix:<2", "ansible-collection-ansible-posix<2"),
+        ],
+        prepared,
+        base_url,
+    )
+
+    assert bound == [
+        ("ansible.posix:>=1,<3", base_url + prepared[0]),
+        ("ansible.posix:<2", base_url + prepared[0]),
+    ]
+
+
+def test_batch_constraint_without_a_prepared_match_leaves_the_index() -> None:
+    """A distribution the batch rejects is left unpinned rather than mis-pinned."""
+    from apme_engine.venv_manager.session import _bind_prepared_pip_specs
+
+    prepared = ["ansible_collection_ansible_posix-2.0.0-py3-none-any.whl"]
+
+    bound = _bind_prepared_pip_specs(
+        [
+            ("ansible.posix:>=2", "ansible-collection-ansible-posix>=2"),
+            ("ansible.posix:<2", "ansible-collection-ansible-posix<2"),
+        ],
+        prepared,
+        "http://proxy/wheels/",
+    )
+
+    assert bound == [
+        ("ansible.posix:>=2", "ansible-collection-ansible-posix>=2"),
+        ("ansible.posix:<2", "ansible-collection-ansible-posix<2"),
+    ]
+
+
 def test_shared_prepare_response_without_scope_still_installs(monkeypatch: pytest.MonkeyPatch) -> None:
     """A shared-cache prepare response is a success, not a failed preparation.
 
@@ -1627,6 +1679,210 @@ def test_shared_prepare_repeats_after_a_stale_fence(monkeypatch: pytest.MonkeyPa
     assert failures == []
     assert prepare.call_count == 2
     assert install.call_args.args[1] == [f"http://proxy/wheels/{wheel}?generation=1"]
+
+
+def test_stale_fence_detection_uses_every_output_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 409 status and the fenced URL may be reported on different streams.
+
+    pip and uv split progress and errors across streams, so looking at
+    ``stderr or stdout`` alone can miss either half of the signature and
+    report the collections as unavailable instead of re-preparing.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    wheel = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+
+    def _prepared(generation: int) -> MagicMock:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "prepared": [wheel],
+            "failed_specs": [],
+            "shared": True,
+            "generation": generation,
+        }
+        return response
+
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", side_effect=[_prepared(0), _prepared(3)]) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            side_effect=[
+                SimpleNamespace(
+                    returncode=2,
+                    stdout=f"GET http://proxy/wheels/{wheel}?generation=0",
+                    stderr="error: HTTP status client error (409 Conflict)",
+                ),
+                SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ],
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=True
+        )
+
+    assert failures == []
+    assert prepare.call_count == 2
+    assert install.call_args.args[1] == [f"http://proxy/wheels/{wheel}?generation=3"]
+
+
+def test_stale_fence_retry_drops_rejections_of_the_abandoned_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retry reports only the failures of the plan it actually used.
+
+    The first plan rejected one spec; the retry prepared and installed both. The
+    abandoned rejection must not survive into the failure list.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    posix = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    general = "ansible_collection_community_general-14.0.1-py3-none-any.whl"
+
+    def _prepared(generation: int, prepared: list[str], failed: list[str]) -> MagicMock:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "prepared": prepared,
+            "failed_specs": failed,
+            "shared": True,
+            "generation": generation,
+        }
+        return response
+
+    conflict = f"error: HTTP status client error (409 Conflict) for url (http://proxy/wheels/{posix}?generation=0)"
+    with (
+        patch(
+            "apme_engine.venv_manager.session.httpx.post",
+            side_effect=[
+                _prepared(0, [posix], ["community.general:14.0.1"]),
+                _prepared(1, [posix, general], []),
+            ],
+        ) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            side_effect=[
+                SimpleNamespace(returncode=2, stdout="", stderr=conflict),
+                SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ],
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4", "community.general:14.0.1"],
+            "http://proxy",
+            use_uv=True,
+        )
+
+    assert failures == []
+    assert prepare.call_count == 2
+    assert sorted(install.call_args.args[1]) == sorted(
+        [f"http://proxy/wheels/{posix}?generation=1", f"http://proxy/wheels/{general}?generation=1"]
+    )
+
+
+def test_stale_fence_retry_does_not_fall_back_to_the_default_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retry that cannot prepare again reports failure instead of installing.
+
+    The proxy's index is added as an extra index, so a plain requirement would
+    still resolve from the default index: the install would look successful
+    while the content never came from the prepared handoff.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    wheel = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [wheel], "failed_specs": [], "shared": True, "generation": 0}
+    connect_error = httpx.ConnectError("proxy is down")
+    conflict = f"error: HTTP status client error (409 Conflict) for url (http://proxy/wheels/{wheel}?generation=0)"
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", side_effect=[response, connect_error]) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=2, stdout="", stderr=conflict),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=True
+        )
+
+    assert failures == ["ansible.posix:1.5.4"]
+    assert prepare.call_count == 2
+    install.assert_called_once()
+
+
+def test_individual_fallback_refreshes_a_stale_fence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 409 during the fallback re-prepares only the pending collections.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    posix = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    general = "ansible_collection_community_general-14.0.1-py3-none-any.whl"
+
+    def _prepared(wheels: list[str]) -> MagicMock:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"prepared": wheels, "failed_specs": [], "shared": True, "generation": 0}
+        return response
+
+    refreshed = MagicMock()
+    refreshed.raise_for_status.return_value = None
+    refreshed.json.return_value = {
+        "prepared": [posix, general],
+        "failed_specs": [],
+        "shared": True,
+        "generation": 1,
+    }
+    conflict = f"error: HTTP status client error (409 Conflict) for url (http://proxy/wheels/{general}?generation=0)"
+    with (
+        patch(
+            "apme_engine.venv_manager.session.httpx.post",
+            side_effect=[_prepared([posix, general]), refreshed],
+        ) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            side_effect=[
+                SimpleNamespace(returncode=1, stdout="", stderr="resolution impossible"),
+                SimpleNamespace(returncode=0, stdout="", stderr=""),  # posix installs
+                SimpleNamespace(returncode=2, stdout="", stderr=conflict),  # general is fenced off
+                SimpleNamespace(returncode=0, stdout="", stderr=""),  # general after the refresh
+            ],
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4", "community.general:14.0.1"],
+            "http://proxy",
+            use_uv=True,
+        )
+
+    assert failures == []
+    assert prepare.call_count == 2
+    assert prepare.call_args.kwargs["json"] == {"specs": ["community.general:14.0.1"]}
+    assert install.call_args.args[1] == [f"http://proxy/wheels/{general}?generation=1"]
 
 
 def test_stale_fence_retry_is_attempted_once(monkeypatch: pytest.MonkeyPatch) -> None:

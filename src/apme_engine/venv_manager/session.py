@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import httpx
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
@@ -502,6 +503,24 @@ def _prepared_version(filename: str, prefix: str) -> Version | None:
         return None
 
 
+def _split_pip_requirement(pip_spec: str) -> tuple[str | None, SpecifierSet]:
+    """Split a collection requirement into its distribution and constraint.
+
+    Args:
+        pip_spec: ``ansible-collection-*`` requirement, optionally carrying a
+            version constraint (``ansible-collection-ansible-posix>=1,<3``).
+
+    Returns:
+        ``(name, specifier_set)``, or ``(None, empty)`` when the requirement
+        cannot be parsed.
+    """
+    try:
+        requirement = Requirement(pip_spec)
+    except InvalidRequirement:
+        return None, SpecifierSet()
+    return requirement.name, requirement.specifier
+
+
 def _bind_prepared_pip_specs(
     installable: list[tuple[str, str]],
     prepared: list[str],
@@ -526,6 +545,16 @@ def _bind_prepared_pip_specs(
     artifacts this request prepared. A requirement with no prepared candidate
     is left as-is (its content did not come from this scope).
 
+    Every requirement in the batch that names the same distribution narrows
+    that choice, because the URL pin removes the resolver's freedom to step
+    back: with ``ansible.posix:>=1,<3`` and ``ansible.posix<2`` in one batch,
+    binding 2.0.0 would fail the install where the index would have picked
+    1.5.4. The constraints are intersected, and a distribution whose prepared
+    wheels do not satisfy the intersection is left to the index rather than
+    pinned to an artifact the batch rejects. Constraints contributed by
+    dependencies are not known before resolution, so they stay with the
+    resolver, exactly as they do for an index-resolved install.
+
     Args:
         installable: ``(spec, pip_spec)`` pairs to install.
         prepared: Wheel basenames the proxy prepared for this request.
@@ -540,6 +569,12 @@ def _bind_prepared_pip_specs(
         wheel URL.
     """
     fence = f"?generation={generation}" if generation is not None else ""
+    batch: dict[str, SpecifierSet] = {}
+    for _, pip_spec in installable:
+        dist_name, spec_set = _split_pip_requirement(pip_spec)
+        if dist_name is None:
+            continue
+        batch[dist_name] = batch[dist_name] & spec_set if dist_name in batch else spec_set
     bound: list[tuple[str, str]] = []
     for spec, pip_spec in installable:
         fqcn = spec.split(":", 1)[0].strip()
@@ -549,7 +584,7 @@ def _bind_prepared_pip_specs(
         constraint = pip_spec[len(dist) :].strip() if pip_spec.startswith(dist) else ""
         candidates: list[tuple[Version, str]] = []
         try:
-            wanted = SpecifierSet(constraint)
+            wanted = batch[dist] if dist in batch else SpecifierSet(constraint)
         except InvalidSpecifier:  # pragma: no cover - validated by _spec_to_pip
             wanted = SpecifierSet()
         for name in prepared:
@@ -589,7 +624,7 @@ def _release_session_scope(proxy_url: str, scope_id: str) -> None:
         logger.warning("Could not release scoped Galaxy wheel handoff: %s", type(exc).__name__)
 
 
-def _is_stale_wheel_fence(output: str) -> bool:
+def _is_stale_wheel_fence(*streams: str) -> bool:
     """Detect an install failure caused by a stale prepared-wheel generation.
 
     A shared handoff names wheels by filename, so the fetch is fenced with the
@@ -599,11 +634,14 @@ def _is_stale_wheel_fence(output: str) -> bool:
     source the proxy no longer serves.
 
     Args:
-        output: Combined stderr/stdout of the failed install command.
+        *streams: Output streams of the failed install command. All of them are
+            searched, because the status code and the URL carrying
+            ``generation=`` can be reported on different ones.
 
     Returns:
         True when the proxy rejected a fenced wheel fetch.
     """
+    output = "\n".join(streams)
     if "generation=" not in output:
         return False
     return "409" in output or "Conflict" in output
@@ -614,6 +652,8 @@ def _prepare_proxy_install(
     installable: list[tuple[str, str]],
     galaxy_server_configs: list[dict[str, object]] | None,
     failed: list[str],
+    *,
+    must_hand_off: bool = False,
 ) -> tuple[list[tuple[str, str]], str, str | None] | None:
     """Prepare collection wheels through the proxy and bind them to their URLs.
 
@@ -628,6 +668,13 @@ def _prepare_proxy_install(
             to the authenticated proxy request.
         failed: Failure accumulator. Specs that must not be installed are
             appended here so the caller reports them.
+        must_hand_off: When ``True`` the caller has already served this batch
+            from a handoff that turned out stale, so every installed spec must
+            come from freshly bound wheels. A proxy that cannot prepare them,
+            or a spec without a prepared wheel, is reported as failed instead
+            of falling back to the default index — a same-named distribution
+            there would make the retry look successful without any prepared
+            artifact. The initial unscoped call keeps the legacy fallback.
 
     Returns:
         ``(installable, index_url, scope_id)`` with prepared collections bound
@@ -656,8 +703,8 @@ def _prepare_proxy_install(
             if conflict and attempt == 0:
                 logger.info("Galaxy configuration changed during collection preparation; retrying once")
                 continue
-            if galaxy_server_configs is not None:
-                logger.warning("Scoped collection preparation failed: %s", exc)
+            if galaxy_server_configs is not None or must_hand_off:
+                logger.warning("Collection preparation failed before the install: %s", exc)
                 failed.extend(installable_specs)
                 return None
             logger.warning("Collection preparation failed; continuing with install: %s", exc)
@@ -695,6 +742,7 @@ def _prepare_proxy_install(
             if session_scope_id is not None:
                 _release_session_scope(proxy_url, session_scope_id)
             return None
+    base_url = ""
     if prepared_wheels:
         # Bind prepared collections to their wheel; see
         # ``_bind_prepared_pip_specs`` for why a version pin is not enough.
@@ -712,6 +760,26 @@ def _prepare_proxy_install(
             base_url = proxy_url.rstrip("/") + "/wheels/"
             fence = generation
         installable = _bind_prepared_pip_specs(installable, prepared_wheels, base_url, fence)
+    if must_hand_off:
+        bound: list[tuple[str, str]] = []
+        unbound: list[str] = []
+        for spec, pip_spec in installable:
+            if base_url and pip_spec.startswith(base_url):
+                bound.append((spec, pip_spec))
+            else:
+                unbound.append(spec)
+        if unbound:
+            logger.warning(
+                "Not installing %d collection spec(s) without a fresh wheel after the source changed: %s",
+                len(unbound),
+                ", ".join(sorted(unbound)),
+            )
+            failed.extend(unbound)
+            if not bound:
+                if session_scope_id is not None:
+                    _release_session_scope(proxy_url, session_scope_id)
+                return None
+            installable = bound
     return installable, simple_url, session_scope_id
 
 
@@ -777,23 +845,35 @@ def _install_collections_via_proxy(
         are still available. Reporting them as failed would abort the scan.
     """
     installable: list[tuple[str, str]] = []
-    failed: list[str] = []
+    invalid: list[str] = []
     for spec in collection_specs:
         try:
             installable.append((spec, _spec_to_pip(spec)))
         except ValueError as exc:
             logger.warning("Skipping collection spec %r: %s", spec, exc)
-            failed.append(spec)
+            invalid.append(spec)
     if not installable:
-        return failed
+        return invalid
     requested = list(installable)
 
+    # Preparation failures belong to the plan that produced them: a retry
+    # replaces the plan, so its rejections must not accumulate on top of the
+    # abandoned attempt's (nor be reported twice). Invalid specs above are
+    # independent of any plan and stay reported.
+    refreshes_left = 1
     scope_ids: list[str] = []
     try:
         for attempt in range(2):
-            plan = _prepare_proxy_install(proxy_url, requested, galaxy_server_configs, failed)
+            plan_failures: list[str] = []
+            plan = _prepare_proxy_install(
+                proxy_url,
+                requested,
+                galaxy_server_configs,
+                plan_failures,
+                must_hand_off=attempt > 0,
+            )
             if plan is None:
-                return failed
+                return invalid + plan_failures
             installable, simple_url, session_scope_id = plan
             if session_scope_id is not None:
                 scope_ids.append(session_scope_id)
@@ -801,13 +881,18 @@ def _install_collections_via_proxy(
 
             result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)
             if result.returncode == 0:
-                return failed
+                return invalid + plan_failures
             bulk_output = result.stderr or result.stdout
-            if attempt == 0 and session_scope_id is None and _is_stale_wheel_fence(bulk_output):
+            if (
+                refreshes_left
+                and session_scope_id is None
+                and _is_stale_wheel_fence(result.stderr or "", result.stdout or "")
+            ):
                 # The collection source changed between preparation and the
                 # wheel fetch, so the proxy fenced off the prepared artifacts.
                 # Nothing was installed; prepare again against the current
                 # source instead of reporting the collections as unavailable.
+                refreshes_left -= 1
                 logger.info("Galaxy source changed after collection preparation; preparing again")
                 continue
             break
@@ -824,7 +909,7 @@ def _install_collections_via_proxy(
                 env,
             )
             if result.returncode == 0:
-                return failed
+                return invalid + plan_failures
             bulk_output = result.stderr or result.stdout
 
         logger.warning(
@@ -832,10 +917,39 @@ def _install_collections_via_proxy(
             bulk_output,
         )
 
-        for spec, pip_spec in installable:
+        pending = list(installable)
+        while pending:
+            spec, pip_spec = pending[0]
             individual = _run_pip_install(pip_python, [pip_spec], simple_url, use_uv, env=env)
             if individual.returncode != 0:
                 ind_output = individual.stderr or individual.stdout
+                if (
+                    refreshes_left
+                    and session_scope_id is None
+                    and _is_stale_wheel_fence(individual.stderr or "", individual.stdout or "")
+                ):
+                    # The source changed while the fallback was running. The
+                    # already-installed specs stay installed; refresh the
+                    # handoff for the ones still pending and retry those.
+                    refreshes_left -= 1
+                    logger.info(
+                        "Galaxy source changed during individual installs; preparing the remaining %d again",
+                        len(pending),
+                    )
+                    refreshed = _prepare_proxy_install(
+                        proxy_url,
+                        list(pending),
+                        galaxy_server_configs,
+                        plan_failures,
+                        must_hand_off=True,
+                    )
+                    if refreshed is None:
+                        break
+                    pending = list(refreshed[0])
+                    simple_url = refreshed[1]
+                    if refreshed[2] is not None:
+                        scope_ids.append(refreshed[2])
+                    continue
                 if _is_build_failure(ind_output):
                     unbuildable = _extract_unbuildable_packages(ind_output)
                     retry = _retry_without_native(
@@ -849,6 +963,7 @@ def _install_collections_via_proxy(
                     )
                     if retry.returncode == 0:
                         logger.info("Collection installed successfully (excluded native deps): %s", spec)
+                        pending.pop(0)
                         continue
                     ind_output = retry.stderr or retry.stdout
                 logger.warning(
@@ -856,11 +971,12 @@ def _install_collections_via_proxy(
                     spec,
                     ind_output,
                 )
-                failed.append(spec)
+                plan_failures.append(spec)
             else:
                 logger.info("Collection installed successfully: %s", spec)
+            pending.pop(0)
 
-        return failed
+        return invalid + plan_failures
     finally:
         for scope_id in scope_ids:
             _release_session_scope(proxy_url, scope_id)

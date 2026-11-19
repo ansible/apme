@@ -1661,8 +1661,9 @@ class TestSpliceModifications:
         alone would treat the unchanged sibling's edit as present too.
         """
         graph = ContentGraph()
-        landed = _make_node("site.yml/plays[0]/tasks[0]", line_start=3, line_end=6)
-        untouched = _make_node("site.yml/plays[0]/tasks[1]", line_start=7, line_end=10)
+        # The original is two four-line tasks: 1-4 and 5-8.
+        landed = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        untouched = _make_node("site.yml/plays[0]/tasks[1]", line_start=5, line_end=8)
         graph.add_node(landed)
         graph.add_node(untouched)
         landed.record_state(0, "scanned")
@@ -1676,7 +1677,41 @@ class TestSpliceModifications:
         outcome = splice_with_outcome(graph, {"/workspace/site.yml": original})
 
         assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        # Only the first task's module is qualified; the second is untouched.
+        assert outcome.patches[0].patched == _TASK_YAML_FQCN + _TASK_YAML_APT
         assert outcome.contributors == {"/workspace/site.yml": {landed.node_id}}
+
+    def test_contributors_exclude_a_node_without_a_source_edit(self) -> None:
+        """A snapshot change that produces no line edit lands for no node.
+
+        Dropping a trailing newline changes the snapshot hash but not a single
+        source line, so the node must not be reported as a contributor of the
+        patch a sibling produced in the same file.
+        """
+        graph = ContentGraph()
+        edited = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        newline_only = _make_node(
+            "site.yml/plays[0]/tasks[1]",
+            module="copy",
+            yaml_lines=_TASK_YAML_COPY,
+            line_start=5,
+            line_end=8,
+        )
+        graph.add_node(edited)
+        graph.add_node(newline_only)
+        edited.record_state(0, "scanned")
+        edited.update_from_yaml(_TASK_YAML_FQCN)
+        edited.record_state(1, "transformed")
+        newline_only.record_state(0, "scanned")
+        newline_only.yaml_lines = _TASK_YAML_COPY.rstrip("\n")
+        newline_only.record_state(1, "transformed")
+        graph.approve_pending()
+
+        original = _TASK_YAML_APT + _TASK_YAML_COPY
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": original})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        assert outcome.contributors == {"/workspace/site.yml": {edited.node_id}}
 
     def test_contributors_omit_a_file_that_normalises_to_its_original(self) -> None:
         """An edit set that leaves the bytes unchanged lands for no node."""

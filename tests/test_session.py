@@ -2708,6 +2708,41 @@ class TestSessionGraphRemediate:
         # The sibling still cannot be re-resolved by a rescan of the patched text.
         assert graph.resolve_violations(pending_id, set(), fixed_by="deterministic", pass_number=2) == 0
 
+    def test_a_rescan_that_still_reports_a_finding_cancels_its_promotion(self) -> None:
+        """A newer report of the finding must not be hidden by a sibling patch.
+
+        ``patch_pending`` means "the graph text no longer shows this, the file
+        still does". A rescan that reports it again disproves that, so the
+        marker is dropped and a later splice of another edit on the same node
+        cannot promote the record to ``fixed``.
+        """
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        node_id = "play.yml/plays[0]/tasks[0]"
+        graph = ContentGraph()
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                file_path="play.yml",
+                yaml_lines="- name: Install\n  apt:\n    name: nginx\n",
+            )
+        )
+        graph.register_violations([{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}], 0)
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=1) == 1
+        assert (
+            graph.reopen_fixed_violations(
+                [{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}]
+            )
+            == 1
+        )
+
+        # A later pass reports L001 again: the bytes still contain it.
+        graph.register_violations([{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}], 2)
+
+        assert graph.resolve_patch_pending([node_id]) == 0
+        assert [v["rule_id"] for v in graph.query_violations(status="open")] == ["L001"]
+        assert graph.query_violations(status="fixed") == []
+
     @pytest.mark.parametrize("produces_patch", [False, True])  # type: ignore[untyped-decorator]
     async def test_skipped_splice_does_not_report_findings_fixed(self, tmp_path: Path, produces_patch: bool) -> None:
         """Only findings whose edits reached the bytes count as fixed.
