@@ -1180,8 +1180,8 @@ class ContentGraph:
         The record is marked ``patch_pending`` so a later rescan of the patched
         in-memory text — which no longer contains the finding — cannot resolve
         it again before its edit reaches the file. ``resolve_violations`` skips
-        those records; ``clear_patch_pending`` lifts the marker once a patch for
-        the node lands.
+        those records; ``resolve_patch_pending`` promotes them once a patch for
+        the node is known to have landed.
 
         Args:
             violations: Violation dicts identifying ledger rows (``path`` + rule).
@@ -1204,17 +1204,27 @@ class ContentGraph:
                 count += 1
         return count
 
-    def clear_patch_pending(self, node_ids: Iterable[str]) -> int:
-        """Drop the ``patch_pending`` marker on the given nodes.
+    def resolve_patch_pending(self, node_ids: Iterable[str]) -> int:
+        """Promote reopened findings whose patch has now reached the bytes.
 
-        Called once a patch for the node is known to have reached the source
-        bytes, so the finding may be resolved again after the next rescan.
+        A finding is marked ``patch_pending`` when an approved edit produced no
+        patch: the graph text no longer shows it, but the file still does. When
+        a later approval splices *that node's* edits into the output, the marker
+        has served its purpose and leaving the record ``open`` would contradict
+        the bytes the caller just received — the report would still list a
+        finding whose fix is in the file, and its next graph pass would resolve
+        it again. Promoting it here keeps the ledger (the source of truth for
+        report rebuilds) and the returned report in agreement.
+
+        Callers must pass only nodes whose own edits were spliced, not every
+        node in a patched file: a sibling skipped for a missing baseline still
+        has its finding in the file.
 
         Args:
             node_ids: Graph nodes whose patched edits landed.
 
         Returns:
-            Number of ledger records whose marker was cleared.
+            Number of ledger records promoted to ``fixed``.
         """
         count = 0
         for node_id in node_ids:
@@ -1224,6 +1234,7 @@ class ContentGraph:
             for record in node.violation_ledger.values():
                 if record.patch_pending:
                     record.patch_pending = False
+                    record.status = "fixed"
                     count += 1
         return count
 

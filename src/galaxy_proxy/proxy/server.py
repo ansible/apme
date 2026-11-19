@@ -1426,6 +1426,12 @@ def create_app(
                 # no ``scope_id`` back has to be treated as a failed
                 # preparation (its wheels must not come from the shared index).
                 "shared": session_scope_id is None,
+                # The generation these wheels were resolved from. A shared
+                # handoff names them only by filename, so the Engine fences its
+                # later ``/wheels/<filename>`` fetch with this value: after a
+                # configuration change the same filename belongs to another
+                # source, and the fetch must fail instead of installing it.
+                "generation": generation,
             }
             if session_scope_id is not None:
                 # No await between the generation check below and this stamp:
@@ -1703,7 +1709,7 @@ def create_app(
         return HTMLResponse(content=html)
 
     @app.get("/wheels/{filename}")  # type: ignore[untyped-decorator]
-    async def serve_wheel(filename: str) -> Response:
+    async def serve_wheel(filename: str, generation: int | None = None) -> Response:
         """Serve a wheel file, downloading and converting on cache miss.
 
         On cache miss, uses ``ansible-galaxy collection download`` to fetch
@@ -1711,17 +1717,26 @@ def create_app(
 
         Args:
             filename: Requested wheel filename from the URL path.
+            generation: Optional source generation the wheel was prepared
+                under. A shared-cache handoff names a wheel by filename, and a
+                configuration change clears that cache, so the same filename
+                can later be served from the *new* source. Callers that
+                prepared the wheel for a specific source pass its generation
+                and get a 409 instead of another source's artifact.
 
         Returns:
             Binary wheel response with appropriate content headers.
 
         Raises:
             HTTPException: When the filename is invalid, namespace/name cannot
-                be parsed, or Galaxy download fails.
+                be parsed, the requested generation is no longer current, or
+                Galaxy download fails.
         """
         if not filename.endswith(".whl") or "/" in filename or "\\" in filename or ".." in filename:
             raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
         _require_config_ready()
+        if generation is not None:
+            _require_current_config(generation)
 
         started = time.perf_counter()
 

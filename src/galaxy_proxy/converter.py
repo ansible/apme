@@ -35,9 +35,21 @@ GALAXY_META_FILES = {"FILES.json"}
 # and far below an allocation an attacker can use to exhaust memory.
 _MAX_EXTENSION_HEADER_BYTES = 1024 * 1024
 _EXTENSION_HEADER_TYPES = frozenset({b"x", b"X", b"g", b"L", b"K"})
+# ``tarfile`` resolves a GNU long name/link (and a PAX header) by parsing the
+# following header, so a run of extension headers nests one call per header and
+# keeps each payload alive. A member needs at most a long name, a long link, and
+# a PAX header in front of it, so a short run is legitimate and a long one is
+# only a recursion amplifier.
+_MAX_CONSECUTIVE_EXTENSION_HEADERS = 8
+# A global (``g``) PAX header is copied onto *every* parsed member
+# (``TarInfo.pax_headers``), so its size multiplies by the member count. Real
+# global headers carry a timestamp or a comment, well under this bound.
+_MAX_GLOBAL_PAX_BYTES = 4 * 1024
+_MAX_GLOBAL_PAX_ATTRS = 32
 # PAX per-file extended header types: their ``size`` record overrides the size
 # of the member that follows, so the walker must advance by that size.
 _PAX_PER_FILE_TYPES = frozenset({b"x", b"X"})
+_PAX_GLOBAL_TYPE = b"g"
 # GNU sparse members carry their own block layout (``_proc_sparse``), which this
 # flat walk cannot mirror; they are rejected instead of guessed at.
 _GNU_SPARSE_TYPE = b"S"
@@ -226,27 +238,31 @@ def _header_checksum_ok(header: bytes) -> bool:
     return expected in (unsigned, signed)
 
 
-def _pax_size_override(payload: bytes) -> int | None:
-    r"""Return the ``size`` record of a PAX extended-header payload, if any.
+def _scan_pax_payload(payload: bytes) -> tuple[int | None, int]:
+    r"""Scan a PAX extended-header payload.
 
     PAX records are framed as ``"<length> <keyword>=<value>\\n"`` where
     *length* covers the whole record. ``tarfile`` applies a ``size`` record to
     the member that follows the header, which changes where the next header
-    starts.
+    starts, and a ``GNU.sparse.*`` record makes it read a sparse map of
+    archive-chosen length from the stream — outside this walk's accounting —
+    so archives declaring one are rejected instead.
 
     Args:
         payload: PAX header payload bytes (already bounded by the caller).
 
     Returns:
-        The declared ``size`` value, or ``None`` when the payload has no
-        ``size`` record.
+        A ``(size_override, attribute_count)`` pair. The override is ``None``
+        when the payload has no ``size`` record.
 
     Raises:
-        ValueError: When the record framing is malformed, which ``tarfile``
-            also rejects.
+        ValueError: When the record framing is malformed (which ``tarfile``
+            also rejects), the ``size`` record is negative, or the header
+            declares GNU sparse metadata.
     """
     position = 0
     override: int | None = None
+    attributes = 0
     while position < len(payload) and payload[position] != 0:
         separator = payload.find(b" ", position)
         if separator == -1:
@@ -263,19 +279,48 @@ def _pax_size_override(payload: bytes) -> int | None:
         keyword, equals, value = record[:-1].partition(b"=")
         if not keyword or not equals:
             raise ValueError("Malformed PAX header: record without a value separator")
+        if keyword.startswith(b"GNU.sparse."):
+            raise ValueError("Tarball PAX header declares GNU sparse metadata, which cannot be bounded before parsing")
         if keyword == b"size":
             try:
                 override = int(value)
             except ValueError as exc:
                 raise ValueError("Malformed PAX header: invalid size record") from exc
+            if override < 0:
+                # A negative size would subtract from the walk's byte budget on
+                # the next member and let the scan run past its cap.
+                raise ValueError("Malformed PAX header: negative size record")
+        attributes += 1
         position += length
-    return override
+    return override, attributes
+
+
+def _raw_stream_budget(max_extracted_bytes: int, max_members: int) -> int:
+    """Return the raw byte budget for the pre-parse header walk.
+
+    ``APME_GALAXY_TARBALL_MAX_BYTES`` limits *extracted* content, so the raw
+    stream is bounded separately: every member adds a 512-byte header plus up
+    to 511 bytes of padding, and the archive ends with two zero blocks.
+    Charging headers and padding against the extracted cap would reject a valid
+    archive whose files fit it (a 1.5 KiB collection needs 2 KiB of headers).
+
+    Args:
+        max_extracted_bytes: The aggregate extracted byte cap.
+        max_members: The member-count cap, which bounds the header overhead.
+
+    Returns:
+        Raw stream bytes the walk may read while extracting at most
+        *max_extracted_bytes* from at most *max_members* members.
+    """
+    return max_extracted_bytes + max_members * 2 * _TAR_BLOCK + 2 * _TAR_BLOCK
 
 
 def _assert_extension_headers_bounded(
     tarball_data: bytes,
     *,
     max_bytes: int,
+    max_members: int,
+    max_extension_headers: int,
     max_header_bytes: int = _MAX_EXTENSION_HEADER_BYTES,
 ) -> None:
     """Reject oversized PAX/GNU extension headers before ``tarfile`` reads them.
@@ -296,16 +341,27 @@ def _assert_extension_headers_bounded(
     archives whose framing it cannot mirror, so it can never validate a
     different byte stream than the parser it protects.
 
+    The walk is also a work budget, not just a size check: it charges every
+    header block it reads, counts members against *max_members*, and gives
+    extension headers their own *max_extension_headers* allowance, so a
+    directory-only archive of hundreds of thousands of empty entries is
+    rejected here instead of after ``tarfile`` has parsed all of them.
+
     Args:
         tarball_data: Raw bytes of the gzipped archive.
-        max_bytes: Aggregate decompressed byte cap.
+        max_bytes: Raw decompressed stream cap (headers, padding, payload).
+        max_members: Member-count cap the walk enforces.
+        max_extension_headers: Extension-header cap for the whole walk.
         max_header_bytes: Largest extension-header payload allowed.
 
     Raises:
-        ValueError: When the decompressed stream exceeds *max_bytes*, an
-            extension header declares more than *max_header_bytes*, or the
-            archive uses tar framing this walk cannot mirror (GNU sparse
-            members, negative sizes, malformed PAX records).
+        ValueError: When the decompressed stream exceeds *max_bytes*, more
+            than *max_members* members or *max_extension_headers* extension
+            headers appear, an extension header declares more than
+            *max_header_bytes*, or the archive uses tar framing this walk
+            cannot mirror (GNU sparse members or PAX metadata, negative sizes,
+            malformed PAX records, over-long extension-header runs, oversized
+            global PAX headers).
     """
 
     def _skip(stream: io.BufferedIOBase, count: int) -> bool:
@@ -319,6 +375,9 @@ def _assert_extension_headers_bounded(
 
     with gzip.GzipFile(fileobj=io.BytesIO(tarball_data)) as stream:
         total = 0
+        members = 0
+        extension_headers = 0
+        consecutive_extensions = 0
         pax_size: int | None = None
         while True:
             header = stream.read(_TAR_BLOCK)
@@ -332,7 +391,7 @@ def _assert_extension_headers_bounded(
                 return
             total += _TAR_BLOCK
             if total > max_bytes:
-                raise ValueError(f"Tarball size limit exceeded: {total} bytes (max {max_bytes} bytes)")
+                raise ValueError(f"Tarball raw stream too large: {total} bytes (max {max_bytes} bytes)")
             size = _header_declared_size(header)
             if size is None:
                 # ``tarfile`` rejects the header itself and stops iterating.
@@ -340,6 +399,24 @@ def _assert_extension_headers_bounded(
             if size < 0:
                 raise ValueError("Tarball header declares a negative size; refusing to scan it")
             typeflag = header[156:157]
+            if typeflag in _EXTENSION_HEADER_TYPES:
+                consecutive_extensions += 1
+                if consecutive_extensions > _MAX_CONSECUTIVE_EXTENSION_HEADERS:
+                    raise ValueError(
+                        "Tarball has too many consecutive extension headers: "
+                        f"{consecutive_extensions} (max {_MAX_CONSECUTIVE_EXTENSION_HEADERS})"
+                    )
+                extension_headers += 1
+                if extension_headers > max_extension_headers:
+                    raise ValueError(
+                        f"Tarball extension header limit exceeded: {extension_headers} headers "
+                        f"(max {max_extension_headers})"
+                    )
+            else:
+                consecutive_extensions = 0
+                members += 1
+                if members > max_members:
+                    raise ValueError(f"Tarball file limit exceeded: {members} members (max {max_members})")
             if typeflag in _EXTENSION_HEADER_TYPES and size > max_header_bytes:
                 raise ValueError(f"Tarball extension header too large: {size} bytes (max {max_header_bytes} bytes)")
             if typeflag == _GNU_SPARSE_TYPE:
@@ -356,7 +433,25 @@ def _assert_extension_headers_bounded(
                 payload = stream.read(size)
                 if len(payload) < size:
                     return
-                pax_size = _pax_size_override(payload)
+                pax_size, _ = _scan_pax_payload(payload)
+                consumed = size
+                already_read = True
+            elif typeflag == _PAX_GLOBAL_TYPE:
+                # ``tarfile`` copies a global header's attributes onto every
+                # parsed member, so its size and attribute count multiply by
+                # the member count; both are bounded here.
+                if size > _MAX_GLOBAL_PAX_BYTES:
+                    raise ValueError(
+                        f"Tarball global PAX header too large: {size} bytes (max {_MAX_GLOBAL_PAX_BYTES} bytes)"
+                    )
+                payload = stream.read(size)
+                if len(payload) < size:
+                    return
+                _, attributes = _scan_pax_payload(payload)
+                if attributes > _MAX_GLOBAL_PAX_ATTRS:
+                    raise ValueError(
+                        f"Tarball global PAX header has too many attributes: {attributes} (max {_MAX_GLOBAL_PAX_ATTRS})"
+                    )
                 consumed = size
                 already_read = True
             elif typeflag in _EXTENSION_HEADER_TYPES:
@@ -373,7 +468,7 @@ def _assert_extension_headers_bounded(
             padded = (consumed + _TAR_BLOCK - 1) // _TAR_BLOCK * _TAR_BLOCK
             total += padded
             if total > max_bytes:
-                raise ValueError(f"Tarball size limit exceeded: {total} bytes (max {max_bytes} bytes)")
+                raise ValueError(f"Tarball raw stream too large: {total} bytes (max {max_bytes} bytes)")
             skip = padded - consumed if already_read else padded
             if not _skip(stream, skip):
                 return
@@ -421,7 +516,12 @@ def _extract_tarball(tarball_data: bytes) -> tuple[dict[str, Any], dict[str, byt
     max_file_bytes = _tarball_max_file_bytes()
     # Do this before ``tarfile`` sees the bytes: it buffers PAX/GNU extension
     # payloads at their declared size while iterating, ahead of every cap below.
-    _assert_extension_headers_bounded(tarball_data, max_bytes=max_bytes)
+    _assert_extension_headers_bounded(
+        tarball_data,
+        max_bytes=_raw_stream_budget(max_bytes, max_files),
+        max_members=max_files,
+        max_extension_headers=2 * max_files,
+    )
     total_bytes = 0
     member_count = 0
 

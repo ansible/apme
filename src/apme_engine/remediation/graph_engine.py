@@ -1057,10 +1057,17 @@ class SpliceOutcome:
             were skipped (no entry in ``originals`` or no scan
             baseline), plus files spliced from an approximate baseline
             whose diff may be truncated.
+        contributors: Node IDs whose edits are present in each patched
+            file's output. Only files that produced a patch are listed,
+            and a node skipped for a missing baseline is absent even
+            when a sibling in the same file did land — callers that
+            certify findings as fixed must key off these nodes, not off
+            the patched file path.
     """
 
     patches: list[FilePatch] = field(default_factory=list)
     unpatched: list[str] = field(default_factory=list)
+    contributors: dict[str, set[str]] = field(default_factory=dict)
 
     @property
     def unpatched_count(self) -> int:
@@ -1653,7 +1660,11 @@ def splice_with_outcome(
             f"splice_with_outcome: {len(unpatched)} modified file(s) could not be spliced: {sorted(unpatched)}"
         )
 
-    return SpliceOutcome(patches=patches, unpatched=sorted(unpatched))
+    # Only a file that produced a patch carries its contributors: an edit set
+    # that normalises back to the original left no bytes behind, so nothing
+    # landed for its nodes.
+    landed = {patch.path: set(contributors[patch.path]) for patch in patches}
+    return SpliceOutcome(patches=patches, unpatched=sorted(unpatched), contributors=landed)
 
 
 def _record_violations(

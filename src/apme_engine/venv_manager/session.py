@@ -49,6 +49,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 import httpx
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 from apme_engine.cache import BoundedCache
 from apme_engine.config_env import get_env_int
@@ -380,12 +382,15 @@ class _PrepareOutcome(NamedTuple):
         prepared: Wheel filenames the proxy prepared for the requested specs.
         shared: Whether the proxy served the request from its process-wide
             (shared) cache instead of a request-scoped handoff.
+        generation: Source generation the shared wheels were prepared under,
+            used to fence the later ``/wheels/`` fetch, else ``None``.
     """
 
     scope_id: str | None
     failed_specs: list[str]
     prepared: list[str]
     shared: bool
+    generation: int | None = None
 
 
 def _prepared_wheels(payload: object) -> list[str]:
@@ -449,11 +454,13 @@ def _prepare_collections_via_proxy(
         logger.warning("Galaxy proxy could not prepare collection specs: %s", failed_specs)
     scope_id = payload.get("scope_id") if isinstance(payload, dict) else None
     valid_scope = scope_id if isinstance(scope_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id) else None
+    generation = payload.get("generation") if isinstance(payload, dict) else None
     return _PrepareOutcome(
         scope_id=valid_scope,
         failed_specs=failed_specs,
         prepared=_prepared_wheels(payload),
         shared=isinstance(payload, dict) and payload.get("shared") is True,
+        generation=generation if isinstance(generation, int) and not isinstance(generation, bool) else None,
     )
 
 
@@ -476,10 +483,30 @@ def _unprepared_requested_specs(failed_specs: list[str], requested: list[str]) -
     return [spec for spec in requested if spec.strip().lower() in blocked]
 
 
+def _prepared_version(filename: str, prefix: str) -> Version | None:
+    """Return the version a prepared wheel filename declares.
+
+    Args:
+        filename: Wheel basename such as ``ansible_collection_ns_coll-1.2.3-py3-none-any.whl``.
+        prefix: Distribution prefix the filename must start with.
+
+    Returns:
+        The parsed version, or ``None`` when the filename is not a wheel of
+        that distribution or its version is unparseable.
+    """
+    rest = filename[len(prefix) :]
+    version = rest.split("-", 1)[0]
+    try:
+        return Version(version)
+    except InvalidVersion:
+        return None
+
+
 def _bind_prepared_pip_specs(
     installable: list[tuple[str, str]],
     prepared: list[str],
     base_url: str,
+    generation: int | None = None,
 ) -> list[tuple[str, str]]:
     """Point each prepared collection requirement at its wheel URL.
 
@@ -491,35 +518,51 @@ def _bind_prepared_pip_specs(
     to that exact artifact; wheels it depends on still resolve from the
     configured indexes, which keeps dependency installation working.
 
-    A requirement is left as-is when no single prepared wheel matches it (for
-    example two constraints on the same collection resolved to different
-    versions), because guessing could install the wrong artifact.
+    The requirement's own constraint still has to be honoured when several
+    prepared wheels exist for one collection: a previous install can leave
+    another version in the cache, so ``ansible.posix:1.5.4`` may see both 1.5.3
+    and 1.5.4. Candidates outside the constraint are dropped, and the highest
+    remaining one is bound — the same choice the resolver would make among
+    artifacts this request prepared. A requirement with no prepared candidate
+    is left as-is (its content did not come from this scope).
 
     Args:
         installable: ``(spec, pip_spec)`` pairs to install.
         prepared: Wheel basenames the proxy prepared for this request.
         base_url: Proxy URL prefix that serves those wheels (the scoped handoff
             or the shared ``/wheels/`` directory).
+        generation: Source generation the shared wheels were prepared under;
+            appended as a query parameter so a later source change cannot swap
+            the artifact behind the same filename.
 
     Returns:
         ``(spec, pip_spec)`` pairs with prepared collections bound to their
         wheel URL.
     """
+    fence = f"?generation={generation}" if generation is not None else ""
     bound: list[tuple[str, str]] = []
     for spec, pip_spec in installable:
         fqcn = spec.split(":", 1)[0].strip()
         namespace, _, collection = fqcn.partition(".")
+        dist = f"ansible-collection-{namespace}-{collection}"
         prefix = f"ansible_collection_{namespace}_{collection}-"
-        matches = [name for name in prepared if name.startswith(prefix)]
-        if len(matches) == 1:
-            bound.append((spec, base_url + matches[0]))
+        constraint = pip_spec[len(dist) :].strip() if pip_spec.startswith(dist) else ""
+        candidates: list[tuple[Version, str]] = []
+        try:
+            wanted = SpecifierSet(constraint)
+        except InvalidSpecifier:  # pragma: no cover - validated by _spec_to_pip
+            wanted = SpecifierSet()
+        for name in prepared:
+            if not name.startswith(prefix):
+                continue
+            version = _prepared_version(name, prefix)
+            if version is None or version not in wanted:
+                continue
+            candidates.append((version, name))
+        if candidates:
+            _, chosen = max(candidates)
+            bound.append((spec, base_url + chosen + fence))
         else:
-            if matches:
-                logger.debug(
-                    "Leaving %s on the proxy index: %d prepared wheels match it",
-                    spec,
-                    len(matches),
-                )
             bound.append((spec, pip_spec))
     return bound
 
@@ -679,12 +722,17 @@ def _install_collections_via_proxy(
             # Both paths need it: the shared cache serves its wheels from
             # ``/wheels/``, and a same-named distribution on the default index
             # would otherwise be an acceptable candidate there too.
-            base_url = (
-                proxy_url.rstrip("/") + f"/session-wheels/{session_scope_id}/"
-                if session_scope_id is not None
-                else proxy_url.rstrip("/") + "/wheels/"
-            )
-            installable = _bind_prepared_pip_specs(installable, prepared_wheels, base_url)
+            if session_scope_id is not None:
+                base_url = proxy_url.rstrip("/") + f"/session-wheels/{session_scope_id}/"
+                fence = None
+            else:
+                # The shared handoff names wheels only by filename. Fence the
+                # fetch with the generation they were prepared under, so a
+                # source change in between fails the install instead of
+                # installing the same filename from the new source.
+                base_url = proxy_url.rstrip("/") + "/wheels/"
+                fence = outcome.generation
+            installable = _bind_prepared_pip_specs(installable, prepared_wheels, base_url, fence)
             pip_specs = [pip_spec for _, pip_spec in installable]
 
     try:

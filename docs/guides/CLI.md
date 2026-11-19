@@ -262,11 +262,14 @@ Re-send the *unchanged* body with the same key (read it back from
 outcome is unknown or retryable, so the key recovers the stored result instead
 of pushing twice. A 409 is different — the Gateway already has a definitive
 answer, so follow its message. Changing the branch, activity, or patch set
-under the same key is rejected (409) and resending that request unchanged
-repeats the conflict; start the new intent with a fresh key file (`set -o
-noclobber` also stops an accidental reuse) instead of retrying. Omitting the
-header is the only way to start an unclaimed operation; `apme submit
---no-idempotency-key` does that deliberately, and the call then cannot be
+under the same key is rejected (409), and resending that request unchanged
+repeats the conflict. Before starting a new intent, check SCM for the branch
+and the PR: a 409 can arrive after the push or PR creation already finished,
+and a new key would repeat that work. Use a fresh key file only when neither
+the branch nor the PR exists — that is the case where nothing landed and a new
+intent is genuinely needed (`set -o noclobber` also stops an accidental reuse).
+Omitting the header is the only way to start an unclaimed operation; `apme
+submit --no-idempotency-key` does that deliberately, and the call then cannot be
 replayed safely.
 
 ### `apme format` via REST (Gateway-managed alternative)

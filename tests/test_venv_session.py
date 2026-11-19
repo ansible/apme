@@ -1424,22 +1424,69 @@ def test_scoped_install_binds_prepared_wheels_to_their_scope(monkeypatch: pytest
     ]
 
 
-def test_ambiguous_prepared_wheels_stay_on_the_proxy_index() -> None:
-    """A collection with several prepared wheels is not bound to a guess."""
+def test_prepared_wheels_are_filtered_by_the_version_constraint() -> None:
+    """The requirement's own constraint narrows several prepared wheels to one.
+
+    A previous install can leave another version of the same collection in the
+    cache, so the prepare handoff may name both. The requirement still has to
+    install the version it asked for.
+    """
     from apme_engine.venv_manager.session import _bind_prepared_pip_specs
 
     prepared = [
         "ansible_collection_ansible_posix-1.5.3-py3-none-any.whl",
         "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl",
     ]
+    base_url = "http://proxy/session-wheels/" + "G" * 32 + "/"
 
     bound = _bind_prepared_pip_specs(
         [("ansible.posix:1.5.4", "ansible-collection-ansible-posix==1.5.4")],
         prepared,
-        "http://proxy/session-wheels/" + "G" * 32 + "/",
+        base_url,
     )
 
-    assert bound == [("ansible.posix:1.5.4", "ansible-collection-ansible-posix==1.5.4")]
+    assert bound == [("ansible.posix:1.5.4", base_url + prepared[1])]
+
+
+def test_range_constraint_binds_the_highest_prepared_candidate() -> None:
+    """Among artifacts this request prepared, the highest match is the choice.
+
+    A ``>=1.5,<2`` requirement with two in-range prepared wheels binds to the
+    highest one — the version the resolver would pick from the proxy index, but
+    by exact artifact, so the default index cannot supply it instead.
+    """
+    from apme_engine.venv_manager.session import _bind_prepared_pip_specs
+
+    prepared = [
+        "ansible_collection_ansible_posix-1.4.9-py3-none-any.whl",
+        "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl",
+        "ansible_collection_ansible_posix-2.0.0-py3-none-any.whl",
+    ]
+    base_url = "http://proxy/wheels/"
+
+    bound = _bind_prepared_pip_specs(
+        [("ansible.posix:>=1.5,<2", "ansible-collection-ansible-posix>=1.5,<2")],
+        prepared,
+        base_url,
+        7,
+    )
+
+    assert bound == [("ansible.posix:>=1.5,<2", base_url + prepared[1] + "?generation=7")]
+
+
+def test_spec_without_a_prepared_candidate_is_left_alone() -> None:
+    """A requirement the scope never prepared is not bound to another version."""
+    from apme_engine.venv_manager.session import _bind_prepared_pip_specs
+
+    prepared = ["ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"]
+
+    bound = _bind_prepared_pip_specs(
+        [("ansible.posix:1.0.0", "ansible-collection-ansible-posix==1.0.0")],
+        prepared,
+        "http://proxy/wheels/",
+    )
+
+    assert bound == [("ansible.posix:1.0.0", "ansible-collection-ansible-posix==1.0.0")]
 
 
 def test_shared_prepare_response_without_scope_still_installs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1482,10 +1529,51 @@ def test_shared_prepare_response_without_scope_still_installs(monkeypatch: pytes
 
     assert failures == []
     # The shared cache serves the prepared artifact by exact filename, so the
-    # default index cannot win a same-name (even same-version) tie.
+    # default index cannot win a same-name (even same-version) tie. This
+    # response carries no generation, so the fetch is not fenced.
     assert install.call_args.args[1] == ["http://proxy/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"]
     assert install.call_args.args[2] == "http://proxy/simple/"
     release.assert_not_called()
+
+
+def test_shared_prepare_fences_the_wheel_fetch_with_its_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shared handoff fetch is fenced with the generation that prepared it.
+
+    The shared cache is keyed by filename, and a configuration change clears it,
+    so the same ``<ns>-<name>-<version>`` filename can later be served from the
+    new source. The prepare response reports the generation these wheels were
+    resolved from, and the install request carries it so the proxy can reject a
+    fetch that would cross sources.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    wheel = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [wheel], "failed_specs": [], "shared": True, "generation": 4}
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=[{"name": "private", "url": "https://hub.example.com/"}],
+        )
+
+    assert failures == []
+    assert install.call_args.args[1] == [f"http://proxy/wheels/{wheel}?generation=4"]
 
 
 def test_shared_prepare_binds_prepared_artifact_over_a_default_index_twin(monkeypatch: pytest.MonkeyPatch) -> None:

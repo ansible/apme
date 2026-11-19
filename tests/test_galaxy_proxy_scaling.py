@@ -582,13 +582,13 @@ def test_tarball_long_names_still_convert(fmt: int) -> None:
     assert files[long_path] == b"notes"
 
 
-def test_tarball_byte_cap_trips_before_tarfile_parses(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The declared-bytes bound trips before any tarfile pass starts.
+def test_tarball_member_cap_trips_before_tarfile_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The member bound trips in the pre-parse walk, before any tarfile pass.
 
-    The layout pass breaks at the first name outside the shared prefix, so a
-    tarball whose leading members stay in one prefix would iterate far past
-    the aggregate byte cap; the pre-parse header walk now rejects it first,
-    so no tarfile parse (and no member cache) is ever started.
+    A directory-only archive of hundreds of thousands of empty entries fits
+    easily under the aggregate byte cap, so the header walk must charge its own
+    work budget: it counts members against the same cap and stops there
+    instead of letting ``tarfile`` parse (and cache) every header first.
 
     Args:
         monkeypatch: Pytest fixture for modifying environment.
@@ -598,26 +598,74 @@ def test_tarball_byte_cap_trips_before_tarfile_parses(monkeypatch: pytest.Monkey
 
     from galaxy_proxy.converter import _extract_tarball
 
-    monkeypatch.setenv("APME_GALAXY_TARBALL_MAX_BYTES", "100")
-    monkeypatch.setenv("APME_GALAXY_TARBALL_MAX_FILES", "1000")
+    monkeypatch.setenv("APME_GALAXY_TARBALL_MAX_FILES", "10")
 
     buf = _io.BytesIO()
     with _tarfile.open(fileobj=buf, mode="w:gz") as tf:
         # All members share one prefix, so the layout pass never breaks out.
-        for index in range(10):
-            data = b"x" * 40
-            info = _tarfile.TarInfo(f"ns-coll-1.0.0/file-{index}.txt")
-            info.size = len(data)
-            tf.addfile(info, _io.BytesIO(data))
+        for index in range(50):
+            info = _tarfile.TarInfo(f"ns-coll-1.0.0/empty-{index}/")
+            info.type = _tarfile.DIRTYPE
+            tf.addfile(info)
     tarball = buf.getvalue()
 
     with (
         patch.object(_tarfile, "open", wraps=_tarfile.open) as counting,
-        pytest.raises(ValueError, match="size limit exceeded"),
+        pytest.raises(ValueError, match="file limit exceeded"),
     ):
         _extract_tarball(tarball)
     # The header walk alone trips the cap: neither tarfile pass starts.
     assert counting.call_count == 0
+
+
+def test_tarball_byte_cap_still_trips_in_the_first_tarfile_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The aggregate byte cap no longer competes with header overhead.
+
+    ``APME_GALAXY_TARBALL_MAX_BYTES`` bounds *extracted* content, while the raw
+    walk has its own budget, so small members under a tight cap are rejected by
+    the byte cap itself rather than by header blocks charged against it.
+
+    Args:
+        monkeypatch: Pytest fixture for modifying environment.
+    """
+    from galaxy_proxy.converter import _extract_tarball
+
+    monkeypatch.setenv("APME_GALAXY_TARBALL_MAX_BYTES", "100")
+    monkeypatch.setenv("APME_GALAXY_TARBALL_MAX_FILES", "1000")
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for index in range(10):
+            data = b"x" * 40
+            info = tarfile.TarInfo(f"ns-coll-1.0.0/file-{index}.txt")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+    with pytest.raises(ValueError, match="size limit exceeded"):
+        _extract_tarball(buf.getvalue())
+
+
+def test_small_collection_fits_a_tight_extracted_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Header blocks and padding are not charged against the extracted cap.
+
+    ``APME_GALAXY_TARBALL_MAX_BYTES`` documents the extracted-content limit; a
+    collection whose files fit it must convert even though its raw stream needs
+    a few header blocks more (a 1000-byte cap with two members needs 2048 raw
+    bytes).
+
+    Args:
+        monkeypatch: Pytest fixture for modifying environment.
+    """
+    from galaxy_proxy.converter import _extract_tarball
+
+    # ``_make_tarball`` writes galaxy.yml (40 bytes); the only other member is
+    # notes.txt, so the cap covers exactly the extracted content.
+    monkeypatch.setenv("APME_GALAXY_TARBALL_MAX_BYTES", "80")
+
+    galaxy, files = _extract_tarball(_make_tarball({"notes.txt": b"n" * 40}))
+
+    assert galaxy["name"] == "coll"
+    assert files["notes.txt"] == b"n" * 40
 
 
 def test_base256_size_field_keeps_low_order_zero_bytes() -> None:
@@ -643,8 +691,6 @@ def test_base256_extension_size_is_bounded_before_parsing() -> None:
     bytes are zero, otherwise the following block (a valid header, so the walk
     keeps going) hides the oversized payload from the bound.
     """
-    from galaxy_proxy.converter import _assert_extension_headers_bounded
-
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w", format=tarfile.GNU_FORMAT) as tf:
         info = tarfile.TarInfo("/".join(["n" * 90] * 8))
@@ -658,7 +704,7 @@ def test_base256_extension_size_is_bounded_before_parsing() -> None:
     _recompute_checksum(raw, 0)
 
     with pytest.raises(ValueError, match="extension header too large"):
-        _assert_extension_headers_bounded(gzip.compress(bytes(raw)), max_bytes=64 * 1024 * 1024)
+        _walk(bytes(raw))
 
 
 def _recompute_checksum(block: bytearray, offset: int) -> None:
@@ -709,6 +755,39 @@ def test_octal_fields_stop_at_first_nul_like_tarfile() -> None:
     assert _header_checksum_ok(bytes(header)) is True
 
 
+def _walk(archive: bytes) -> None:
+    """Run the pre-parse header walk over a raw (uncompressed) archive.
+
+    Args:
+        archive: Raw tar bytes to walk.
+    """
+    from galaxy_proxy.converter import _assert_extension_headers_bounded
+
+    _assert_extension_headers_bounded(
+        gzip.compress(archive),
+        max_bytes=64 * 1024 * 1024,
+        max_members=10000,
+        max_extension_headers=20000,
+    )
+
+
+def _pax_record(keyword: bytes, value: bytes) -> bytes:
+    r"""Frame one PAX record the way ``tarfile`` parses it.
+
+    Args:
+        keyword: Record keyword bytes.
+        value: Record value bytes.
+
+    Returns:
+        A ``"<length> <keyword>=<value>\\n"`` record.
+    """
+    body = keyword + b"=" + value + b"\n"
+    length = len(body) + 2
+    while len(str(length).encode()) + 1 + len(body) != length:
+        length = len(str(length).encode()) + 1 + len(body)
+    return str(length).encode() + b" " + body
+
+
 def _raw_tar_header(name: bytes, typeflag: bytes, size: int) -> bytearray:
     """Build one valid 512-byte tar header block.
 
@@ -744,8 +823,6 @@ def test_pax_size_override_cannot_hide_an_oversized_header() -> None:
     1 GiB payload which bypasses both the extension-header bound and the
     aggregate byte cap.
     """
-    from galaxy_proxy.converter import _assert_extension_headers_bounded
-
     pax_record = b"10 size=0\n"
     pax_header = _raw_tar_header(b"./PaxHeaders/payload.bin", b"x", len(pax_record))
     member_header = _raw_tar_header(b"payload.bin", b"0", 512)
@@ -756,7 +833,7 @@ def test_pax_size_override_cannot_hide_an_oversized_header() -> None:
     )
 
     with pytest.raises(ValueError, match="extension header too large"):
-        _assert_extension_headers_bounded(gzip.compress(archive), max_bytes=64 * 1024 * 1024)
+        _walk(archive)
 
 
 def test_tarball_pax_size_record_still_converts() -> None:
@@ -788,9 +865,89 @@ def test_tarball_gnu_sparse_member_is_rejected_before_parsing() -> None:
     ``tarfile`` reads sparse members through their own block layout, so a flat
     header walk cannot mirror the byte stream it protects.
     """
-    from galaxy_proxy.converter import _assert_extension_headers_bounded
-
     archive = bytes(_raw_tar_header(b"sparse.bin", b"S", 0)) + b"\0" * 1024
 
     with pytest.raises(ValueError, match="GNU sparse member"):
-        _assert_extension_headers_bounded(gzip.compress(archive), max_bytes=64 * 1024 * 1024)
+        _walk(archive)
+
+
+def test_tarball_gnu_sparse_pax_metadata_is_rejected_before_parsing() -> None:
+    """PAX GNU-sparse metadata is rejected before ``tarfile`` reads the map.
+
+    Decoding GNU sparse 1.0 makes ``tarfile`` read ``fields * 2`` numbers from
+    the stream, where ``fields`` comes from the archive; those reads are outside
+    both the member's declared size and this walk's byte budget. The keys can
+    arrive in a per-file (``x``) or a global (``g``) PAX header.
+    """
+    for typeflag in (b"x", b"g"):
+        record = _pax_record(b"GNU.sparse.major", b"1") + _pax_record(b"GNU.sparse.minor", b"0")
+        header = _raw_tar_header(b"./PaxHeaders/sparse.bin", typeflag, len(record))
+        archive = (
+            bytes(header) + record.ljust(512, b"\0") + bytes(_raw_tar_header(b"sparse.bin", b"0", 0)) + b"\0" * 1024
+        )
+
+        with pytest.raises(ValueError, match="GNU sparse metadata"):
+            _walk(archive)
+
+
+def test_tarball_negative_pax_size_is_rejected() -> None:
+    """A negative PAX ``size`` cannot shrink the walk's byte budget.
+
+    ``total`` would decrease on the next member while ``_skip`` returns without
+    reading, so a repeating ``size=-512`` record plus an empty member keeps the
+    accounting flat and the scan reads the rest of the stream.
+    """
+    record = _pax_record(b"size", b"-512")
+    header = _raw_tar_header(b"./PaxHeaders/payload.bin", b"x", len(record))
+    archive = bytes(header) + record.ljust(512, b"\0") + bytes(_raw_tar_header(b"payload.bin", b"0", 0)) + b"\0" * 1024
+
+    with pytest.raises(ValueError, match="negative size record"):
+        _walk(archive)
+
+
+def test_tarball_long_extension_header_run_is_rejected() -> None:
+    """A run of extension headers cannot nest ``tarfile``'s recursion unboundedly.
+
+    ``tarfile`` resolves a long name by parsing the following header, so a chain
+    of ``L`` headers nests one call per header and retains each payload. The
+    walk rejects the chain before ``tarfile`` recurses.
+    """
+    from galaxy_proxy.converter import _MAX_CONSECUTIVE_EXTENSION_HEADERS
+
+    chain = b"".join(
+        bytes(_raw_tar_header(b"././@LongLink", b"L", 4)) + b"name" + b"\0" * 508
+        for _ in range(_MAX_CONSECUTIVE_EXTENSION_HEADERS + 1)
+    )
+    archive = chain + bytes(_raw_tar_header(b"payload.bin", b"0", 0)) + b"\0" * 1024
+
+    with pytest.raises(ValueError, match="consecutive extension headers"):
+        _walk(archive)
+
+
+def test_tarball_oversized_global_pax_header_is_rejected() -> None:
+    """A global PAX header is copied onto every member, so its size is capped.
+
+    ``TarInfo.pax_headers`` holds a copy per parsed member, so the raw walk
+    charges a global header once while ``tarfile`` retains it
+    ``members`` times.
+    """
+    from galaxy_proxy.converter import _MAX_GLOBAL_PAX_BYTES
+
+    record = _pax_record(b"comment", b"c" * (_MAX_GLOBAL_PAX_BYTES + 1))
+    header = _raw_tar_header(b"./PaxHeaders/global", b"g", len(record))
+    archive = bytes(header) + record + b"\0" * (-len(record) % 512) + b"\0" * 1024
+
+    with pytest.raises(ValueError, match="global PAX header too large"):
+        _walk(archive)
+
+
+def test_tarball_global_pax_attribute_count_is_bounded() -> None:
+    """Global PAX attributes also multiply by the member count."""
+    from galaxy_proxy.converter import _MAX_GLOBAL_PAX_ATTRS
+
+    record = b"".join(_pax_record(f"key{index}".encode(), b"v") for index in range(_MAX_GLOBAL_PAX_ATTRS + 1))
+    header = _raw_tar_header(b"./PaxHeaders/global", b"g", len(record))
+    archive = bytes(header) + record + b"\0" * (-len(record) % 512) + b"\0" * 1024
+
+    with pytest.raises(ValueError, match="too many attributes"):
+        _walk(archive)

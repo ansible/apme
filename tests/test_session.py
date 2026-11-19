@@ -707,7 +707,7 @@ class TestSessionApprovalGates:
         outcome = SpliceOutcome(patches=[], unpatched=["legacy.yml"])
 
         with patch("apme_engine.remediation.graph_engine.splice_with_outcome", return_value=outcome):
-            _applied, _rejected, _approved, patches = _apply_graph_approvals(session, graph, {}, set())
+            _applied, _rejected, _approved, patches, _landed = _apply_graph_approvals(session, graph, {}, set())
 
         assert isinstance(patches, SpliceResult)
         assert patches.unpatched == ["legacy.yml"]
@@ -1576,7 +1576,7 @@ class TestSessionApprovalGates:
             ),
         }
 
-        applied, rejected, _approved, patches = _apply_graph_approvals(
+        applied, rejected, _approved, patches, _landed = _apply_graph_approvals(
             session,
             graph,
             session.graph_originals,
@@ -2640,9 +2640,73 @@ class TestSessionGraphRemediate:
         if restored is not None:
             assert restored.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=3) == 0
 
-        # Once a patch for the file lands, the finding may be resolved again.
-        graph.clear_patch_pending([node_id])
-        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=4) == 1
+        # A rescan still cannot resolve it while the marker stands...
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=4) == 0
+
+        # ...but once this node's own patch lands, the marker has done its job:
+        # the fix is in the bytes, so the ledger is promoted rather than left
+        # ``open`` (which would keep listing a repaired finding as remaining).
+        assert graph.resolve_patch_pending([node_id]) == 1
+        assert [v["rule_id"] for v in graph.query_violations(status="fixed")] == ["L001"]
+        assert graph.query_violations(status="open") == []
+        _reconcile_after_approval(session, graph, set())
+        assert session.report.fixed == 1
+        assert [v.rule_id for v in session.report.remaining_violations] == []
+
+    def test_only_the_nodes_whose_edits_landed_are_promoted(self, tmp_path: Path) -> None:
+        """One node landing does not resolve a sibling's still-pending finding.
+
+        ``landed_nodes`` comes from ``SpliceOutcome.contributors``, so a node
+        that shares a patched file but whose own edit did not land keeps its
+        ``patch_pending`` marker and stays open.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import _reconcile_after_approval
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        landed_id = "play.yml/plays[0]/tasks[0]"
+        pending_id = "play.yml/plays[0]/tasks[1]"
+        graph = ContentGraph()
+        for node_id in (landed_id, pending_id):
+            node = ContentNode(
+                identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                file_path="play.yml",
+                yaml_lines="- name: Install\n  ansible.builtin.apt:\n    name: nginx\n",
+            )
+            node.line_start = 1
+            node.line_end = 3
+            graph.add_node(node)
+        graph.register_violations(
+            [
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": landed_id},
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": pending_id},
+            ],
+            0,
+        )
+        for node_id in (landed_id, pending_id):
+            assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=1) == 1
+        assert (
+            graph.reopen_fixed_violations(
+                [
+                    {"rule_id": "L001", "file": "play.yml", "path": landed_id},
+                    {"rule_id": "L001", "file": "play.yml", "path": pending_id},
+                ]
+            )
+            == 2
+        )
+
+        session = SessionState(session_id="approval-landed", temp_dir=tmp_path)
+        session.content_graph = graph
+        _reconcile_after_approval(session, graph, set(), landed_nodes={landed_id})
+
+        assert session.report is not None
+        assert [v.path for v in session.report.fixed_violations] == [landed_id]
+        assert [v.path for v in session.report.remaining_violations] == [pending_id]
+        assert [v["path"] for v in graph.query_violations(status="open")] == [pending_id]
+        # The sibling still cannot be re-resolved by a rescan of the patched text.
+        assert graph.resolve_violations(pending_id, set(), fixed_by="deterministic", pass_number=2) == 0
 
     @pytest.mark.parametrize("produces_patch", [False, True])  # type: ignore[untyped-decorator]
     async def test_skipped_splice_does_not_report_findings_fixed(self, tmp_path: Path, produces_patch: bool) -> None:

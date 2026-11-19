@@ -375,7 +375,10 @@ def test_prepare_collections_uses_cli_for_requested_pin_and_dependencies(
             headers=_admin_headers(),
         )
     assert response.status_code == 200
-    assert response.json() == {"prepared": [WHEEL], "failed_specs": [], "shared": True}
+    # ``generation`` fences the Engine's later ``/wheels/<file>`` fetch: the
+    # shared cache is keyed by filename, so a source change could otherwise
+    # serve the same filename from another source.
+    assert response.json() == {"prepared": [WHEEL], "failed_specs": [], "shared": True, "generation": 0}
     assert download.await_count == 1
     assert ProxyCache(tmp_path).get_wheel(WHEEL) == _wheel_bytes()
 

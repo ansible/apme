@@ -21,7 +21,7 @@ import re
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
@@ -4904,7 +4904,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         temp_patches: list[SplicedFilePatch] | None = None
         if has_graph_proposals and graph is not None and originals is not None:
-            applied, rejected_nodes, approved_nodes, temp_patches = _apply_graph_approvals(
+            applied, rejected_nodes, approved_nodes, temp_patches, landed_nodes = _apply_graph_approvals(
                 session,
                 graph,
                 originals,
@@ -4924,7 +4924,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 unspliced_files={
                     path for path in (getattr(temp_patches, "unpatched", None) or []) if path not in patched_paths
                 },
-                patched_files=patched_paths,
+                landed_nodes=landed_nodes,
             )
         else:
             applied = _apply_text_approvals(session, approved_ids)
@@ -5592,6 +5592,9 @@ class _GraphApprovalPreview:
         decisions: Resolved proposal and node identifiers.
         patches: Successfully assembled and formatted text source patches.
         files: Complete target bytes for affected files, including restorations.
+        landed_nodes: Nodes whose edits are present in the patched bytes.
+            Nodes skipped for a missing baseline are absent even when a
+            sibling in the same file landed.
     """
 
     graph: ContentGraph
@@ -5600,6 +5603,7 @@ class _GraphApprovalPreview:
     decisions: tuple[tuple[str, str], ...]
     patches: list[SplicedFilePatch]
     files: dict[str, bytes]
+    landed_nodes: frozenset[str] = frozenset()
 
 
 def _proposal_snapshot(session: SessionState) -> tuple[tuple[str, bytes], ...]:
@@ -5739,7 +5743,8 @@ def _preview_graph_approvals(
     files = {_working_files_key(session.temp_dir, path): content for path, content in restoration.items()}
     for patch in patches:
         files[_working_files_key(session.temp_dir, patch.path)] = patch.patched.encode("utf-8")
-    return _GraphApprovalPreview(graph, snapshot, choices, decisions, patches, files)
+    landed_nodes = frozenset().union(*splice_outcome.contributors.values())
+    return _GraphApprovalPreview(graph, snapshot, choices, decisions, patches, files, landed_nodes)
 
 
 def _validate_graph_approval_preview(
@@ -5771,7 +5776,7 @@ def _apply_graph_approvals(
     approved_ids: set[str],
     *,
     preview: _GraphApprovalPreview | None = None,
-) -> tuple[int, set[str], set[str], list[SplicedFilePatch]]:
+) -> tuple[int, set[str], set[str], list[SplicedFilePatch], frozenset[str]]:
     """Commit graph approvals only after their source patches were prepared.
 
     Args:
@@ -5782,8 +5787,9 @@ def _apply_graph_approvals(
         preview: Optional pure preview already prepared in an executor.
 
     Returns:
-        Applied count, rejected/approved node identifiers, and text patches.
-        Complete file bytes are carried separately in the preview.
+        Applied count, rejected/approved node identifiers, text patches, and
+        the nodes whose edits landed in those patches. Complete file bytes are
+        carried separately in the preview.
 
     Raises:
         SpliceConflictError: When the pending proposal set changed before commit.
@@ -5791,7 +5797,7 @@ def _apply_graph_approvals(
     if not isinstance(graph, ContentGraph):
         if preview is not None:
             raise SpliceConflictError("Approval graph changed while preparing patches; retry the approval")
-        return (_apply_text_approvals(session, approved_ids), set(), set(), [])
+        return (_apply_text_approvals(session, approved_ids), set(), set(), [], frozenset())
     prepared = preview or _preview_graph_approvals(session, graph, originals, approved_ids)
     _validate_graph_approval_preview(session, graph, approved_ids, prepared)
     rejected, approved = _apply_node_approval_decisions(graph, prepared.decisions, prepared.approved_ids)
@@ -5816,7 +5822,7 @@ def _apply_graph_approvals(
     if session.pre_gate2_files:
         session.working_files = dict(session.pre_gate2_files)
     session.working_files.update(prepared.files)
-    return applied, rejected, approved, prepared.patches
+    return applied, rejected, approved, prepared.patches, prepared.landed_nodes
 
 
 def _unspliced_fixed_violations(
@@ -5872,7 +5878,7 @@ def _reconcile_after_approval(
     rejected_node_ids: set[str],
     approved_node_ids: set[str] | None = None,
     unspliced_files: set[str] | None = None,
-    patched_files: set[str] | None = None,
+    landed_nodes: Iterable[str] | None = None,
 ) -> None:
     """Reconcile session accounting after AI proposals are approved/rejected.
 
@@ -5892,8 +5898,12 @@ def _reconcile_after_approval(
             When omitted, only rejected nodes are updated (safe default).
         unspliced_files: Files with approved edits that produced no patch.
             Findings on them stay unresolved (``edit_skipped = True``).
-        patched_files: Files whose patches did land. Findings previously
-            reopened as ``patch_pending`` on them may be resolved again.
+        landed_nodes: Nodes whose own edits are present in the patches that
+            landed, from ``SpliceOutcome.contributors``. Findings previously
+            reopened as ``patch_pending`` on them are promoted to ``fixed``:
+            the fix is in the bytes now. A node in an unpatched file, or one
+            skipped for a missing baseline while a sibling landed, is absent
+            and keeps waiting for its own patch.
     """
     from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
 
@@ -5908,6 +5918,17 @@ def _reconcile_after_approval(
             graph.approve_proposed(nid)
         else:
             graph.decline_proposed(nid)
+
+    if landed_nodes:
+        # Ledger promotion happens before the queries below so this very report
+        # counts those findings as fixed: their edits are in the output bytes.
+        promoted = graph.resolve_patch_pending(set(landed_nodes))
+        if promoted:
+            logger.info(
+                "Promoted %d reopened finding(s) whose patch landed (session=%s)",
+                promoted,
+                session.session_id,
+            )
 
     # Remaining = open + declined + ai_abstained (all unresolved violations).
     # Post-approval, AI has already had its chance — graph-derived violations
@@ -5960,17 +5981,6 @@ def _reconcile_after_approval(
             # Skipped edits are manual review, not auto-fixable.
             fixed = kept_fixed
             remaining.extend(skipped_fixed)
-
-    if patched_files:
-        # A landed patch is the proof a ``patch_pending`` finding was waiting
-        # for: its edit is in the bytes now, so a later rescan may resolve it.
-        landed = {
-            node.node_id
-            for node in graph.nodes()
-            if node.file_path and node.file_path in patched_files and node.violation_ledger
-        }
-        if landed:
-            graph.clear_patch_pending(landed)
 
     session.remaining_ai = []
     session.remaining_manual = []

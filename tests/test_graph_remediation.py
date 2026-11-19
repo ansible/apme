@@ -1653,6 +1653,45 @@ class TestSpliceModifications:
         with pytest.raises(ValueError, match="/unknown/path.yml"):
             splice_modifications(graph, {}, strict=True)
 
+    def test_contributors_name_only_the_nodes_whose_edits_landed(self) -> None:
+        """``contributors`` excludes a sibling whose edit is not in the patch.
+
+        Two nodes share one file: only the first changes content. The file still
+        produces a patch, so a caller keying "landed" off the patched file path
+        alone would treat the unchanged sibling's edit as present too.
+        """
+        graph = ContentGraph()
+        landed = _make_node("site.yml/plays[0]/tasks[0]", line_start=3, line_end=6)
+        untouched = _make_node("site.yml/plays[0]/tasks[1]", line_start=7, line_end=10)
+        graph.add_node(landed)
+        graph.add_node(untouched)
+        landed.record_state(0, "scanned")
+        landed.update_from_yaml(_TASK_YAML_FQCN)
+        landed.record_state(1, "transformed")
+        untouched.record_state(0, "scanned")
+        untouched.record_state(1, "transformed")
+        graph.approve_pending()
+
+        original = _TASK_YAML_APT + _TASK_YAML_APT
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": original})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        assert outcome.contributors == {"/workspace/site.yml": {landed.node_id}}
+
+    def test_contributors_omit_a_file_that_normalises_to_its_original(self) -> None:
+        """An edit set that leaves the bytes unchanged lands for no node."""
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.record_state(1, "transformed")  # no content change at all
+        graph.approve_pending()
+
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": _TASK_YAML_APT})
+
+        assert outcome.patches == []
+        assert outcome.contributors == {}
+
     def test_baseline_less_strict_raises(self) -> None:
         """strict=True raises for legacy nodes without a recorded baseline."""
         import pytest

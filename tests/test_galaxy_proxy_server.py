@@ -288,6 +288,32 @@ class TestServeWheel:
         assert resp.content == whl_data
         assert resp.headers["content-disposition"] == f"attachment; filename={whl_name}"
 
+    def test_generation_fence_rejects_another_source(self, tmp_path: Path) -> None:
+        """A wheel prepared for an older source generation is not served.
+
+        The shared cache names wheels by filename, and a configuration change
+        clears it, so the same ``<ns>-<name>-<version>`` filename can later be
+        resolved from the new source. A caller that prepared the wheel fences the
+        fetch with the generation it prepared under and must fail instead of
+        installing the other source's artifact.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cache_dir = tmp_path / "cache"
+        wheels_dir = cache_dir / "wheels"
+        wheels_dir.mkdir(parents=True)
+        whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+        application = create_app(cache_dir=cache_dir)
+        (wheels_dir / whl_name).write_bytes(b"PK\x03\x04fake-wheel-contents")
+        with TestClient(application) as client:
+            current = client.get(f"/wheels/{whl_name}?generation=0")
+            stale = client.get(f"/wheels/{whl_name}?generation=99")
+            unfenced = client.get(f"/wheels/{whl_name}")
+        assert current.status_code == 200
+        assert stale.status_code == 409
+        assert unfenced.status_code == 200
+
     def test_invalid_filename_rejected(self, app: TestClient) -> None:
         """Invalid wheel filenames are rejected.
 
