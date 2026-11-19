@@ -1576,6 +1576,122 @@ def test_shared_prepare_fences_the_wheel_fetch_with_its_generation(monkeypatch: 
     assert install.call_args.args[1] == [f"http://proxy/wheels/{wheel}?generation=4"]
 
 
+def test_shared_prepare_repeats_after_a_stale_fence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fenced wheel fetch rejected with 409 re-prepares against the new source.
+
+    The proxy's own Galaxy CLI run can create the file-token input, which is
+    part of the source identity: preparation then returns the wheels for the
+    old generation and the fenced fetch is rejected. Nothing was installed, so
+    one more preparation against the current generation still installs the
+    collections instead of aborting the scan.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    wheel = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+
+    def _prepared(generation: int) -> MagicMock:
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "prepared": [wheel],
+            "failed_specs": [],
+            "shared": True,
+            "generation": generation,
+        }
+        return response
+
+    conflict = f"error: HTTP status client error (409 Conflict) for url (http://proxy/wheels/{wheel}?generation=0)"
+    with (
+        patch(
+            "apme_engine.venv_manager.session.httpx.post",
+            side_effect=[_prepared(0), _prepared(1)],
+        ) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            side_effect=[
+                SimpleNamespace(returncode=2, stdout="", stderr=conflict),
+                SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ],
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=True
+        )
+
+    assert failures == []
+    assert prepare.call_count == 2
+    assert install.call_args.args[1] == [f"http://proxy/wheels/{wheel}?generation=1"]
+
+
+def test_stale_fence_retry_is_attempted_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repeated 409 does not loop: the specs are reported as failed.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    wheel = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [wheel], "failed_specs": [], "shared": True, "generation": 0}
+    conflict = f"error: HTTP status client error (409 Conflict) for url (http://proxy/wheels/{wheel}?generation=0)"
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=2, stdout="", stderr=conflict),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=True
+        )
+
+    assert failures == ["ansible.posix:1.5.4"]
+    assert prepare.call_count == 2
+    assert install.call_count == 3  # two bulk attempts plus one individual retry
+
+
+def test_unrelated_install_failure_does_not_re_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure that is not a fenced-fetch conflict keeps the prepared wheels.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    wheel = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [wheel], "failed_specs": [], "shared": True, "generation": 2}
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=1, stdout="", stderr="resolution impossible"),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=True
+        )
+
+    assert failures == ["ansible.posix:1.5.4"]
+    prepare.assert_called_once()
+    assert install.call_count == 2  # bulk attempt plus one individual retry
+
+
 def test_shared_prepare_binds_prepared_artifact_over_a_default_index_twin(monkeypatch: pytest.MonkeyPatch) -> None:
     """A default-index twin of a prepared wheel cannot be selected instead.
 

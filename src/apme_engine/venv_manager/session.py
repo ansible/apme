@@ -589,6 +589,132 @@ def _release_session_scope(proxy_url: str, scope_id: str) -> None:
         logger.warning("Could not release scoped Galaxy wheel handoff: %s", type(exc).__name__)
 
 
+def _is_stale_wheel_fence(output: str) -> bool:
+    """Detect an install failure caused by a stale prepared-wheel generation.
+
+    A shared handoff names wheels by filename, so the fetch is fenced with the
+    generation they were prepared under. When the collection source changes in
+    between, the proxy rejects that fetch with ``409 Conflict`` and the install
+    fails without touching the session venv: the prepared wheels belong to a
+    source the proxy no longer serves.
+
+    Args:
+        output: Combined stderr/stdout of the failed install command.
+
+    Returns:
+        True when the proxy rejected a fenced wheel fetch.
+    """
+    if "generation=" not in output:
+        return False
+    return "409" in output or "Conflict" in output
+
+
+def _prepare_proxy_install(
+    proxy_url: str,
+    installable: list[tuple[str, str]],
+    galaxy_server_configs: list[dict[str, object]] | None,
+    failed: list[str],
+) -> tuple[list[tuple[str, str]], str, str | None] | None:
+    """Prepare collection wheels through the proxy and bind them to their URLs.
+
+    Preparation resolves exact pins because the project page lists prepared
+    wheels and does not enumerate remote Galaxy versions. A config update can
+    race this request and return 409, so retry once after that conflict.
+
+    Args:
+        proxy_url: Base URL of the Galaxy Proxy.
+        installable: ``(spec, pip_spec)`` pairs to install.
+        galaxy_server_configs: Optional scan-scoped server settings forwarded
+            to the authenticated proxy request.
+        failed: Failure accumulator. Specs that must not be installed are
+            appended here so the caller reports them.
+
+    Returns:
+        ``(installable, index_url, scope_id)`` with prepared collections bound
+        to their wheel URL, or ``None`` when there is nothing left to install
+        and every requested spec is already recorded as failed.
+    """
+    simple_url = proxy_url.rstrip("/") + "/simple/"
+    installable_specs = [spec for spec, _ in installable]
+    session_scope_id: str | None = None
+    unprepared: list[str] = []
+    prepared_wheels: list[str] = []
+    shared_prepare = False
+    generation: int | None = None
+    for attempt in range(2):
+        try:
+            outcome = _prepare_collections_via_proxy(proxy_url, installable_specs, galaxy_server_configs)
+            session_scope_id = outcome.scope_id
+            unprepared = outcome.failed_specs
+            prepared_wheels = outcome.prepared
+            shared_prepare = outcome.shared
+            generation = outcome.generation
+            break
+        except RuntimeError as exc:
+            cause = exc.__cause__
+            conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
+            if conflict and attempt == 0:
+                logger.info("Galaxy configuration changed during collection preparation; retrying once")
+                continue
+            if galaxy_server_configs is not None:
+                logger.warning("Scoped collection preparation failed: %s", exc)
+                failed.extend(installable_specs)
+                return None
+            logger.warning("Collection preparation failed; continuing with install: %s", exc)
+            break
+
+    if galaxy_server_configs is not None and session_scope_id is None and not shared_prepare:
+        # A request-scoped Galaxy source must never install from the shared
+        # index: its wheels were downloaded with other credentials. The proxy
+        # only omits a scope when it explicitly reports reusing its shared
+        # cache for settings identical to the ready configuration.
+        failed.extend(installable_specs)
+        return None
+    if session_scope_id is None and not shared_prepare:
+        return installable, simple_url, None
+
+    if session_scope_id is not None:
+        simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
+    # The scoped index is an *extra* index: pip and uv keep the default one
+    # enabled, so a spec the proxy could not prepare would still resolve
+    # elsewhere, install "successfully", and be recorded against this
+    # scope. Drop those specs from the install command entirely and report
+    # them as failed instead.
+    blocked = _unprepared_requested_specs(unprepared, installable_specs)
+    if blocked:
+        logger.warning(
+            "Not installing %d collection spec(s) the scoped Galaxy source could not prepare: %s",
+            len(blocked),
+            ", ".join(sorted(blocked)),
+        )
+        failed.extend(blocked)
+        installable = [(spec, pip_spec) for spec, pip_spec in installable if spec not in blocked]
+        if not installable:
+            # Nothing will consume the prepared scope, so release it now
+            # instead of leaving it to the proxy TTL.
+            if session_scope_id is not None:
+                _release_session_scope(proxy_url, session_scope_id)
+            return None
+    if prepared_wheels:
+        # Bind prepared collections to their wheel; see
+        # ``_bind_prepared_pip_specs`` for why a version pin is not enough.
+        # Both paths need it: the shared cache serves its wheels from
+        # ``/wheels/``, and a same-named distribution on the default index
+        # would otherwise be an acceptable candidate there too.
+        if session_scope_id is not None:
+            base_url = proxy_url.rstrip("/") + f"/session-wheels/{session_scope_id}/"
+            fence = None
+        else:
+            # The shared handoff names wheels only by filename. Fence the
+            # fetch with the generation they were prepared under, so a
+            # source change in between fails the install instead of
+            # installing the same filename from the new source.
+            base_url = proxy_url.rstrip("/") + "/wheels/"
+            fence = generation
+        installable = _bind_prepared_pip_specs(installable, prepared_wheels, base_url, fence)
+    return installable, simple_url, session_scope_id
+
+
 def _install_collections_via_proxy(
     pip_python: Path,
     collection_specs: list[str],
@@ -643,8 +769,13 @@ def _install_collections_via_proxy(
         A preparation response that reuses the proxy's shared cache carries no
         scope; that is a success, not a failed preparation, and the install
         proceeds against the shared index.
+
+        The shared handoff is fenced with the generation its wheels were
+        prepared under. A source change in between makes the proxy reject that
+        fetch; the preparation is then repeated once against the current
+        source, because nothing was installed and the collections themselves
+        are still available. Reporting them as failed would abort the scan.
     """
-    simple_url = proxy_url.rstrip("/") + "/simple/"
     installable: list[tuple[str, str]] = []
     failed: list[str] = []
     for spec in collection_specs:
@@ -655,92 +786,32 @@ def _install_collections_via_proxy(
             failed.append(spec)
     if not installable:
         return failed
-    pip_specs = [pip_spec for _, pip_spec in installable]
-    installable_specs = [spec for spec, _ in installable]
+    requested = list(installable)
 
-    # Preparation resolves exact pins because the project page lists prepared
-    # wheels and does not enumerate remote Galaxy versions. A config update can
-    # race this request and return 409, so retry once after that conflict.
-    session_scope_id: str | None = None
-    unprepared: list[str] = []
-    prepared_wheels: list[str] = []
-    shared_prepare = False
-    for attempt in range(2):
-        try:
-            outcome = _prepare_collections_via_proxy(proxy_url, installable_specs, galaxy_server_configs)
-            session_scope_id = outcome.scope_id
-            unprepared = outcome.failed_specs
-            prepared_wheels = outcome.prepared
-            shared_prepare = outcome.shared
-            break
-        except RuntimeError as exc:
-            cause = exc.__cause__
-            conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
-            if conflict and attempt == 0:
-                logger.info("Galaxy configuration changed during collection preparation; retrying once")
-                continue
-            if galaxy_server_configs is not None:
-                logger.warning("Scoped collection preparation failed: %s", exc)
-                return failed + installable_specs
-            logger.warning("Collection preparation failed; continuing with install: %s", exc)
-            break
-
-    if galaxy_server_configs is not None and session_scope_id is None and not shared_prepare:
-        # A request-scoped Galaxy source must never install from the shared
-        # index: its wheels were downloaded with other credentials. The proxy
-        # only omits a scope when it explicitly reports reusing its shared
-        # cache for settings identical to the ready configuration.
-        return failed + installable_specs
-    if session_scope_id is not None or shared_prepare:
-        if session_scope_id is not None:
-            simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
-        # The scoped index is an *extra* index: pip and uv keep the default one
-        # enabled, so a spec the proxy could not prepare would still resolve
-        # elsewhere, install "successfully", and be recorded against this
-        # scope. Drop those specs from the install command entirely and report
-        # them as failed instead.
-        blocked = _unprepared_requested_specs(unprepared, installable_specs)
-        if blocked:
-            logger.warning(
-                "Not installing %d collection spec(s) the scoped Galaxy source could not prepare: %s",
-                len(blocked),
-                ", ".join(sorted(blocked)),
-            )
-            failed.extend(blocked)
-            installable = [(spec, pip_spec) for spec, pip_spec in installable if spec not in blocked]
-            installable_specs = [spec for spec, _ in installable]
-            pip_specs = [pip_spec for _, pip_spec in installable]
-            if not installable:
-                # Nothing will consume the prepared scope, so release it now
-                # instead of leaving it to the proxy TTL.
-                if session_scope_id is not None:
-                    _release_session_scope(proxy_url, session_scope_id)
-                return failed
-        if prepared_wheels:
-            # Bind prepared collections to their wheel; see
-            # ``_bind_prepared_pip_specs`` for why a version pin is not enough.
-            # Both paths need it: the shared cache serves its wheels from
-            # ``/wheels/``, and a same-named distribution on the default index
-            # would otherwise be an acceptable candidate there too.
-            if session_scope_id is not None:
-                base_url = proxy_url.rstrip("/") + f"/session-wheels/{session_scope_id}/"
-                fence = None
-            else:
-                # The shared handoff names wheels only by filename. Fence the
-                # fetch with the generation they were prepared under, so a
-                # source change in between fails the install instead of
-                # installing the same filename from the new source.
-                base_url = proxy_url.rstrip("/") + "/wheels/"
-                fence = outcome.generation
-            installable = _bind_prepared_pip_specs(installable, prepared_wheels, base_url, fence)
-            pip_specs = [pip_spec for _, pip_spec in installable]
-
+    scope_ids: list[str] = []
     try:
-        result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)
-        if result.returncode == 0:
-            return failed
+        for attempt in range(2):
+            plan = _prepare_proxy_install(proxy_url, requested, galaxy_server_configs, failed)
+            if plan is None:
+                return failed
+            installable, simple_url, session_scope_id = plan
+            if session_scope_id is not None:
+                scope_ids.append(session_scope_id)
+            pip_specs = [pip_spec for _, pip_spec in installable]
 
-        bulk_output = result.stderr or result.stdout
+            result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)
+            if result.returncode == 0:
+                return failed
+            bulk_output = result.stderr or result.stdout
+            if attempt == 0 and session_scope_id is None and _is_stale_wheel_fence(bulk_output):
+                # The collection source changed between preparation and the
+                # wheel fetch, so the proxy fenced off the prepared artifacts.
+                # Nothing was installed; prepare again against the current
+                # source instead of reporting the collections as unavailable.
+                logger.info("Galaxy source changed after collection preparation; preparing again")
+                continue
+            break
+
         if _is_build_failure(bulk_output):
             unbuildable = _extract_unbuildable_packages(bulk_output)
             result = _retry_without_native(
@@ -791,8 +862,8 @@ def _install_collections_via_proxy(
 
         return failed
     finally:
-        if session_scope_id is not None:
-            _release_session_scope(proxy_url, session_scope_id)
+        for scope_id in scope_ids:
+            _release_session_scope(proxy_url, scope_id)
 
 
 _MAX_EXCLUDE_RETRIES = 5
