@@ -1,26 +1,27 @@
-"""Tests for log bridge context propagation into worker threads."""
+"""Tests for log bridge context propagation into executor workers."""
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
-import threading
+import multiprocessing
+import sys
 
 import pytest
 
 from apme_engine.log_bridge import RequestLogHandler, attach_collector, install_handler
 
-# A wedged worker thread would otherwise stall the xdist worker until the CI
-# job timeout cancels the whole run (observed once in the wild on a
-# frontend-only change, so nothing in this path was at fault). The worker runs
-# on a daemon thread and is joined with a timeout, so a blocked
-# ``RequestLogHandler.emit`` fails fast with a diagnostic and — unlike the
-# default executor's non-daemon threads, which CPython joins at interpreter
-# shutdown — can never keep the test process (or the CI job) alive afterwards.
-# On timeout the request log handler is also detached from the root logger,
-# because the wedged worker holds that handler's lock inside ``emit`` and any
-# later log record would otherwise block the rest of the suite on it.
-_WORKER_TIMEOUT_SECONDS = 30.0
+# A wedged worker would otherwise stall the xdist worker until the CI job
+# timeout cancels the whole run (observed once in the wild on a frontend-only
+# change, so nothing in this path was at fault). The scenario therefore runs
+# in a child process that the test terminates on timeout: a permanently
+# blocked ``RequestLogHandler.emit`` cannot hold up the test, the rest of the
+# suite, or interpreter exit. Neither a daemon worker thread nor detaching
+# the handler is enough, because ``logging.shutdown()`` runs at interpreter
+# exit and acquires every live handler's lock — a lock a wedged ``emit``
+# holds — so only a process boundary that can be killed bounds every path.
+_SCENARIO_TIMEOUT_SECONDS = 30.0
 
 
 def _log_from_worker(message: str) -> None:
@@ -32,37 +33,59 @@ def _log_from_worker(message: str) -> None:
     logging.getLogger("apme.test_bridge").info(message)
 
 
-def test_worker_thread_propagates_collector_sink_via_copy_context() -> None:
-    """Worker-thread logs are collected when the worker uses ``ctx.run``."""
+async def _log_via_executor(message: str) -> None:
+    """Emit a worker log through the executor pattern the engine documents.
+
+    Args:
+        message: Log message text.
+    """
+    ctx = contextvars.copy_context()
+    await asyncio.get_running_loop().run_in_executor(None, ctx.run, _log_from_worker, message)
+
+
+def _run_scenario(message: str) -> None:
+    """Run the log-bridge executor scenario and exit with its verdict.
+
+    Exits with status 0 when the collector sink captured the worker's
+    message, status 1 when it did not.
+
+    Args:
+        message: Log message text to emit from the worker thread.
+    """
     install_handler()
     root = logging.getLogger()
     if not any(isinstance(h, RequestLogHandler) for h in root.handlers):
         root.addHandler(RequestLogHandler())
 
     with attach_collector() as sink:
-        ctx = contextvars.copy_context()
-        worker = threading.Thread(
-            target=ctx.run,
-            args=(_log_from_worker, "worker-log-message"),
-            name="log-bridge-test-worker",
-            daemon=True,
-        )
-        worker.start()
-        worker.join(_WORKER_TIMEOUT_SECONDS)
-        if worker.is_alive():
-            # A wedged worker is blocked inside ``Handler.handle``, which holds
-            # the handler's lock across ``emit``. Detach the request log handler
-            # so later log records from the rest of the suite cannot block on
-            # that lock; the daemon worker is then abandoned with the process.
-            for handler in root.handlers[:]:
-                if isinstance(handler, RequestLogHandler):
-                    root.removeHandler(handler)
-            pytest.fail(
-                f"log-bridge worker thread did not finish within {_WORKER_TIMEOUT_SECONDS}s; "
-                "the thread appears wedged (logging handler lock or stderr stall?) and is "
-                "left running as a daemon while its request log handler is detached, so "
-                "the test process and the rest of the suite can still finish"
-            )
-        entries = sink.entries
+        asyncio.run(_log_via_executor(message))
+        captured = any(e.message == message for e in sink.entries)
+    if not captured:
+        print(f"collector sink did not capture worker message {message!r}", file=sys.stderr)
+    sys.exit(0 if captured else 1)
 
-    assert any(e.message == "worker-log-message" for e in entries)
+
+def test_executor_propagates_collector_sink_via_copy_context() -> None:
+    """Worker-thread logs are collected when executor uses ``ctx.run``."""
+    scenario = multiprocessing.get_context("spawn").Process(
+        target=_run_scenario,
+        args=("executor-log-message",),
+        name="log-bridge-scenario",
+        daemon=True,
+    )
+    scenario.start()
+    scenario.join(_SCENARIO_TIMEOUT_SECONDS)
+    if scenario.is_alive():
+        scenario.terminate()
+        scenario.join(_SCENARIO_TIMEOUT_SECONDS)
+        if scenario.is_alive():
+            scenario.kill()
+            scenario.join()
+        pytest.fail(
+            f"log-bridge scenario process did not finish within {_SCENARIO_TIMEOUT_SECONDS}s; "
+            "the worker appears wedged (logging handler lock or stderr stall?) and the "
+            "scenario process was terminated"
+        )
+    assert scenario.exitcode == 0, (
+        f"collector sink did not capture the worker's message (scenario exit code {scenario.exitcode})"
+    )
