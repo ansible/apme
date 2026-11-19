@@ -14,15 +14,13 @@ from apme_engine.graph.types import RuleScope
 RULE_ID = "M040"
 
 _MESSAGE = "Remove the disable_lookups keyword from _compose(); it has no effect."
-#: Upper bound on excerpt bytes retained for one upload, including a per-finding
-#: allowance for the rest of the serialized diagnostic (message, position, metadata).
+#: Upper bound on the serialized diagnostic output M040 retains for one upload.
 _DIAGNOSTIC_BUDGET_BYTES = 256 * 1024
 #: Serialized bytes charged per finding beyond its excerpt text.
 _FINDING_OVERHEAD_BYTES = 512
+#: Bytes reserved so the terminal incomplete-assessment notice always fits.
+_NOTICE_RESERVE_BYTES = 1024
 _EXCERPT_OMITTED = "<source line omitted: M040 diagnostic byte budget exceeded>"
-_INCOMPLETE_SUFFIX = (
-    " Source excerpt omitted: M040 exceeded its diagnostic byte budget for this upload; the assessment is incomplete."
-)
 
 
 def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict]:
@@ -32,12 +30,15 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
         files: Source files keyed by their relative upload paths.
 
     Returns:
-        Manual findings at the removed keyword's source line. Excerpt text is
-        bounded by a per-upload diagnostic byte budget; findings past the
-        budget keep their source position but omit the excerpt and say so.
+        Manual findings at the removed keyword's source line. Serialized
+        diagnostic output is bounded by a per-upload byte budget; once the
+        budget is exhausted, the remaining positions are summarized by one
+        incomplete-assessment notice instead of further findings.
     """
     findings: list[ViolationDict] = []
-    remaining = _DIAGNOSTIC_BUDGET_BYTES
+    remaining = _DIAGNOSTIC_BUDGET_BYTES - _NOTICE_RESERVE_BYTES
+    first_suppressed: tuple[str, int, int] | None = None
+    suppressed_count = 0
     for path, content in files.items():
         source = PurePosixPath(path)
         parents = source.parts[:-1]
@@ -62,27 +63,45 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
                     continue
                 line = keyword.lineno
                 raw_line = lines[line - 1]
-                message = _MESSAGE
-                if len(raw_line) + _FINDING_OVERHEAD_BYTES <= remaining:
-                    remaining -= len(raw_line) + _FINDING_OVERHEAD_BYTES
-                    if line not in excerpts:
-                        excerpts[line] = raw_line.decode("utf-8", errors="replace")
-                    excerpt = excerpts[line]
-                else:
-                    message += _INCOMPLETE_SUFFIX
-                    excerpt = _EXCERPT_OMITTED
+                if len(raw_line) + _FINDING_OVERHEAD_BYTES > remaining:
+                    suppressed_count += 1
+                    if first_suppressed is None:
+                        first_suppressed = (path, line, keyword.col_offset)
+                    continue
+                remaining -= len(raw_line) + _FINDING_OVERHEAD_BYTES
+                if line not in excerpts:
+                    excerpts[line] = raw_line.decode("utf-8", errors="replace")
                 findings.append(
                     {
                         "rule_id": RULE_ID,
                         "severity": severity_to_label(get_severity(RULE_ID)),
-                        "message": message,
+                        "message": _MESSAGE,
                         "file": path,
                         "line": line,
                         "path": f"$[{line}][{keyword.col_offset}]",
-                        "original_yaml": excerpt,
+                        "original_yaml": excerpts[line],
                         "scope": RuleScope.INVENTORY.value,
                         "remediation_class": "manual-review",
                         "source": "native",
                     }
                 )
+    if first_suppressed is not None:
+        path, line, col_offset = first_suppressed
+        findings.append(
+            {
+                "rule_id": RULE_ID,
+                "severity": severity_to_label(get_severity(RULE_ID)),
+                "message": (
+                    "M040 diagnostic output exceeded its byte budget for this upload;"
+                    f" the assessment is incomplete with {suppressed_count} further findings suppressed."
+                ),
+                "file": path,
+                "line": line,
+                "path": f"$[{line}][{col_offset}]",
+                "original_yaml": _EXCERPT_OMITTED,
+                "scope": RuleScope.INVENTORY.value,
+                "remediation_class": "manual-review",
+                "source": "native",
+            }
+        )
     return findings

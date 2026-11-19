@@ -1,5 +1,6 @@
 """Tests for the native Python inventory rule M040."""
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -58,28 +59,33 @@ def test_m040_keeps_separate_calls_on_one_line() -> None:
     assert len(_deduplicate_violations(findings)) == 2
 
 
-def test_m040_bounds_repeated_excerpt_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Findings past the diagnostic byte budget omit excerpts and report it.
+def test_m040_bounds_total_diagnostic_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Total serialized findings stay within the diagnostic byte budget.
 
-    Repeated findings on one long line must not retain or serialize the full
-    source line once the per-upload byte budget is exhausted; positions stay
-    complete and affected findings state the incomplete assessment.
+    Once the per-upload budget is exhausted, further positions are counted
+    and summarized by one bounded incomplete-assessment notice instead of
+    unbounded per-call findings; ordinary findings keep complete excerpts.
 
     Args:
         monkeypatch: Temporary diagnostic byte budget override.
     """
-    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 4_000)
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 5_000)
     line = b"self._compose(disable_lookups=True); " * 20
     findings = validate_inventory_plugins({"inventory_plugins/custom.py": line})
-    assert len(findings) == 20
-    assert len({finding["path"] for finding in findings}) == 20
-    full = [finding for finding in findings if finding["message"] == m040_module._MESSAGE]
-    omitted = [finding for finding in findings if finding["message"] != m040_module._MESSAGE]
-    # Each in-budget finding is charged its full excerpt plus serialization
-    # overhead, so only the first three findings of this 740-byte line fit.
-    assert len(full) == 3
+    # The 1,024-byte notice reserve leaves 3,976 bytes; each finding is
+    # charged its 740-byte excerpt plus serialization overhead, so three
+    # findings fit before the remaining 17 are suppressed.
+    assert len(findings) == 4
+    full, notice = findings[:3], findings[3]
+    assert all(finding["message"] == m040_module._MESSAGE for finding in full)
     assert all(finding["original_yaml"] == line.decode() for finding in full)
     assert full[0]["original_yaml"] is full[1]["original_yaml"] is full[2]["original_yaml"]
-    assert len(omitted) == 17
-    assert all(finding["original_yaml"] == m040_module._EXCERPT_OMITTED for finding in omitted)
-    assert all(finding["message"] == m040_module._MESSAGE + m040_module._INCOMPLETE_SUFFIX for finding in omitted)
+    assert len({finding["path"] for finding in full}) == 3
+    unit = "self._compose(disable_lookups=True); "
+    assert notice["path"] == f"$[1][{3 * len(unit) + len('self._compose(')}]"
+    assert notice["message"] == (
+        "M040 diagnostic output exceeded its byte budget for this upload;"
+        " the assessment is incomplete with 17 further findings suppressed."
+    )
+    assert notice["original_yaml"] == m040_module._EXCERPT_OMITTED
+    assert len(json.dumps(findings).encode("utf-8")) <= 5_000
