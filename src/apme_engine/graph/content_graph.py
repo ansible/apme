@@ -16,7 +16,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import inspect
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -269,6 +269,9 @@ class ViolationRecord:
         discovered_in_pass: Convergence pass that first detected it.
         ai_reason: Why the AI could not fix this violation (``ai_abstained`` only).
         ai_suggestion: Manual remediation guidance from the AI (``ai_abstained`` only).
+        patch_pending: The fix for this finding never reached the source bytes.
+            Kept until the edit lands so a rescan of the patched in-memory text
+            (which no longer contains the finding) cannot resolve it again.
     """
 
     key: ViolationKey
@@ -279,6 +282,7 @@ class ViolationRecord:
     discovered_in_pass: int = 0
     ai_reason: str | None = None
     ai_suggestion: str | None = None
+    patch_pending: bool = False
 
 
 def _violation_key(v: ViolationDict) -> ViolationKey:
@@ -984,7 +988,7 @@ class ContentGraph:
         remaining_keys = {_violation_key(v) for v in remaining_violations} if remaining_violations is not None else None
         count = 0
         for record in node.violation_ledger.values():
-            if record.status != "open":
+            if record.status != "open" or record.patch_pending:
                 continue
             rule_id = record.key[1]
             if rule_id in unassessed_rule_ids:
@@ -1074,6 +1078,11 @@ class ContentGraph:
                 if clear_attribution:
                     record.fixed_by = None
                     record.fixed_in_pass = None
+                if to_status == "fixed":
+                    # An approval promoted this finding, so its edit is part of
+                    # the patch being spliced now. If the splice fails,
+                    # ``reopen_fixed_violations`` restores the marker.
+                    record.patch_pending = False
                 count += 1
         return count
 
@@ -1168,6 +1177,12 @@ class ContentGraph:
         as ``fixed`` again. Attribution is cleared because the fix did not land
         and a later pass may re-attribute it.
 
+        The record is marked ``patch_pending`` so a later rescan of the patched
+        in-memory text — which no longer contains the finding — cannot resolve
+        it again before its edit reaches the file. ``resolve_violations`` skips
+        those records; ``clear_patch_pending`` lifts the marker once a patch for
+        the node lands.
+
         Args:
             violations: Violation dicts identifying ledger rows (``path`` + rule).
 
@@ -1185,7 +1200,31 @@ class ContentGraph:
                 record.status = "open"
                 record.fixed_by = None
                 record.fixed_in_pass = None
+                record.patch_pending = True
                 count += 1
+        return count
+
+    def clear_patch_pending(self, node_ids: Iterable[str]) -> int:
+        """Drop the ``patch_pending`` marker on the given nodes.
+
+        Called once a patch for the node is known to have reached the source
+        bytes, so the finding may be resolved again after the next rescan.
+
+        Args:
+            node_ids: Graph nodes whose patched edits landed.
+
+        Returns:
+            Number of ledger records whose marker was cleared.
+        """
+        count = 0
+        for node_id in node_ids:
+            node = self.get_node(node_id)
+            if node is None:
+                continue
+            for record in node.violation_ledger.values():
+                if record.patch_pending:
+                    record.patch_pending = False
+                    count += 1
         return count
 
     def query_violations(
@@ -2122,6 +2161,8 @@ def _violation_record_to_dict(rec: ViolationRecord) -> dict[str, object]:
         d["ai_reason"] = rec.ai_reason
     if rec.ai_suggestion is not None:
         d["ai_suggestion"] = rec.ai_suggestion
+    if rec.patch_pending:
+        d["patch_pending"] = True
     return d
 
 
@@ -2158,6 +2199,7 @@ def _violation_record_from_dict(d: dict[str, object]) -> ViolationRecord:
         discovered_in_pass=int(cast(int, d.get("discovered_in_pass", 0))),
         ai_reason=str(d["ai_reason"]) if "ai_reason" in d else None,
         ai_suggestion=str(d["ai_suggestion"]) if "ai_suggestion" in d else None,
+        patch_pending=bool(d.get("patch_pending", False)),
     )
 
 

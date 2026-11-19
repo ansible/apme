@@ -4924,6 +4924,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 unspliced_files={
                     path for path in (getattr(temp_patches, "unpatched", None) or []) if path not in patched_paths
                 },
+                patched_files=patched_paths,
             )
         else:
             applied = _apply_text_approvals(session, approved_ids)
@@ -5871,6 +5872,7 @@ def _reconcile_after_approval(
     rejected_node_ids: set[str],
     approved_node_ids: set[str] | None = None,
     unspliced_files: set[str] | None = None,
+    patched_files: set[str] | None = None,
 ) -> None:
     """Reconcile session accounting after AI proposals are approved/rejected.
 
@@ -5890,6 +5892,8 @@ def _reconcile_after_approval(
             When omitted, only rejected nodes are updated (safe default).
         unspliced_files: Files with approved edits that produced no patch.
             Findings on them stay unresolved (``edit_skipped = True``).
+        patched_files: Files whose patches did land. Findings previously
+            reopened as ``patch_pending`` on them may be resolved again.
     """
     from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
 
@@ -5956,6 +5960,17 @@ def _reconcile_after_approval(
             # Skipped edits are manual review, not auto-fixable.
             fixed = kept_fixed
             remaining.extend(skipped_fixed)
+
+    if patched_files:
+        # A landed patch is the proof a ``patch_pending`` finding was waiting
+        # for: its edit is in the bytes now, so a later rescan may resolve it.
+        landed = {
+            node.node_id
+            for node in graph.nodes()
+            if node.file_path and node.file_path in patched_files and node.violation_ledger
+        }
+        if landed:
+            graph.clear_patch_pending(landed)
 
     session.remaining_ai = []
     session.remaining_manual = []

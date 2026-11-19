@@ -2628,6 +2628,22 @@ class TestSessionGraphRemediate:
         assert session.report.fixed == 0
         assert [v.rule_id for v in session.report.remaining_violations] == ["L001"]
 
+        # A rescan of the patched in-memory text no longer sees L001. Without
+        # the ``patch_pending`` marker ``resolve_violations`` would certify it
+        # as fixed again even though the source still has the finding.
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=2) == 0
+        assert [v["rule_id"] for v in graph.query_violations(status="open")] == ["L001"]
+
+        # The marker survives serialization, so a rebuild from the wire form
+        # cannot lose the guard either.
+        restored = ContentGraph.from_dict(graph.to_dict()) if hasattr(ContentGraph, "from_dict") else None
+        if restored is not None:
+            assert restored.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=3) == 0
+
+        # Once a patch for the file lands, the finding may be resolved again.
+        graph.clear_patch_pending([node_id])
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=4) == 1
+
     @pytest.mark.parametrize("produces_patch", [False, True])  # type: ignore[untyped-decorator]
     async def test_skipped_splice_does_not_report_findings_fixed(self, tmp_path: Path, produces_patch: bool) -> None:
         """Only findings whose edits reached the bytes count as fixed.

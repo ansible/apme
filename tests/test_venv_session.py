@@ -1424,21 +1424,19 @@ def test_scoped_install_binds_prepared_wheels_to_their_scope(monkeypatch: pytest
     ]
 
 
-def test_ambiguous_prepared_wheels_stay_on_the_scoped_index() -> None:
+def test_ambiguous_prepared_wheels_stay_on_the_proxy_index() -> None:
     """A collection with several prepared wheels is not bound to a guess."""
-    from apme_engine.venv_manager.session import _bind_scoped_pip_specs
+    from apme_engine.venv_manager.session import _bind_prepared_pip_specs
 
-    scope_id = "G" * 32
     prepared = [
         "ansible_collection_ansible_posix-1.5.3-py3-none-any.whl",
         "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl",
     ]
 
-    bound = _bind_scoped_pip_specs(
+    bound = _bind_prepared_pip_specs(
         [("ansible.posix:1.5.4", "ansible-collection-ansible-posix==1.5.4")],
         prepared,
-        "http://proxy/",
-        scope_id,
+        "http://proxy/session-wheels/" + "G" * 32 + "/",
     )
 
     assert bound == [("ansible.posix:1.5.4", "ansible-collection-ansible-posix==1.5.4")]
@@ -1483,7 +1481,54 @@ def test_shared_prepare_response_without_scope_still_installs(monkeypatch: pytes
         )
 
     assert failures == []
-    assert install.call_args.args[1] == ["ansible-collection-ansible-posix==1.5.4"]
+    # The shared cache serves the prepared artifact by exact filename, so the
+    # default index cannot win a same-name (even same-version) tie.
+    assert install.call_args.args[1] == ["http://proxy/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"]
+    assert install.call_args.args[2] == "http://proxy/simple/"
+    release.assert_not_called()
+
+
+def test_shared_prepare_binds_prepared_artifact_over_a_default_index_twin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A default-index twin of a prepared wheel cannot be selected instead.
+
+    ``unsafe-best-match`` lets the resolver choose between the proxy's extra
+    index and the default index; binding the requirement to the prepared wheel
+    URL removes the choice for the collections this request prepared. Python
+    dependencies of that wheel still resolve from the configured indexes.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    wheel = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [wheel], "failed_specs": [], "shared": True}
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch("apme_engine.venv_manager.session.httpx.delete") as release,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy/",
+            use_uv=True,
+            galaxy_server_configs=[{"name": "private", "url": "https://hub.example.com/"}],
+        )
+
+    assert failures == []
+    pip_specs = install.call_args.args[1]
+    assert pip_specs == [f"http://proxy/wheels/{wheel}"]
+    # The proxy index stays configured for the collection's dependencies; only
+    # the prepared requirement is pinned to its artifact.
     assert install.call_args.args[2] == "http://proxy/simple/"
     release.assert_not_called()
 

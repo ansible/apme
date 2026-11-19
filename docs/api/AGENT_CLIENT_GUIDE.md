@@ -109,12 +109,20 @@ leaves the claim without a recorded branch, and a same-key retry returns
 `409 idempotency_conflict` ("A prior submit with this token did not complete
 (no branch recorded)") instead of repeating or completing the first attempt;
 do not treat that response as retryable. The message says only that the
-Gateway recorded no branch — it does not prove no publish reached SCM — so
-confirm with SCM that neither the branch nor a pull request exists. Once SCM
-confirms that (nothing was published, so the earlier attempt cannot still
-land), start a new operation; a new key on a new `/operate` attempt creates a
-new scan, branch, and pull request, so never mint one while an earlier
-publish may still exist.
+Gateway recorded no branch; it does not say whether the push is still running
+or whether one landed, so it decides nothing on its own.
+
+Recover in two steps, both of which must hold before a new operation starts:
+
+1. Confirm with SCM that neither the branch nor a pull request exists. An
+   absent branch while the first submit still holds its claim and is pushing
+   proves nothing — the absence you see may be a race, not an outcome.
+2. Confirm the earlier attempt has finished (its operation is no longer
+   running / it reached a terminal state). Only then is the SCM result stable.
+
+A new key on a new `/operate` attempt creates a new scan, branch, and pull
+request, so minting one while the first attempt can still complete publishes
+two of them.
 
 ## Upload / scan caps (three dialects)
 

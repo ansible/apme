@@ -476,20 +476,20 @@ def _unprepared_requested_specs(failed_specs: list[str], requested: list[str]) -
     return [spec for spec in requested if spec.strip().lower() in blocked]
 
 
-def _bind_scoped_pip_specs(
+def _bind_prepared_pip_specs(
     installable: list[tuple[str, str]],
     prepared: list[str],
-    proxy_url: str,
-    scope_id: str,
+    base_url: str,
 ) -> list[tuple[str, str]]:
-    """Point each prepared collection requirement at its scoped wheel URL.
+    """Point each prepared collection requirement at its wheel URL.
 
-    The scoped index is added as an *extra* index while the default index stays
+    The proxy index is added as an *extra* index while the default index stays
     configured, so pip/uv (``unsafe-best-match``) is free to prefer a
     same-named distribution published on the default index over the wheel this
-    request prepared. Installing the prepared wheel by URL binds the
-    requirement to that exact artifact; wheels it depends on still resolve from
-    the default index, which keeps dependency installation working.
+    request prepared — even at an equal version, where the resolver's tie-break
+    is unspecified. Installing the prepared wheel by URL binds the requirement
+    to that exact artifact; wheels it depends on still resolve from the
+    configured indexes, which keeps dependency installation working.
 
     A requirement is left as-is when no single prepared wheel matches it (for
     example two constraints on the same collection resolved to different
@@ -498,14 +498,13 @@ def _bind_scoped_pip_specs(
     Args:
         installable: ``(spec, pip_spec)`` pairs to install.
         prepared: Wheel basenames the proxy prepared for this request.
-        proxy_url: Base URL of the Galaxy Proxy.
-        scope_id: Scope the prepared wheels were handed off under.
+        base_url: Proxy URL prefix that serves those wheels (the scoped handoff
+            or the shared ``/wheels/`` directory).
 
     Returns:
         ``(spec, pip_spec)`` pairs with prepared collections bound to their
-        scoped wheel URL.
+        wheel URL.
     """
-    base_url = proxy_url.rstrip("/") + f"/session-wheels/{scope_id}/"
     bound: list[tuple[str, str]] = []
     for spec, pip_spec in installable:
         fqcn = spec.split(":", 1)[0].strip()
@@ -517,7 +516,7 @@ def _bind_scoped_pip_specs(
         else:
             if matches:
                 logger.debug(
-                    "Leaving %s on the scoped index: %d prepared wheels match it",
+                    "Leaving %s on the proxy index: %d prepared wheels match it",
                     spec,
                     len(matches),
                 )
@@ -674,10 +673,18 @@ def _install_collections_via_proxy(
                 if session_scope_id is not None:
                     _release_session_scope(proxy_url, session_scope_id)
                 return failed
-        if session_scope_id is not None:
-            # Bind prepared collections to their scoped wheel; see
-            # ``_bind_scoped_pip_specs`` for why a version pin is not enough.
-            installable = _bind_scoped_pip_specs(installable, prepared_wheels, proxy_url, session_scope_id)
+        if prepared_wheels:
+            # Bind prepared collections to their wheel; see
+            # ``_bind_prepared_pip_specs`` for why a version pin is not enough.
+            # Both paths need it: the shared cache serves its wheels from
+            # ``/wheels/``, and a same-named distribution on the default index
+            # would otherwise be an acceptable candidate there too.
+            base_url = (
+                proxy_url.rstrip("/") + f"/session-wheels/{session_scope_id}/"
+                if session_scope_id is not None
+                else proxy_url.rstrip("/") + "/wheels/"
+            )
+            installable = _bind_prepared_pip_specs(installable, prepared_wheels, base_url)
             pip_specs = [pip_spec for _, pip_spec in installable]
 
     try:
