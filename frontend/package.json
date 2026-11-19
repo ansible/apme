@@ -18,7 +18,7 @@
     "@ansible/ansible-ui-framework": "file:./vendor/ansible-ui-framework",
     "@apme/ui-workflow": "workspace:*",
     "@backstage/ui": "0.17.1",
-    "@patternfly/patternfly": "6.6.1",
+    "@patternfly/patternfly": "6.7.0",
     "@patternfly/react-charts": "8.6.1",
     "@patternfly/react-core": "6.6.2",
     "@patternfly/react-icons": "6.6.1",
