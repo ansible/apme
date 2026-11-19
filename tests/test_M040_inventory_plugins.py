@@ -73,8 +73,9 @@ def test_m040_bounds_total_diagnostic_output(monkeypatch: pytest.MonkeyPatch) ->
     line = b"self._compose(disable_lookups=True); " * 20
     findings = validate_inventory_plugins({"inventory_plugins/custom.py": line})
     # The 1,024-byte notice reserve leaves 3,976 bytes; each finding is
-    # charged its 740-byte excerpt plus serialization overhead, so three
-    # findings fit before the remaining 17 are suppressed.
+    # charged its 740-byte excerpt, the 26-byte upload path, and
+    # serialization overhead, so three findings fit before the remaining
+    # 17 are suppressed.
     assert len(findings) == 4
     full, notice = findings[:3], findings[3]
     assert all(finding["message"] == m040_module._MESSAGE for finding in full)
@@ -89,3 +90,32 @@ def test_m040_bounds_total_diagnostic_output(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert notice["original_yaml"] == m040_module._EXCERPT_OMITTED
     assert len(json.dumps(findings).encode("utf-8")) <= 5_000
+
+
+def test_m040_charges_upload_path_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Long upload paths consume the budget and the notice stays bounded.
+
+    Each finding is charged its upload path bytes, so a long path admits
+    fewer findings, and the suppression notice echoes at most a bounded
+    head slice of the path with an explicit truncation marker.
+
+    Args:
+        monkeypatch: Temporary diagnostic byte budget override.
+    """
+    monkeypatch.setattr(m040_module, "_DIAGNOSTIC_BUDGET_BYTES", 6_000)
+    long_path = "inventory_plugins/" + "p" * 2_000 + ".py"
+    content = b"self._compose(disable_lookups=True)\n" * 6
+    findings = validate_inventory_plugins({long_path: content})
+    # Each finding costs its 36-byte line, the 2,023-byte upload path, and
+    # serialization overhead, so only one of the six calls fits the 4,976
+    # bytes left after the notice reserve.
+    assert len(findings) == 2
+    admitted, notice = findings
+    assert admitted["file"] == long_path
+    assert admitted["message"] == m040_module._MESSAGE
+    assert str(notice["message"]).endswith("the assessment is incomplete with 5 further findings suppressed.")
+    notice_file = str(notice["file"])
+    assert len(notice_file.encode("utf-8")) <= m040_module._MAX_NOTICE_PATH_BYTES
+    assert notice_file.endswith(m040_module._PATH_TRUNCATION_MARKER)
+    assert notice_file.startswith("inventory_plugins/p")
+    assert len(json.dumps(findings).encode("utf-8")) <= 6_000

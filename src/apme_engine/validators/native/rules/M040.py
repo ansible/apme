@@ -20,7 +20,28 @@ _DIAGNOSTIC_BUDGET_BYTES = 256 * 1024
 _FINDING_OVERHEAD_BYTES = 512
 #: Bytes reserved so the terminal incomplete-assessment notice always fits.
 _NOTICE_RESERVE_BYTES = 1024
+#: Marker appended when the notice's upload path is truncated.
+_PATH_TRUNCATION_MARKER = "<truncated>"
+#: Longest upload path in bytes the suppression notice echoes.
+_MAX_NOTICE_PATH_BYTES = 512
 _EXCERPT_OMITTED = "<source line omitted: M040 diagnostic byte budget exceeded>"
+
+
+def _notice_file(path: str) -> str:
+    """Bound the upload path echoed by the suppression notice.
+
+    Args:
+        path: Upload path of the first suppressed finding.
+
+    Returns:
+        The full path when it fits the notice budget, else a head slice
+        with an explicit truncation marker of bounded byte length.
+    """
+    encoded = path.encode("utf-8", errors="replace")
+    if len(encoded) <= _MAX_NOTICE_PATH_BYTES:
+        return path
+    keep = _MAX_NOTICE_PATH_BYTES - len(_PATH_TRUNCATION_MARKER)
+    return encoded[:keep].decode("utf-8", errors="ignore") + _PATH_TRUNCATION_MARKER
 
 
 def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict]:
@@ -31,8 +52,9 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
 
     Returns:
         Manual findings at the removed keyword's source line. Serialized
-        diagnostic output is bounded by a per-upload byte budget; once the
-        budget is exhausted, the remaining positions are summarized by one
+        diagnostic output — excerpts, upload paths, and finding metadata —
+        is bounded by a per-upload byte budget; once the budget is
+        exhausted, the remaining positions are summarized by one
         incomplete-assessment notice instead of further findings.
     """
     findings: list[ViolationDict] = []
@@ -50,6 +72,7 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
         except (SyntaxError, ValueError, RecursionError):
             continue
         lines = content.splitlines()
+        path_bytes = len(path.encode("utf-8", errors="replace"))
         excerpts: dict[int, str] = {}
         for node in ast.walk(tree):
             if (
@@ -63,12 +86,12 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
                     continue
                 line = keyword.lineno
                 raw_line = lines[line - 1]
-                if len(raw_line) + _FINDING_OVERHEAD_BYTES > remaining:
+                if len(raw_line) + path_bytes + _FINDING_OVERHEAD_BYTES > remaining:
                     suppressed_count += 1
                     if first_suppressed is None:
                         first_suppressed = (path, line, keyword.col_offset)
                     continue
-                remaining -= len(raw_line) + _FINDING_OVERHEAD_BYTES
+                remaining -= len(raw_line) + path_bytes + _FINDING_OVERHEAD_BYTES
                 if line not in excerpts:
                     excerpts[line] = raw_line.decode("utf-8", errors="replace")
                 findings.append(
@@ -95,7 +118,7 @@ def validate_inventory_plugins(files: Mapping[str, bytes]) -> list[ViolationDict
                     "M040 diagnostic output exceeded its byte budget for this upload;"
                     f" the assessment is incomplete with {suppressed_count} further findings suppressed."
                 ),
-                "file": path,
+                "file": _notice_file(path),
                 "line": line,
                 "path": f"$[{line}][{col_offset}]",
                 "original_yaml": _EXCERPT_OMITTED,
