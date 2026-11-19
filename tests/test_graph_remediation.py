@@ -1681,6 +1681,65 @@ class TestSpliceModifications:
         assert outcome.patches[0].patched == _TASK_YAML_FQCN + _TASK_YAML_APT
         assert outcome.contributors == {"/workspace/site.yml": {landed.node_id}}
 
+    def test_contributors_exclude_an_edit_that_rewrites_the_same_bytes(self) -> None:
+        """A replacement equal to the source bytes does not count as landed.
+
+        A legacy node's fallback baseline can hold ``ansible.builtin.apt`` while
+        both the approved snapshot and the file hold ``apt``, so the splice
+        queues a replacement that writes the line already there. Crediting that
+        owner would promote a finding the source still has.
+        """
+        graph = ContentGraph()
+        qualified = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        noop = _make_node(
+            "site.yml/plays[0]/tasks[1]",
+            yaml_lines=_TASK_YAML_FQCN,
+            line_start=5,
+            line_end=8,
+        )
+        graph.add_node(qualified)
+        graph.add_node(noop)
+        qualified.record_state(0, "scanned")
+        qualified.update_from_yaml(_TASK_YAML_FQCN)
+        qualified.record_state(1, "transformed")
+
+        # The second node's scan baseline holds a qualified module while the
+        # approved snapshot holds ``apt`` — which is what the file has too, so
+        # its queued replacement rewrites the same bytes.
+        noop.record_state(0, "scanned")
+        noop.update_from_yaml(_TASK_YAML_APT)
+        noop.record_state(1, "transformed")
+        graph.approve_pending()
+
+        original = _TASK_YAML_APT + _TASK_YAML_APT
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": original})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        assert outcome.patches[0].patched == _TASK_YAML_FQCN + _TASK_YAML_APT
+        assert outcome.contributors == {"/workspace/site.yml": {qualified.node_id}}
+
+    def test_contributors_include_every_owner_of_the_same_applied_edit(self) -> None:
+        """Two owners proposing one changing edit are both credited.
+
+        The merged splice applies the replacement once, but both agents proposed
+        a fix that is in the output, so neither may be dropped.
+        """
+        graph = ContentGraph()
+        first = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        second = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        graph.add_node(first)
+        graph.add_node(second)
+        for node in (first, second):
+            node.record_state(0, "scanned")
+            node.update_from_yaml(_TASK_YAML_FQCN)
+            node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": _TASK_YAML_APT})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        assert outcome.contributors == {"/workspace/site.yml": {first.node_id, second.node_id}}
+
     def test_contributors_exclude_a_node_without_a_source_edit(self) -> None:
         """A snapshot change that produces no line edit lands for no node.
 

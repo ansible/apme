@@ -1489,6 +1489,26 @@ def test_spec_without_a_prepared_candidate_is_left_alone() -> None:
     assert bound == [("ansible.posix:1.0.0", "ansible-collection-ansible-posix==1.0.0")]
 
 
+def test_a_rebound_url_keeps_the_requested_version() -> None:
+    """A retry that rebinds an already-bound pair still honours the pin.
+
+    After a stale fence the pending pairs carry wheel URLs. Reading the
+    constraint from that URL yields nothing, so every prepared version would
+    qualify and a request pinned to 14.0.1 could install 15.0.0.
+    """
+    from apme_engine.venv_manager.session import _bind_prepared_pip_specs
+
+    prepared = [
+        "ansible_collection_community_general-14.0.1-py3-none-any.whl",
+        "ansible_collection_community_general-15.0.0-py3-none-any.whl",
+    ]
+    stale = "http://proxy/wheels/" + prepared[0] + "?generation=0"
+
+    bound = _bind_prepared_pip_specs([("community.general:14.0.1", stale)], prepared, "http://proxy/wheels/", 1)
+
+    assert bound == [("community.general:14.0.1", "http://proxy/wheels/" + prepared[0] + "?generation=1")]
+
+
 def test_batch_constraints_narrow_the_bound_wheel() -> None:
     """A second requirement on the same distribution narrows the binding.
 
@@ -1841,6 +1861,9 @@ def test_individual_fallback_refreshes_a_stale_fence(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
     posix = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
     general = "ansible_collection_community_general-14.0.1-py3-none-any.whl"
+    # The refreshed handoff also holds a newer release, like a cache shared with
+    # another project: the retry must still install the pinned 14.0.1.
+    newer_general = "ansible_collection_community_general-15.0.0-py3-none-any.whl"
 
     def _prepared(wheels: list[str]) -> MagicMock:
         response = MagicMock()
@@ -1851,7 +1874,7 @@ def test_individual_fallback_refreshes_a_stale_fence(monkeypatch: pytest.MonkeyP
     refreshed = MagicMock()
     refreshed.raise_for_status.return_value = None
     refreshed.json.return_value = {
-        "prepared": [posix, general],
+        "prepared": [posix, general, newer_general],
         "failed_specs": [],
         "shared": True,
         "generation": 1,

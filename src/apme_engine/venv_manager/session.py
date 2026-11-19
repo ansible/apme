@@ -49,7 +49,6 @@ from pathlib import Path
 from typing import NamedTuple
 
 import httpx
-from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
@@ -503,22 +502,34 @@ def _prepared_version(filename: str, prefix: str) -> Version | None:
         return None
 
 
-def _split_pip_requirement(pip_spec: str) -> tuple[str | None, SpecifierSet]:
-    """Split a collection requirement into its distribution and constraint.
+def _spec_constraint(spec: str) -> tuple[str, SpecifierSet]:
+    """Split a collection spec into its distribution name and constraint.
+
+    The constraint is read from the requested spec rather than from the
+    ``pip_spec``, because a ``pip_spec`` is not always a requirement: once a
+    handoff has been bound, the pair carries a wheel URL, and a retry after a
+    stale fence is prepared from exactly those pairs. Reading a URL yields no
+    constraint, which would let the binder choose any prepared version of the
+    collection instead of the one that was requested.
 
     Args:
-        pip_spec: ``ansible-collection-*`` requirement, optionally carrying a
-            version constraint (``ansible-collection-ansible-posix>=1,<3``).
+        spec: Collection FQCN with an optional constraint
+            (``ansible.posix:>=1,<3``, ``community.general:14.0.1``).
 
     Returns:
-        ``(name, specifier_set)``, or ``(None, empty)`` when the requirement
-        cannot be parsed.
+        ``(distribution_name, specifier_set)``; the set is empty when the spec
+        carries no constraint or one that cannot be parsed.
     """
+    namespace, _, collection = spec.split(":", 1)[0].strip().partition(".")
+    dist = f"ansible-collection-{namespace}-{collection}"
     try:
-        requirement = Requirement(pip_spec)
-    except InvalidRequirement:
-        return None, SpecifierSet()
-    return requirement.name, requirement.specifier
+        # ``_spec_to_pip`` owns the spec-to-requirement rules (a bare pin
+        # becomes ``==1.2.3``, ``*`` becomes no constraint), so a retry is
+        # bound by exactly the constraint the first attempt used.
+        pip_spec = _spec_to_pip(spec)
+        return dist, SpecifierSet(pip_spec[len(dist) :].strip())
+    except (ValueError, InvalidSpecifier):
+        return dist, SpecifierSet()
 
 
 def _bind_prepared_pip_specs(
@@ -545,6 +556,11 @@ def _bind_prepared_pip_specs(
     artifacts this request prepared. A requirement with no prepared candidate
     is left as-is (its content did not come from this scope).
 
+    The constraint always comes from ``spec``, never from ``pip_spec``: a retry
+    after a stale fence is prepared from pairs whose ``pip_spec`` is already a
+    wheel URL, and a URL carries no version, so taking it from there would bind
+    whatever version the refreshed handoff happens to hold.
+
     Every requirement in the batch that names the same distribution narrows
     that choice, because the URL pin removes the resolver's freedom to step
     back: with ``ansible.posix:>=1,<3`` and ``ansible.posix<2`` in one batch,
@@ -570,23 +586,16 @@ def _bind_prepared_pip_specs(
     """
     fence = f"?generation={generation}" if generation is not None else ""
     batch: dict[str, SpecifierSet] = {}
-    for _, pip_spec in installable:
-        dist_name, spec_set = _split_pip_requirement(pip_spec)
-        if dist_name is None:
-            continue
+    for spec, _pip_spec in installable:
+        dist_name, spec_set = _spec_constraint(spec)
         batch[dist_name] = batch[dist_name] & spec_set if dist_name in batch else spec_set
     bound: list[tuple[str, str]] = []
     for spec, pip_spec in installable:
         fqcn = spec.split(":", 1)[0].strip()
         namespace, _, collection = fqcn.partition(".")
-        dist = f"ansible-collection-{namespace}-{collection}"
         prefix = f"ansible_collection_{namespace}_{collection}-"
-        constraint = pip_spec[len(dist) :].strip() if pip_spec.startswith(dist) else ""
+        wanted = batch[f"ansible-collection-{namespace}-{collection}"]
         candidates: list[tuple[Version, str]] = []
-        try:
-            wanted = batch[dist] if dist in batch else SpecifierSet(constraint)
-        except InvalidSpecifier:  # pragma: no cover - validated by _spec_to_pip
-            wanted = SpecifierSet()
         for name in prepared:
             if not name.startswith(prefix):
                 continue

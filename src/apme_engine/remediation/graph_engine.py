@@ -1236,6 +1236,26 @@ def _bind_edit_roles(edits: list[_SourceEdit], versions: dict[str, str], file_pa
     return [bound.get(id(edit), edit) for edit in edits]
 
 
+def _changes_source(edit: _SourceEdit, lines: list[str]) -> bool:
+    """Report whether applying an edit would change the source bytes.
+
+    Args:
+        edit: Source edit whose owner may be credited with a landed fix.
+        lines: Original file lines with ``keepends=True``, final newline
+            normalized, exactly as the splice assembly sees them.
+
+    Returns:
+        True when the replacement text differs from the lines it replaces. A
+        replacement that rewrites the same bytes — a legacy node whose fallback
+        baseline drifted while the approved snapshot matches the file — changes
+        nothing and must not credit its owner.
+    """
+    replacement = edit.text.splitlines(keepends=True)
+    if replacement and not replacement[-1].endswith("\n"):
+        replacement[-1] += "\n"
+    return lines[max(edit.start - 1, 0) : max(edit.end, 0)] != replacement
+
+
 def _merge_source_edits(edits: list[_SourceEdit], file_path: str) -> list[_LineEdit]:
     """Reconcile whole-line changes while retaining ownership and YAML intent.
 
@@ -1569,6 +1589,7 @@ def splice_with_outcome(
 
     patches: list[FilePatch] = []
     unpatched: list[str] = []
+    landed_by_file: dict[str, set[str]] = {}
     for file_path, edits in modified_by_file.items():
         original = originals.get(file_path)
         if original is None:
@@ -1588,6 +1609,15 @@ def splice_with_outcome(
             lines[-1] += "\n"
 
         edits = _bind_edit_roles(edits, versions, file_path)
+
+        # Credit an owner only when its own edit changes the source. A legacy
+        # node whose fallback baseline differs from the approved snapshot while
+        # both match the file produces a replacement that writes the bytes
+        # already there, and crediting it would promote a finding the source
+        # still has. Two owners proposing the same changing edit are both
+        # credited, because each edit is compared on its own.
+        landed_by_file[file_path] = {edit.owner_id for edit in edits if _changes_source(edit, lines)}
+
         line_edits = _merge_source_edits(edits, file_path)
 
         # At a shared boundary, replace existing lines before inserting new
@@ -1663,11 +1693,11 @@ def splice_with_outcome(
         )
 
     # Only a file that produced a patch carries its contributors, and only the
-    # nodes that contributed a source edit count: an edit set that normalises
-    # back to the original left no bytes behind, and a node whose snapshot
-    # changed without a line-level edit (e.g. a trailing newline) landed
-    # nothing either.
-    landed = {patch.path: {edit.owner_id for edit in modified_by_file[patch.path]} for patch in patches}
+    # nodes whose edit changed the bytes count: an edit set that normalises
+    # back to the original left nothing behind, a replacement may write the
+    # text already in the file, and a node whose snapshot changed without a
+    # line-level edit (e.g. a trailing newline) landed nothing either.
+    landed = {patch.path: landed_by_file.get(patch.path, set()) for patch in patches}
     return SpliceOutcome(patches=patches, unpatched=sorted(unpatched), contributors=landed)
 
 

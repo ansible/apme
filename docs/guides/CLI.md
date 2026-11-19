@@ -269,14 +269,17 @@ A timeout or 5xx is *not* settled by a branch/PR check. The Gateway stops
 waiting on the provider call, but the request it already sent can still
 complete afterwards, so an empty SCM check is only a snapshot and a new intent
 started from it can publish a second branch or PR when the original lands.
-Settle the original first: re-send the unchanged body with the same key until
-it returns a result or a 409, and only then treat the outcome as known. Before
-starting a new intent, check SCM for the branch and the PR: a 409 can arrive
-after the push or PR creation already finished, and a new key would repeat
-that work. Use a fresh key file only when the original outcome is confirmed
-*and* neither the branch nor the PR exists — that is the case where nothing
-landed and a new intent is genuinely needed (`set -o noclobber` also stops an
-accidental reuse).
+A 409 does not settle it either: the Gateway also returns 409 when an earlier
+tokened submit has claimed the scan or recorded no branch yet, and in both
+cases the original push or PR may still be running, or may have finished
+without being recorded. Settle the original first by re-sending the unchanged
+body with the same key. The outcome counts as known only when that key returns
+a result, or when SCM shows the branch or the PR — a 409 on its own leaves it
+unknown, and so does an empty SCM check. Until then keep the key and do not
+start a new intent. Use a fresh key file only after one of those two
+conditions holds and neither the branch nor the PR exists in SCM — that is the
+case where nothing landed and a new intent is genuinely needed
+(`set -o noclobber` also stops an accidental reuse).
 
 Omitting the header is the only way to start an unclaimed operation; `apme
 submit --no-idempotency-key` does that deliberately, and the call then cannot be
