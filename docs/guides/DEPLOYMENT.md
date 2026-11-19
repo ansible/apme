@@ -276,6 +276,15 @@ collections continue to abort scans; no implicit public Galaxy fallback is added
 | `APME_ABBENAY_TOKEN` | `apme-dev-token` | Consumer token (must match `config.yaml` consumers section) |
 | `NODE_EXTRA_CA_CERTS` | — | CA bundle path inside container (auto-set by `up.sh` when `ABBENAY_CA_BUNDLE` is configured) |
 
+#### Python vulnerability audit
+
+The optional dependency audit validator uses pip-audit's PyPI service by
+default. To query OSV.dev, set `PIP_AUDIT_VULNERABILITY_SERVICE=osv` in
+the environment of `apme-dep-audit-validator` before starting it. For a
+container deployment, add the setting to the `dep-audit` container's
+environment configuration and redeploy it. OSV queries send Python package
+names and installed versions to the advisory service.
+
 #### Gateway and Galaxy Proxy outbound trust
 
 | Variable | Default | Description |

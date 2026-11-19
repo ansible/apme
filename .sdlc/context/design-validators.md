@@ -140,7 +140,7 @@ Every validator returns the same violation shape:
 | Aspect | Details |
 |--------|---------|
 | **Input** | `venv_path` (session venv with Python packages) |
-| **Execution** | Runs `pip-audit -f json --strict --path <site-packages>` against OSV.dev |
+| **Execution** | Runs `pip-audit -f json --strict --path <site-packages>` with PyPI by default; set `PIP_AUDIT_VULNERABILITY_SERVICE=osv` to select OSV.dev |
 | **Rules** | R200 (Python CVE findings) |
 | **Container** | `apme-dep-audit` |
 

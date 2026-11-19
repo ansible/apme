@@ -46,8 +46,8 @@ _INVENTORY_PATTERNS = (
 )
 
 # Constructable inventory plugins are the only configs where users may carry
-# a stale top-level disable_lookups key copied from older docs. REQ-018 M040
-# covers the Python _compose(disable_lookups=...) call form via AST.
+# a stale top-level disable_lookups key copied from older docs. REQ-018
+# plans M040 for Python _compose(disable_lookups=...) calls.
 _CONSTRUCTABLE_PLUGINS = frozenset({"constructed", "ansible.builtin.constructed"})
 
 # Top-level mapping keys only: YAML forbids tab indentation, so a leading
@@ -224,8 +224,7 @@ class DisableLookupsNoEffectGraphRule(GraphRule):
                     "message": (
                         "The top-level 'disable_lookups' key in Constructable "
                         "inventory configs is inert and removed in ansible-core "
-                        "2.23; delete it (Python _compose() calls are covered "
-                        "by M040)"
+                        "2.23; delete it"
                     ),
                 }
             )

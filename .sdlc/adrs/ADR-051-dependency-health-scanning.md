@@ -142,8 +142,9 @@ vulnerability databases.
 4. `Health` RPC checks that `pip-audit` is on `PATH`, similar to Gitleaks
    checking the `gitleaks` binary.
 
-**Offline mode:** By default, `pip-audit` uses `--vulnerability-source osv`
-and queries osv.dev. In the command above, `-l` / `--local` means "audit the
+**Offline mode:** The validator inherits pip-audit's default PyPI service.
+Set `PIP_AUDIT_VULNERABILITY_SERVICE=osv` in the validator environment to
+query OSV.dev. In the command above, `-l` / `--local` means "audit the
 locally installed environment" (not an offline database mode). For offline or
 air-gapped environments, vulnerability data distribution is a separate
 concern: a pre-populated `pip-audit` cache (`--cache-dir`) and/or a mirrored
@@ -436,3 +437,4 @@ Flags:
 | 2026-04-07 | Roger Lopez | Initial proposal |
 | 2026-09-22 | Agent | Status clarified — optional validators, daemon wiring, and pip-audit/OSV scanning shipped; deferred M004 and CLI rescan flags remain |
 | 2026-09-22 | Agent | Status → Partially Implemented — collection_health and dep_audit validators shipped |
+| 2026-11-19 | Agent | Corrected the documented advisory service default and OSV configuration |

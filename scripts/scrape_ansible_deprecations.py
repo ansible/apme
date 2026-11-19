@@ -175,13 +175,16 @@ _DEV_KW = [
 
 
 def _classify_audience(filepath: str, message: str) -> str:
+    msg_lower = message.lower()
+    if filepath == "plugins/inventory/__init__.py" and msg_lower == "the disable_lookups arg has no effect.":
+        # This branch is reached by callers of Constructable._compose() in Python plugins.
+        return "developer"
     for p in _CONTENT_PATHS:
         if p in filepath:
             return "content"
     for p in _DEV_PATHS:
         if p in filepath:
             return "developer"
-    msg_lower = message.lower()
     for kw in _CONTENT_KW:
         if kw in msg_lower:
             return "content"
@@ -322,7 +325,7 @@ def scan_file(filepath: Path, base_dir: Path) -> list[DeprecationEntry]:
         return entries
 
     lines = text.splitlines()
-    rel_path = str(filepath.relative_to(base_dir))
+    rel_path = filepath.relative_to(base_dir).as_posix()
     seen_spans: set[tuple[int, int]] = set()
 
     def _add(m_start: int, mechanism: str, version: str, msg: str, collection: str = "ansible.builtin") -> None:
