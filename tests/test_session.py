@@ -35,6 +35,7 @@ from apme.v1.engine_pb2 import (
     SessionResult,
     Tier1Summary,
 )
+from apme_engine.daemon import session as daemon_session_module
 from apme_engine.daemon.session import (
     _DEFAULT_TTL,
     _MAX_LIFETIME,
@@ -44,6 +45,8 @@ from apme_engine.daemon.session import (
     SessionStore,
 )
 from apme_engine.engine.models import ViolationDict
+from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+from apme_engine.remediation.graph_engine import SpliceOutcome
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -202,6 +205,21 @@ async def test_pipeline_explicit_native_skip_does_not_call_native(
 # ---------------------------------------------------------------------------
 # Part 1: SessionState unit tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+def _disable_create_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable session creation rate-limit for legacy burst tests (N17).
+
+    Session creation throttling is opt-in; tests create bursts without
+    configuring APME_SESSION_CREATE_INTERVAL_S. Rate-limit behavior is
+    covered in test_session_admission_idle.py.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(daemon_session_module, "_CREATE_INTERVAL_S", 0.0)
+    monkeypatch.setattr(daemon_session_module, "_MIN_CREATE_INTERVAL_S", 0.0)
 
 
 class TestSessionState:
@@ -673,6 +691,26 @@ class TestWritePatchesToTempDir:
 
 class TestSessionApprovalGates:
     """Unit tests for multi-gate approval sequencing and proposal isolation."""
+
+    def test_gate1_approval_preserves_unpatched_without_pre_gate2_snapshot(self) -> None:
+        """The Gate 1 return value retains splice metadata without restoration.
+
+        Gate 1 has no pre-Gate-2 snapshot, so this exercises the path that
+        previously returned the plain patch list and lost ``unpatched``.
+        """
+        from apme_engine.daemon.engine_server import _apply_graph_approvals
+        from apme_engine.graph.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import SpliceResult
+
+        graph = ContentGraph()
+        session = SessionState(session_id="gate1-unpatched")
+        outcome = SpliceOutcome(patches=[], unpatched=["legacy.yml"])
+
+        with patch("apme_engine.remediation.graph_engine.splice_with_outcome", return_value=outcome):
+            _applied, _rejected, _approved, patches = _apply_graph_approvals(session, graph, {}, set())
+
+        assert isinstance(patches, SpliceResult)
+        assert patches.unpatched == ["legacy.yml"]
 
     @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
     def _mock_native_for_upstream_transaction_tests(
@@ -1251,8 +1289,11 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", DummyEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[SourcePatch(path=relative, original=original, patched=flow, diff="")],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[SourcePatch(path=relative, original=original, patched=flow, diff="")],
+                    unpatched=[],
+                ),
             ),
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch.object(server.EngineServicer, "_session_build_result", result_event),
@@ -1837,8 +1878,18 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: hi\n")],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[
+                        SplicedFilePatch(
+                            path="play.yml",
+                            original="",
+                            patched="- name: test\n  debug:\n    msg: hi\n",
+                            diff="",
+                        )
+                    ],
+                    unpatched=[],
+                ),
                 side_effect=SpliceConflictError("conflicting gate edits") if splice_conflict else None,
             ),
             patch(
@@ -1951,10 +2002,18 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[
-                    SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: GUTTED\n"),
-                ],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[
+                        SplicedFilePatch(
+                            path="play.yml",
+                            original="",
+                            patched="- name: test\n  debug:\n    msg: GUTTED\n",
+                            diff="",
+                        )
+                    ],
+                    unpatched=[],
+                ),
             ),
         ):
             events = [e async for e in servicer._session_run_ai_gate(session)]
@@ -2232,10 +2291,10 @@ class TestSessionApprovalGates:
 
 
 class TestGalaxyProxyConfigActivation:
-    """Tests for temporary Galaxy proxy config activation in daemon mode."""
+    """Tests for session-scoped Galaxy proxy config (no global mutation)."""
 
     async def test_sets_and_restores_ansible_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Session-scoped Galaxy config is exposed only for the wrapped operation.
+        """Session Galaxy config travels in the yielded env snapshot, not os.environ.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -2248,15 +2307,16 @@ class TestGalaxyProxyConfigActivation:
         servicer = EngineServicer()
         monkeypatch.setenv("ANSIBLE_CONFIG", "/tmp/original.cfg")
 
-        async with servicer._activate_galaxy_proxy_config(cfg):
-            assert os.environ["ANSIBLE_CONFIG"] == str(cfg)
+        async with servicer._activate_galaxy_proxy_config(cfg) as env:
+            assert env["ANSIBLE_CONFIG"] == str(cfg)
+            assert os.environ["ANSIBLE_CONFIG"] == "/tmp/original.cfg"
 
         assert os.environ["ANSIBLE_CONFIG"] == "/tmp/original.cfg"
 
     async def test_clears_ansible_config_when_unset_beforehand(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Temporary activation removes ``ANSIBLE_CONFIG`` afterward if it was unset.
+        """Snapshot carries the session config; global env stays unset.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -2269,8 +2329,9 @@ class TestGalaxyProxyConfigActivation:
         servicer = EngineServicer()
         monkeypatch.delenv("ANSIBLE_CONFIG", raising=False)
 
-        async with servicer._activate_galaxy_proxy_config(cfg):
-            assert os.environ["ANSIBLE_CONFIG"] == str(cfg)
+        async with servicer._activate_galaxy_proxy_config(cfg) as env:
+            assert env["ANSIBLE_CONFIG"] == str(cfg)
+            assert "ANSIBLE_CONFIG" not in os.environ
 
         assert "ANSIBLE_CONFIG" not in os.environ
 
@@ -2425,8 +2486,8 @@ class TestSessionGraphRemediate:
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=mock_patches,
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=mock_patches, unpatched=[]),
                 side_effect=SpliceConflictError("conflicting graph edits") if splice_conflict else None,
             ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -2500,6 +2561,175 @@ class TestSessionGraphRemediate:
 
         assert play_file.read_text() == patched_content
 
+    def test_approval_reconciliation_keeps_unspliced_findings_unresolved(self, tmp_path: Path) -> None:
+        """Approved edits that produce no patch are not reconciled as fixed.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        node_id = "play.yml/plays[0]/tasks[0]"
+        baseline = "- name: Install\n  apt:\n    name: nginx\n"
+        patched = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n"
+
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+            file_path="play.yml",
+            yaml_lines=baseline,
+        )
+        node.line_start = 1
+        node.line_end = 3
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        graph.register_violations([{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}], 0)
+        node.yaml_lines = patched
+        node.record_state(1, "transformed", source="deterministic")
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=1, status="proposed")
+
+        session = SessionState(session_id="approval-unspliced", temp_dir=tmp_path)
+        session.content_graph = graph
+        # No original content for play.yml: splice_with_outcome cannot produce a
+        # patch, so the approved edit never reaches the source bytes.
+        session.graph_originals = {}
+        session.proposals = {
+            "t1-0000": Proposal(
+                id="t1-0000",
+                file="play.yml",
+                path=node_id,
+                rule_id="L001",
+                tier=1,
+                source="deterministic",
+            )
+        }
+
+        servicer = EngineServicer()
+        applied, patches = servicer._session_apply_approved(session, {"t1-0000"}, finalize=False)
+
+        assert applied == 1
+        assert list(patches or []) == []
+        assert session.report is not None
+        # ApprovalAck surfaces ``session.report.fixed`` — a skipped edit must
+        # not be counted there.
+        assert session.report.fixed == 0
+        assert session.report.fixed_violations == []
+        assert [v.rule_id for v in session.report.remaining_violations] == ["L001"]
+
+    @pytest.mark.parametrize("produces_patch", [False, True])  # type: ignore[untyped-decorator]
+    async def test_skipped_splice_does_not_report_findings_fixed(self, tmp_path: Path, produces_patch: bool) -> None:
+        """Only findings whose edits reached the bytes count as fixed.
+
+        A file listed in ``SpliceOutcome.unpatched`` that produced no patch
+        still holds its original source, so its findings stay unresolved and
+        are marked ``edit_skipped``. An approximate-baseline file (also in
+        ``unpatched``) did produce a patch, so its findings stay fixed — the
+        truncation is reported separately.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            produces_patch: Whether the skipped-class file still produced a
+                best-effort patch (approximate-baseline case).
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = EngineServicer.__new__(EngineServicer)
+
+        yaml_content = "- name: Install\n  apt:\n    name: nginx\n    state: present\n"
+        patched_content = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n    state: present\n"
+        play_file = tmp_path / "play.yml"
+        play_file.write_text(yaml_content)
+
+        node_id = "play.yml/plays[0]/tasks[0]"
+        graph = ContentGraph()
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                file_path=str(play_file),
+                yaml_lines=yaml_content,
+            )
+        )
+
+        session = SessionState(session_id="test-graph-skipped")
+        session.working_files = {"play.yml": yaml_content.encode()}
+        session.original_files = dict(session.working_files)
+
+        mock_report = GraphFixReport(
+            passes=1,
+            fixed=1,
+            nodes_modified=1,
+            fixed_violations=[
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "line": 2, "path": node_id}
+            ],
+        )
+        patches = (
+            [
+                EngineFilePatch(
+                    path=str(play_file),
+                    original=yaml_content,
+                    patched=patched_content,
+                    diff="",
+                    rule_ids=["L001"],
+                )
+            ]
+            if produces_patch
+            else []
+        )
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        async def async_scan_fn(_paths: list[str]) -> list[ViolationDict]:
+            return []
+
+        with (
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                # The file is in ``unpatched`` either way; only the patch
+                # decides whether its edits reached the source.
+                return_value=SpliceOutcome(patches=patches, unpatched=[str(play_file)]),
+            ),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-graph-skipped",
+                registry=MagicMock(),
+                scan_fn=async_scan_fn,
+                captured_graph=[graph],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        report = next(e for e in events if e.HasField("tier1_complete")).tier1_complete.report
+        assert report is not None
+        if produces_patch:
+            assert report.fixed == 1
+            assert [v.rule_id for v in report.fixed_violations] == ["L001"]
+            assert report.remaining_violations == []
+        else:
+            assert report.fixed == 0
+            assert report.fixed_violations == []
+            assert [v.rule_id for v in report.remaining_violations] == ["L001"]
+
     async def test_no_violations_yields_clean_report(self, tmp_path: Path) -> None:
         """No violations → no patches, clean report with passes=1, fixed=0.
 
@@ -2529,7 +2759,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -2586,7 +2819,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -2655,7 +2891,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
@@ -2744,7 +2983,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -2864,7 +3106,10 @@ class TestSessionRescanBridge:
                 "apme_engine.remediation.graph_engine.GraphRemediationEngine",
                 side_effect=capture_gre_init,
             ),
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=mock_patches, unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
             patch(
                 "apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock
@@ -3064,7 +3309,10 @@ class TestSessionRescanBridge:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", side_effect=mock_load_graph_rules),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport())
@@ -3186,6 +3434,60 @@ async def _mock_session_process_with_proposals(
 
 class TestFixSessionRPC:
     """Integration tests for FixSession RPC on the servicer."""
+
+    async def test_venv_guard_exhaustion_maps_to_unavailable(self) -> None:
+        """Exhausted lock contention is retryable and distinct from worker failure."""
+        from apme_engine.daemon.engine_server import EngineServicer, _VenvWriteGuardTimeout
+
+        async def _guard_busy(
+            self: EngineServicer,
+            session: SessionState,
+            scan_id: str,
+        ) -> AsyncIterator[SessionEvent]:
+            del self, session, scan_id
+            raise _VenvWriteGuardTimeout("busy")
+            yield SessionEvent()  # pragma: no cover
+
+        servicer = EngineServicer()
+        stream = AsyncCommandStream()
+        ctx = FakeGrpcContext()
+        stream.send(SessionCommand(upload=ScanChunk(scan_id="guard-busy", last=True)))
+        with (
+            patch.object(EngineServicer, "_session_process", _guard_busy),
+            pytest.raises(_AbortSignal) as exc_info,
+        ):
+            async for _event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                pass
+
+        assert exc_info.value.code.name == "UNAVAILABLE"
+        assert "retry the scan" in exc_info.value.details
+
+    async def test_venv_read_guard_timeout_maps_to_unavailable(self) -> None:
+        """Read-guard contention is surfaced as a retryable gRPC status."""
+        from apme_engine.daemon.engine_server import EngineServicer, _VenvReadGuardTimeout
+
+        async def _guard_busy(
+            self: EngineServicer,
+            session: SessionState,
+            scan_id: str,
+        ) -> AsyncIterator[SessionEvent]:
+            del self, session, scan_id
+            raise _VenvReadGuardTimeout("read guard busy")
+            yield SessionEvent()  # pragma: no cover
+
+        servicer = EngineServicer()
+        stream = AsyncCommandStream()
+        ctx = FakeGrpcContext()
+        stream.send(SessionCommand(upload=ScanChunk(scan_id="read-guard-busy", last=True)))
+        with (
+            patch.object(EngineServicer, "_session_process", _guard_busy),
+            pytest.raises(_AbortSignal) as exc_info,
+        ):
+            async for _event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                pass
+
+        assert exc_info.value.code.name == "UNAVAILABLE"
+        assert "retry the scan" in exc_info.value.details
 
     async def test_session_created_on_first_upload(self) -> None:
         """First upload yields SessionCreated with ID and positive TTL."""

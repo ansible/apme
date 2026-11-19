@@ -170,16 +170,13 @@ class _AsyncCommandStream:
 class TestNormalizeUploadPath:
     """Tests for _normalize_upload_path canonicalization and escape rejection (#1)."""
 
-    def test_backslash_and_leading_slash(self) -> None:
-        """Backslashes become slashes and leading slashes are stripped."""
-        cases = {
-            "a\\b\\c.yml": "a/b/c.yml",
-            "/a/b.yml": "a/b.yml",
-            "///a/b.yml": "a/b.yml",
-            "\\a\\b.yml": "a/b.yml",
-        }
-        for raw, expected in cases.items():
-            assert _normalize_upload_path(raw) == expected
+    def test_backslash_normalized_and_absolute_rejected(self) -> None:
+        """Backslashes become slashes; absolute paths are rejected like the Gateway."""
+        assert _normalize_upload_path("a\\b\\c.yml") == "a/b/c.yml"
+        # A leading separator of either flavour is root-absolute.
+        for raw in ["/a/b.yml", "///a/b.yml", "\\a\\b.yml", "C:/a/b.yml"]:
+            with pytest.raises(ValueError, match="escapes session root or is empty"):
+                _normalize_upload_path(raw)
 
     def test_dot_segments_collapse(self) -> None:
         """Dot segments collapse so ./a and a are the same key."""
@@ -221,6 +218,43 @@ class TestSessionUploadAppend:
         assert session.original_files["a.yml"] == b"v2"
         assert session.working_files["a.yml"] == b"v2"
 
+    def test_cross_chunk_raw_path_collision_rejected(self) -> None:
+        r"""A later chunk cannot reuse a key under a different raw spelling (#4).
+
+        Per-chunk canonicalization lets ``a\\b.yml`` and ``a/b.yml`` each pass,
+        so the second file would silently replace the first in
+        ``original_files``. Provenance persists for the upload lifetime.
+        """
+        session = SessionState(session_id="xchunk-1")
+        _session_upload_append(session, _upload_chunk({"a\\b.yml": b"first"}))
+        with pytest.raises(ValueError, match="across upload chunks"):
+            _session_upload_append(session, _upload_chunk({"a/b.yml": b"second"}))
+        assert list(session.original_files) == ["a/b.yml"]
+        assert session.original_files["a/b.yml"] == b"first"
+
+    def test_cross_chunk_trivial_respelling_stays_last_wins(self) -> None:
+        """Re-sends spelled ``./a.yml`` or ``a//b.yml`` stay last-wins."""
+        session = SessionState(session_id="xchunk-2")
+        _session_upload_append(session, _upload_chunk({"a.yml": b"v1", "d/b.yml": b"v1"}))
+        _session_upload_append(session, _upload_chunk({"./a.yml": b"v2", "d//b.yml": b"v2"}))
+        assert session.original_files == {"a.yml": b"v2", "d/b.yml": b"v2"}
+
+    def test_cross_chunk_dependency_collision_checked(self) -> None:
+        """Dependency uploads share the cross-chunk provenance map."""
+        session = SessionState(session_id="xchunk-3")
+        path = "roles/demo/tasks/main.yml"
+        first = ScanChunk(scan_id="s", files=[], dependency_files=[File(path=path, content=b"1")])
+        _session_upload_append(session, first)
+        assert session.upload_raw_paths == {".git-dependencies/" + path: ".git-dependencies/" + path}
+        # Backslash and posix spellings both validate as dependency layouts but
+        # name different files on POSIX, so the second must not replace the first.
+        colliding = ScanChunk(
+            scan_id="s", files=[], dependency_files=[File(path="roles\\demo\\tasks\\main.yml", content=b"2")]
+        )
+        with pytest.raises(ValueError, match="across upload chunks"):
+            _session_upload_append(session, colliding)
+        assert session.dependency_files == {path: b"1"}
+
     def test_replace_byte_math(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Replaced bytes are subtracted: 5B replaced by 7B plus 2B new == 9B total.
 
@@ -250,6 +284,10 @@ class TestSessionUploadAppend:
             _session_upload_append(session, _upload_chunk({"a.yml": b"1", "b.yml": b"2"}))
         assert session.original_files == {}
         assert session.working_files == {}
+        # Rejected chunks must not leave provenance behind either: a later
+        # chunk respelling one of those paths would then be refused for a
+        # collision with a file that was never stored.
+        assert session.upload_raw_paths == {}
 
     def test_byte_cap_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Exceeding the byte cap raises ValueError.
@@ -261,6 +299,21 @@ class TestSessionUploadAppend:
         session = SessionState(session_id="cap-2")
         with pytest.raises(ValueError, match="size limit exceeded"):
             _session_upload_append(session, _upload_chunk({"a.yml": b"x" * 11}))
+        assert session.original_files == {}
+        assert session.upload_raw_paths == {}
+
+    def test_plan_upload_provenance_does_not_mutate(self) -> None:
+        r"""Planning provenance is read-only; the caller commits it after checks.
+
+        ``a\b.yml`` and ``a/b.yml`` canonicalize to one key, so the pair is a
+        genuine collision. Planning must report it without writing to the
+        session map: committing before the cap and layout checks would make a
+        rejected chunk poison every later chunk for that path.
+        """
+        provenance: dict[str, str] = {}
+        planned = engine_upload.plan_upload_raw_path_provenance(provenance, ["a\\b.yml"])
+        assert planned == {"a/b.yml": "a\\b.yml"}
+        assert provenance == {}
 
     def test_sealed_rejects(self) -> None:
         """Appending to a sealed session raises ValueError."""
@@ -278,6 +331,63 @@ class TestSessionUploadAppend:
 
 class TestFixSessionTrust:
     """FixSession replay / unseal / drop semantics (#10)."""
+
+    async def test_upload_chunks_refresh_session_idle_clock(self) -> None:
+        """Each appended upload chunk resets the session idle timer."""
+        servicer = EngineServicer()
+        stream = _AsyncCommandStream()
+        ctx = _FakeGrpcContext()
+        stream.send(SessionCommand(upload=_upload_chunk({"first.yml": b"x: 1\n"}, scan_id="touch-1")))
+
+        append_touch_counts: list[int] = []
+        touch_sessions: list[str] = []
+        real_append = engine_upload._session_upload_append
+        real_touch = SessionState.touch
+
+        async def _noop_process(
+            self: EngineServicer, session: SessionState, scan_id: str
+        ) -> AsyncIterator[SessionEvent]:
+            """Skip remediation so the test covers upload clock updates only.
+
+            Args:
+                self: Servicer instance required by the method patch.
+                session: Uploaded session.
+                scan_id: Scan identifier.
+
+            Yields:
+                SessionEvent: No events.
+            """
+            del self, session, scan_id
+            if False:
+                yield SessionEvent()
+
+        def _spy_append(session: SessionState, chunk: ScanChunk) -> None:
+            real_append(session, chunk)
+            append_touch_counts.append(touch_sessions.count(session.session_id))
+
+        def _spy_touch(session: SessionState) -> None:
+            real_touch(session)
+            touch_sessions.append(session.session_id)
+
+        fed = False
+        with (
+            patch.object(EngineServicer, "_session_process", _noop_process),
+            patch.object(engine_upload, "_session_upload_append", _spy_append),
+            patch.object(SessionState, "touch", _spy_touch),
+        ):
+            async for event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                if event.WhichOneof("event") == "created" and not fed:
+                    fed = True
+                    stream.send(
+                        SessionCommand(upload=_upload_chunk({"second.yml": b"y: 2\n"}, last=True, scan_id="touch-1"))
+                    )
+                    stream.send(SessionCommand(close=CloseRequest()))
+                elif event.WhichOneof("event") == "closed":
+                    break
+
+        assert append_touch_counts == [0, 1]
+        assert len(touch_sessions) == 2
+        assert touch_sessions[0] == touch_sessions[1]
 
     async def test_duplicate_terminal_replays_without_rerun(self) -> None:
         """An identical duplicate terminal chunk replays state; process runs exactly once."""
@@ -1128,10 +1238,10 @@ class TestHierarchyDecodeInfraError:
         request = validate_pb2.ValidateRequest(request_id="bad-hier-1", hierarchy_payload=b"{not valid json")
         resp = await OpaValidatorServicer().Validate(request, _FakeGrpcContext())  # type: ignore[arg-type]
 
-        assert resp.request_id == "bad-hier-1"  # type: ignore[attr-defined]
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
-        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
+        assert resp.request_id == "bad-hier-1"
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR
         assert not resp.HasField("diagnostics")  # type: ignore[attr-defined]
 
     async def test_ansible_malformed_hierarchy_yields_infra_error(self) -> None:
@@ -1141,10 +1251,10 @@ class TestHierarchyDecodeInfraError:
         request = validate_pb2.ValidateRequest(request_id="bad-hier-2", hierarchy_payload=b"\xff\xfe{bad")
         resp = await AnsibleValidatorServicer().Validate(request, _FakeGrpcContext())  # type: ignore[arg-type]
 
-        assert resp.request_id == "bad-hier-2"  # type: ignore[attr-defined]
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
-        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
+        assert resp.request_id == "bad-hier-2"
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR
         assert not resp.HasField("diagnostics")  # type: ignore[attr-defined]
 
 
@@ -1360,6 +1470,36 @@ class TestAccumulateChunksCaps:
 
         with pytest.raises(ValueError, match="file limit"):
             await EngineServicer._accumulate_chunks(stream())
+
+    async def test_cross_chunk_raw_path_collision_rejects(self) -> None:
+        """A later chunk reusing a key under a different raw path raises (#4)."""
+
+        async def stream() -> AsyncIterator[ScanChunk]:
+            """Yield two chunks whose paths unify only via backslash folding.
+
+            Yields:
+                ScanChunk: Next scripted upload chunk.
+            """
+            yield _upload_chunk({"a\\b.yml": b"first"})
+            yield _upload_chunk({"a/b.yml": b"second"}, last=True)
+
+        with pytest.raises(ValueError, match="across upload chunks"):
+            await EngineServicer._accumulate_chunks(stream())
+
+    async def test_cross_chunk_trivial_respelling_dedups(self) -> None:
+        """Trivial respellings across chunks still last-wins without error."""
+
+        async def stream() -> AsyncIterator[ScanChunk]:
+            """Yield two chunks spelling one path two trivial ways.
+
+            Yields:
+                ScanChunk: Next scripted upload chunk.
+            """
+            yield _upload_chunk({"a.yml": b"v1"})
+            yield _upload_chunk({"./a.yml": b"v2"}, last=True)
+
+        accumulated, _, _, _, _ = await EngineServicer._accumulate_chunks(stream())
+        assert [(f.path, f.content) for f in accumulated] == [("a.yml", b"v2")]
 
     async def test_bytes_cap_rejects(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Content past the byte cap raises ValueError.
