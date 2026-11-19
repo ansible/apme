@@ -17,8 +17,8 @@
   "dependencies": {
     "@ansible/ansible-ui-framework": "file:./vendor/ansible-ui-framework",
     "@apme/ui-workflow": "workspace:*",
-    "@backstage/ui": "0.17.1",
-    "@patternfly/patternfly": "6.6.1",
+    "@backstage/ui": "0.18.0",
+    "@patternfly/patternfly": "6.7.0",
     "@patternfly/react-charts": "8.6.1",
     "@patternfly/react-core": "6.6.2",
     "@patternfly/react-icons": "6.6.1",
@@ -32,11 +32,11 @@
     "react-dom": "^19.3.0",
     "react-i18next": "^17.0.11",
     "react-router": "^8.3.1",
-    "react-router-dom": "^6.30.6",
+    "react-router-dom": "^7.18.4",
     "react-syntax-highlighter": "^16.1.2",
     "styled-components": "^6.6.0",
     "swr": "^2.5.1",
-    "undici": "8.11.2",
+    "undici": "8.12.3",
     "@apme/client": "*"
   },
   "devDependencies": {
@@ -69,7 +69,7 @@
     "zustand": "^5.0.15"
   },
   "overrides": {
-    "undici": "8.11.2",
+    "undici": "8.12.3",
     "@babel/core": ">=7.29.6",
     "postcss": "8.5.23",
     "vitest": "5.0.5",
