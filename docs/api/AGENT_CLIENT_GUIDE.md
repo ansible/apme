@@ -100,9 +100,19 @@ known replayable case. Never assume `detail` is a string.
 A key that is already bound to a **different** branch, activity, or patch
 set is terminal: resending the same key and inputs cannot recover a stored
 result, so follow the Gateway's recovery message (and use a new key for the
-new intent) instead of retrying. Reserve same-key retries for retryable
-failures (5xx) and unknown outcomes (timeouts, connection resets) where the
-first attempt may still be completing; send the unchanged body each time.
+new intent) instead of retrying.
+
+A same-key retry only *replays* a stored result — it re-runs the submit only
+when the previous attempt failed before the SCM push started. Once the push
+has started, a 5xx, a timeout, or a failure to persist the publish result
+leaves the claim without a recorded branch, and a same-key retry returns
+`409 idempotency_conflict` ("A prior submit with this token did not complete
+(no branch recorded)") instead of repeating or completing the first attempt;
+do not treat that response as retryable. Before submitting again, check SCM
+for the branch and the pull request, and start a new operation with a new
+token only when the Gateway message says no publish occurred — a new key on a
+new `/operate` attempt creates a new scan, branch, and pull request, so never
+mint one while the earlier publish may still exist.
 
 ## Upload / scan caps (three dialects)
 
