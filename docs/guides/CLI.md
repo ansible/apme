@@ -291,6 +291,35 @@ unrecorded *and* SCM shows neither the submitted commit nor the PR — that is
 the case where nothing landed and a new intent is genuinely needed
 (`set -o noclobber` also stops an accidental reuse).
 
+#### Stranded claims
+
+The Gateway releases a submit claim on cancellation, on a timeout, and on an
+SCM error raised before any mutation. A claim recorded before an interruption
+that bypasses those handlers — a Gateway restart, or a release update that
+failed — stays in place with no branch on the scan. Every later attempt then
+fails the same way, and because no published branch exists it is also the one
+state where the SCM check above can never be satisfied:
+
+```text
+409 idempotency_conflict — A prior tokened submit claimed this scan but did not
+complete. Verify SCM state; if no publish occurred, start a new operation with a
+new token.
+```
+
+The Gateway has no endpoint that reports claim state, so decide from SCM:
+
+1. Look for the commit this submit would have published, and for the PR when
+   `create_pr` was requested. A branch at its previous head, or the absence of
+   any commit attributable to the submit, means no publish occurred.
+2. With that evidence, the 409 above *is* the Gateway's own instruction to start
+   a new operation with a new token — take a fresh key file and submit again.
+   The old key cannot be reused: its claim is the one blocking you.
+3. If you cannot rule out a publish still in flight — for example the SCM API is
+   unavailable, or a push is still running against the same branch — keep the
+   key and escalate to a Gateway operator rather than starting a second intent.
+   Gateway-side claim-state reporting, which would remove that inference, is
+   tracked in [#913](https://github.com/ansible/apme/issues/913).
+
 Omitting the header is the only way to start an unclaimed operation; `apme
 submit --no-idempotency-key` does that deliberately, and the call then cannot be
 replayed safely.
