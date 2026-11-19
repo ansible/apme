@@ -1420,6 +1420,12 @@ def create_app(
             response: dict[str, Any] = {
                 "prepared": sorted(set(prepared)),
                 "failed_specs": sorted(set(failed)),
+                # ``shared`` tells the Engine that this response reused the
+                # process-wide cache because the forwarded settings match the
+                # ready configuration. Without it, a scoped request that gets
+                # no ``scope_id`` back has to be treated as a failed
+                # preparation (its wheels must not come from the shared index).
+                "shared": session_scope_id is None,
             }
             if session_scope_id is not None:
                 # No await between the generation check below and this stamp:

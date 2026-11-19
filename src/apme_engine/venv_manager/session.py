@@ -377,10 +377,30 @@ class _PrepareOutcome(NamedTuple):
     Attributes:
         scope_id: Opaque PEP 503 scope ID for request-scoped settings, else ``None``.
         failed_specs: Requested specs the proxy could not resolve or download.
+        prepared: Wheel filenames the proxy prepared for the requested specs.
+        shared: Whether the proxy served the request from its process-wide
+            (shared) cache instead of a request-scoped handoff.
     """
 
     scope_id: str | None
     failed_specs: list[str]
+    prepared: list[str]
+    shared: bool
+
+
+def _prepared_wheels(payload: object) -> list[str]:
+    """Extract prepared wheel filenames from a prepare response body.
+
+    Args:
+        payload: Parsed prepare response.
+
+    Returns:
+        Wheel basenames that end in ``.whl`` and carry no path separator.
+    """
+    prepared = payload.get("prepared", []) if isinstance(payload, dict) else []
+    if not isinstance(prepared, list):
+        return []
+    return [name for name in prepared if isinstance(name, str) and name.endswith(".whl") and "/" not in name]
 
 
 def _prepare_collections_via_proxy(
@@ -429,7 +449,12 @@ def _prepare_collections_via_proxy(
         logger.warning("Galaxy proxy could not prepare collection specs: %s", failed_specs)
     scope_id = payload.get("scope_id") if isinstance(payload, dict) else None
     valid_scope = scope_id if isinstance(scope_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id) else None
-    return _PrepareOutcome(scope_id=valid_scope, failed_specs=failed_specs)
+    return _PrepareOutcome(
+        scope_id=valid_scope,
+        failed_specs=failed_specs,
+        prepared=_prepared_wheels(payload),
+        shared=isinstance(payload, dict) and payload.get("shared") is True,
+    )
 
 
 def _unprepared_requested_specs(failed_specs: list[str], requested: list[str]) -> list[str]:
@@ -449,6 +474,55 @@ def _unprepared_requested_specs(failed_specs: list[str], requested: list[str]) -
     """
     blocked = {spec.strip().lower() for spec in failed_specs}
     return [spec for spec in requested if spec.strip().lower() in blocked]
+
+
+def _bind_scoped_pip_specs(
+    installable: list[tuple[str, str]],
+    prepared: list[str],
+    proxy_url: str,
+    scope_id: str,
+) -> list[tuple[str, str]]:
+    """Point each prepared collection requirement at its scoped wheel URL.
+
+    The scoped index is added as an *extra* index while the default index stays
+    configured, so pip/uv (``unsafe-best-match``) is free to prefer a
+    same-named distribution published on the default index over the wheel this
+    request prepared. Installing the prepared wheel by URL binds the
+    requirement to that exact artifact; wheels it depends on still resolve from
+    the default index, which keeps dependency installation working.
+
+    A requirement is left as-is when no single prepared wheel matches it (for
+    example two constraints on the same collection resolved to different
+    versions), because guessing could install the wrong artifact.
+
+    Args:
+        installable: ``(spec, pip_spec)`` pairs to install.
+        prepared: Wheel basenames the proxy prepared for this request.
+        proxy_url: Base URL of the Galaxy Proxy.
+        scope_id: Scope the prepared wheels were handed off under.
+
+    Returns:
+        ``(spec, pip_spec)`` pairs with prepared collections bound to their
+        scoped wheel URL.
+    """
+    base_url = proxy_url.rstrip("/") + f"/session-wheels/{scope_id}/"
+    bound: list[tuple[str, str]] = []
+    for spec, pip_spec in installable:
+        fqcn = spec.split(":", 1)[0].strip()
+        namespace, _, collection = fqcn.partition(".")
+        prefix = f"ansible_collection_{namespace}_{collection}-"
+        matches = [name for name in prepared if name.startswith(prefix)]
+        if len(matches) == 1:
+            bound.append((spec, base_url + matches[0]))
+        else:
+            if matches:
+                logger.debug(
+                    "Leaving %s on the scoped index: %d prepared wheels match it",
+                    spec,
+                    len(matches),
+                )
+            bound.append((spec, pip_spec))
+    return bound
 
 
 def _release_session_scope(proxy_url: str, scope_id: str) -> None:
@@ -519,7 +593,14 @@ def _install_collections_via_proxy(
         ``failed_specs`` are excluded from the install command and returned as
         failures. The scoped index is added as an extra index, so leaving them
         in would let pip/uv satisfy them from another index and report success
-        for content that never came from this scope.
+        for content that never came from this scope. Successfully prepared
+        collections are installed from their scoped wheel URL, so their
+        resolution cannot silently fall back to a same-named default-index
+        distribution; their own dependencies still resolve normally.
+
+        A preparation response that reuses the proxy's shared cache carries no
+        scope; that is a success, not a failed preparation, and the install
+        proceeds against the shared index.
     """
     simple_url = proxy_url.rstrip("/") + "/simple/"
     installable: list[tuple[str, str]] = []
@@ -540,11 +621,15 @@ def _install_collections_via_proxy(
     # race this request and return 409, so retry once after that conflict.
     session_scope_id: str | None = None
     unprepared: list[str] = []
+    prepared_wheels: list[str] = []
+    shared_prepare = False
     for attempt in range(2):
         try:
             outcome = _prepare_collections_via_proxy(proxy_url, installable_specs, galaxy_server_configs)
             session_scope_id = outcome.scope_id
             unprepared = outcome.failed_specs
+            prepared_wheels = outcome.prepared
+            shared_prepare = outcome.shared
             break
         except RuntimeError as exc:
             cause = exc.__cause__
@@ -558,10 +643,15 @@ def _install_collections_via_proxy(
             logger.warning("Collection preparation failed; continuing with install: %s", exc)
             break
 
-    if galaxy_server_configs is not None and session_scope_id is None:
+    if galaxy_server_configs is not None and session_scope_id is None and not shared_prepare:
+        # A request-scoped Galaxy source must never install from the shared
+        # index: its wheels were downloaded with other credentials. The proxy
+        # only omits a scope when it explicitly reports reusing its shared
+        # cache for settings identical to the ready configuration.
         return failed + installable_specs
-    if session_scope_id is not None:
-        simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
+    if session_scope_id is not None or shared_prepare:
+        if session_scope_id is not None:
+            simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
         # The scoped index is an *extra* index: pip and uv keep the default one
         # enabled, so a spec the proxy could not prepare would still resolve
         # elsewhere, install "successfully", and be recorded against this
@@ -581,8 +671,14 @@ def _install_collections_via_proxy(
             if not installable:
                 # Nothing will consume the prepared scope, so release it now
                 # instead of leaving it to the proxy TTL.
-                _release_session_scope(proxy_url, session_scope_id)
+                if session_scope_id is not None:
+                    _release_session_scope(proxy_url, session_scope_id)
                 return failed
+        if session_scope_id is not None:
+            # Bind prepared collections to their scoped wheel; see
+            # ``_bind_scoped_pip_specs`` for why a version pin is not enough.
+            installable = _bind_scoped_pip_specs(installable, prepared_wheels, proxy_url, session_scope_id)
+            pip_specs = [pip_spec for _, pip_spec in installable]
 
     try:
         result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)

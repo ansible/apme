@@ -112,8 +112,13 @@ def test_response_middleware_redacts_release_scope_id(
 
     assert response.status_code == 200
     assert response.json() == {"released": False}
-    assert scope_id not in caplog.text
-    assert "/admin/session-scopes/[redacted]" in caplog.text
+    # Only the proxy's own records matter: the ``httpx`` client logs the request
+    # URL at INFO when a run enables that logger, and that line is outside the
+    # app's middleware (and outside its control), so asserting on the whole
+    # capture buffer made this test depend on the ambient log level.
+    proxy_log = "\n".join(record.getMessage() for record in caplog.records if record.name.startswith("galaxy_proxy."))
+    assert scope_id not in proxy_log
+    assert "/admin/session-scopes/[redacted]" in proxy_log
 
 
 @pytest.fixture()  # type: ignore[untyped-decorator]

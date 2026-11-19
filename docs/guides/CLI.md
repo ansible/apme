@@ -234,14 +234,22 @@ original call, so a key minted after a timeout cannot recover the earlier
 operation:
 
 ```bash
-# Once, before the first attempt: a replayable key kept for this submit.
-KEY=$(python -c 'import uuid; print(uuid.uuid4().hex)')
+# Once, before the first attempt: persist a replayable key at a stable path.
+# Write it before the request so a crashed shell, a lost variable, or a
+# dropped session cannot lose the key for an operation that may have landed.
+KEY_FILE=.apme-submit-key
+python -c 'import uuid; print(uuid.uuid4().hex)' > "$KEY_FILE"
 
 curl -X POST $GW/api/v1/projects/<id>/operation/submit \
   -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: $KEY" \
+  -H "Idempotency-Key: $(cat "$KEY_FILE")" \
   -d '{"branch_name":"apme/remediate-abc123","create_pr":true}'
 ```
+
+Keep the file until the outcome is settled, then delete it: remove it only
+after the call succeeded or a replay/409 response told you the operation's
+final state. Deleting it while the outcome is unknown (timeout, 5xx) throws
+away the only key that can recover the operation.
 
 Re-send the *unchanged* body with the same `$KEY` when the call times out or
 fails with 500/502/503/504: the outcome is unknown or retryable, so the key
@@ -249,9 +257,10 @@ recovers the stored result instead of pushing twice. A 409 is different —
 the Gateway already has a definitive answer, so follow its message. Changing
 the branch, activity, or patch set under the same key is rejected (409) and
 resending that request unchanged repeats the conflict; start the new intent
-with a fresh `$KEY` instead of retrying. Omitting the header is the
-only way to start an unclaimed operation; `apme submit --no-idempotency-key`
-does that deliberately, and the call then cannot be replayed safely.
+with a fresh `$KEY` (and a fresh key file) instead of retrying. Omitting the
+header is the only way to start an unclaimed operation; `apme submit
+--no-idempotency-key` does that deliberately, and the call then cannot be
+replayed safely.
 
 ### `apme format` via REST (Gateway-managed alternative)
 

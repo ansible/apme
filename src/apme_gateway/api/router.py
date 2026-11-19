@@ -1721,7 +1721,10 @@ def _redact_import_secrets(message: str) -> str:
             r"(?i)(api[_-]?key|auth[_-]?token|access[_-]?token|secret|passwd|password"
             r"|private[_-]?key|bearer|aws[_-]?secret|aws[_-]?access[_-]?key[_-]?id"
             r"|aws[_-]?session[_-]?token|github[_-]?token|\btoken\b|\bpwd\b)"
-            r"\s*[:=]\s*\S+"
+            # A value that starts with an auth scheme must consume the
+            # credential too: matching only ``Bearer`` left the token behind,
+            # and the later space-separated pass could no longer see it.
+            r"\s*[:=]\s*(?:[Bb]earer\s+)?\S+"
         )
     # Remove complete PEM blocks before the keyed expression consumes the
     # ``-----BEGIN`` prefix and leaves the key body behind.

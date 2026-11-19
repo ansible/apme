@@ -108,11 +108,13 @@ has started, a 5xx, a timeout, or a failure to persist the publish result
 leaves the claim without a recorded branch, and a same-key retry returns
 `409 idempotency_conflict` ("A prior submit with this token did not complete
 (no branch recorded)") instead of repeating or completing the first attempt;
-do not treat that response as retryable. Before submitting again, check SCM
-for the branch and the pull request, and start a new operation with a new
-token only when the Gateway message says no publish occurred — a new key on a
-new `/operate` attempt creates a new scan, branch, and pull request, so never
-mint one while the earlier publish may still exist.
+do not treat that response as retryable. The message says only that the
+Gateway recorded no branch — it does not prove no publish reached SCM — so
+confirm with SCM that neither the branch nor a pull request exists. Once SCM
+confirms that (nothing was published, so the earlier attempt cannot still
+land), start a new operation; a new key on a new `/operate` attempt creates a
+new scan, branch, and pull request, so never mint one while an earlier
+publish may still exist.
 
 ## Upload / scan caps (three dialects)
 

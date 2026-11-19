@@ -673,3 +673,124 @@ def _recompute_checksum(block: bytearray, offset: int) -> None:
     block[offset : offset + 512] = header
     checksum = f"{sum(header):06o}\0 "
     block[offset + 148 : offset + 156] = checksum.encode()
+
+
+def test_octal_fields_stop_at_first_nul_like_tarfile() -> None:
+    r"""Numeric fields truncate at the first NUL, matching ``tarfile.nti``.
+
+    ``tarfile`` decodes a field with ``nts`` (bytes up to the first NUL) and only
+    then strips padding, so ``0000100\\0x`` is a valid size of 64. Stripping
+    trailing padding instead returned ``None``, which stopped the raw walk
+    before the bytes ``tarfile`` still parses — the extension-header bound and
+    the aggregate byte cap were both bypassed that way.
+    """
+    from galaxy_proxy.converter import _header_checksum_ok, _header_declared_size
+
+    header = bytearray(512)
+    header[124:136] = b"0000100\0x\0\0\0"
+    assert _header_declared_size(bytes(header)) == 64
+
+    # A checksum field with a NUL followed by a non-padding byte is still read
+    # by tarfile: it takes the digits before the NUL.
+    header = bytearray(512)
+    header[0:10] = b"galaxy.yml"
+    header[100:108] = b"0000644\0"
+    header[108:116] = b"0000000\0"
+    header[116:124] = b"0000000\0"
+    header[124:136] = b"00000000004\0"
+    header[136:148] = b"00000000000\0"
+    header[148:156] = b" " * 8
+    header[156:157] = b"0"
+    header[257:263] = b"ustar\0"
+    header[263:265] = b"00"
+    checksum = sum(header)
+    header[148:156] = f"{checksum:06o}".encode() + b"\0x"
+
+    assert _header_checksum_ok(bytes(header)) is True
+
+
+def _raw_tar_header(name: bytes, typeflag: bytes, size: int) -> bytearray:
+    """Build one valid 512-byte tar header block.
+
+    Args:
+        name: Member name bytes (at most 100 bytes).
+        typeflag: One-byte member type.
+        size: Declared payload size.
+
+    Returns:
+        A header block with a valid checksum.
+    """
+    header = bytearray(512)
+    header[0 : len(name)] = name
+    header[100:108] = b"0000644\0"
+    header[108:116] = b"0000000\0"
+    header[116:124] = b"0000000\0"
+    header[124:136] = f"{size:011o}\0".encode()
+    header[136:148] = b"00000000000\0"
+    header[156:157] = typeflag
+    header[257:263] = b"ustar\0"
+    header[263:265] = b"00"
+    _recompute_checksum(header, 0)
+    return header
+
+
+def test_pax_size_override_cannot_hide_an_oversized_header() -> None:
+    """The walk advances by the size ``tarfile`` uses after a PAX ``size`` record.
+
+    A crafted ``x`` header can declare ``size=0`` for the next member, so
+    ``tarfile`` reads the next header immediately after that member's header
+    block. Advancing by the member's raw declared size instead steps over a GNU
+    ``L`` header that ``tarfile`` does read, and that header can declare a
+    1 GiB payload which bypasses both the extension-header bound and the
+    aggregate byte cap.
+    """
+    from galaxy_proxy.converter import _assert_extension_headers_bounded
+
+    pax_record = b"10 size=0\n"
+    pax_header = _raw_tar_header(b"./PaxHeaders/payload.bin", b"x", len(pax_record))
+    member_header = _raw_tar_header(b"payload.bin", b"0", 512)
+    # ``tarfile`` lands here after applying size=0 to the member above.
+    hidden_header = _raw_tar_header(b"././@LongLink", b"L", 1024**3)
+    archive = (
+        bytes(pax_header) + pax_record.ljust(512, b"\0") + bytes(member_header) + bytes(hidden_header) + b"\0" * 1024
+    )
+
+    with pytest.raises(ValueError, match="extension header too large"):
+        _assert_extension_headers_bounded(gzip.compress(archive), max_bytes=64 * 1024 * 1024)
+
+
+def test_tarball_pax_size_record_still_converts() -> None:
+    """A legitimate PAX ``size`` record that matches the member still converts."""
+    from galaxy_proxy.converter import _extract_tarball
+
+    payload = b"note"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tf:
+        galaxy_yml = b"namespace: ns\nname: coll\nversion: 1.0.0\n"
+        info = tarfile.TarInfo("galaxy.yml")
+        info.size = len(galaxy_yml)
+        tf.addfile(info, io.BytesIO(galaxy_yml))
+
+        info = tarfile.TarInfo("notes.txt")
+        info.size = len(payload)
+        info.pax_headers = {"size": str(len(payload))}
+        tf.addfile(info, io.BytesIO(payload))
+
+    galaxy, files = _extract_tarball(buf.getvalue())
+
+    assert galaxy["name"] == "coll"
+    assert files["notes.txt"] == payload
+
+
+def test_tarball_gnu_sparse_member_is_rejected_before_parsing() -> None:
+    """A GNU sparse member is rejected instead of walked with guessed offsets.
+
+    ``tarfile`` reads sparse members through their own block layout, so a flat
+    header walk cannot mirror the byte stream it protects.
+    """
+    from galaxy_proxy.converter import _assert_extension_headers_bounded
+
+    archive = bytes(_raw_tar_header(b"sparse.bin", b"S", 0)) + b"\0" * 1024
+
+    with pytest.raises(ValueError, match="GNU sparse member"):
+        _assert_extension_headers_bounded(gzip.compress(archive), max_bytes=64 * 1024 * 1024)

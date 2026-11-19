@@ -873,6 +873,26 @@ class TestImportScanCaps:
         assert "example-value" not in as_json
         assert "[REDACTED]" in as_json
 
+    def test_redact_keyed_bearer_value_keeps_the_credential_out(self) -> None:
+        """A keyed ``Bearer`` value redacts the credential, not just the scheme.
+
+        ``token: Bearer abcdef123456`` used to match only ``token: Bearer``,
+        leaving the credential in Gateway history.
+        """
+        from apme_gateway.api.router import _redact_import_secrets
+
+        redacted = _redact_import_secrets("hub token: Bearer abcdef123456 rejected")
+        assert "abcdef123456" not in redacted
+        assert "[REDACTED]" in redacted
+
+        opaque = _redact_import_secrets("hub token=opaque-value rejected")
+        assert "opaque-value" not in opaque
+        assert "[REDACTED]" in opaque
+
+        short = _redact_import_secrets("api_key: Bearer zz")
+        assert "zz" not in short
+        assert "[REDACTED]" in short
+
     def test_redact_many_unterminated_pem_headers(self) -> None:
         """Unterminated PEM headers preserve their text without backtracking."""
         from apme_gateway.api.router import _redact_import_secrets

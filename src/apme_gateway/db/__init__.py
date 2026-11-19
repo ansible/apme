@@ -301,6 +301,23 @@ def _migrate_proposals_table(conn: object) -> None:
         conn.execute(text(stmt))
 
 
+def _add_column_clause(dialect_name: str) -> str:
+    """Return the ``ALTER TABLE ... ADD COLUMN`` clause for one dialect.
+
+    Two replicas can both inspect a pre-upgrade table before either commits its
+    ``ALTER``; PostgreSQL's ``IF NOT EXISTS`` makes the loser a no-op instead of
+    a fatal duplicate-column error. SQLite has no such clause, so it keeps the
+    plain statement (its upgrades are single-writer).
+
+    Args:
+        dialect_name: SQLAlchemy dialect name (``postgresql``, ``sqlite``, ...).
+
+    Returns:
+        ``ADD COLUMN IF NOT EXISTS`` on PostgreSQL, ``ADD COLUMN`` otherwise.
+    """
+    return "ADD COLUMN IF NOT EXISTS" if dialect_name == "postgresql" else "ADD COLUMN"
+
+
 def _scans_column_migrations(dialect_name: str, existing: set[str]) -> list[str]:
     """Build the missing ``scans`` column statements for one dialect.
 
@@ -311,11 +328,7 @@ def _scans_column_migrations(dialect_name: str, existing: set[str]) -> list[str]
     Returns:
         ``ALTER TABLE`` statements for columns this schema adds when missing.
     """
-    # Two replicas can both inspect a pre-upgrade ``scans`` table before either
-    # commits its ``ALTER``; PostgreSQL's ``IF NOT EXISTS`` makes the loser a
-    # no-op instead of a fatal duplicate-column error. SQLite has no such
-    # clause, so it keeps the plain statement (its upgrades are single-writer).
-    add_column = "ADD COLUMN IF NOT EXISTS" if dialect_name == "postgresql" else "ADD COLUMN"
+    add_column = _add_column_clause(dialect_name)
     columns = (
         ("pr_url", "TEXT DEFAULT NULL"),
         ("branch_name", "TEXT DEFAULT NULL"),
@@ -426,12 +439,12 @@ def _migrate_rules_table(conn: Connection) -> None:
         return
     existing = {c["name"] for c in insp.get_columns("rules")}
     if "ansible_core_version" not in existing:
-        if conn.dialect.name == "postgresql":
-            conn.execute(
-                text("ALTER TABLE rules ADD COLUMN IF NOT EXISTS ansible_core_version TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            text(
+                f"ALTER TABLE rules {_add_column_clause(conn.dialect.name)} "
+                "ansible_core_version TEXT NOT NULL DEFAULT ''"
             )
-        else:
-            conn.execute(text("ALTER TABLE rules ADD COLUMN ansible_core_version TEXT NOT NULL DEFAULT ''"))
+        )
 
 
 def _migrate_notification_outbox_table(conn: Connection) -> None:
@@ -459,7 +472,10 @@ def _migrate_notification_outbox_table(conn: Connection) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notification_outbox_sent_at ON notification_outbox (sent_at)"))
     columns = {col["name"] for col in insp.get_columns("notification_outbox")}
     if "content_hash" not in columns:
-        conn.execute(text("ALTER TABLE notification_outbox ADD COLUMN content_hash TEXT DEFAULT NULL"))
+        # Concurrent Gateway replicas can both see the column missing; the
+        # PostgreSQL clause makes the slower ``ALTER`` a no-op instead of a
+        # fatal duplicate-column error at startup.
+        conn.execute(text(f"ALTER TABLE notification_outbox {_add_column_clause(conn.dialect.name)} content_hash TEXT"))
     if insp.has_table("scans"):
         conn.execute(text("DELETE FROM notification_outbox WHERE scan_id NOT IN (SELECT scan_id FROM scans)"))
 

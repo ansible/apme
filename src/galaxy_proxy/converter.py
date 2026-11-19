@@ -34,7 +34,17 @@ GALAXY_META_FILES = {"FILES.json"}
 # only carry a path or a few attributes, so 1 MiB is far above legitimate use
 # and far below an allocation an attacker can use to exhaust memory.
 _MAX_EXTENSION_HEADER_BYTES = 1024 * 1024
-_EXTENSION_HEADER_TYPES = frozenset({b"x", b"g", b"L", b"K"})
+_EXTENSION_HEADER_TYPES = frozenset({b"x", b"X", b"g", b"L", b"K"})
+# PAX per-file extended header types: their ``size`` record overrides the size
+# of the member that follows, so the walker must advance by that size.
+_PAX_PER_FILE_TYPES = frozenset({b"x", b"X"})
+# GNU sparse members carry their own block layout (``_proc_sparse``), which this
+# flat walk cannot mirror; they are rejected instead of guessed at.
+_GNU_SPARSE_TYPE = b"S"
+# ``tarfile.SUPPORTED_TYPES``: members of these types never have a data
+# payload, except for regular-file types.
+_NO_PAYLOAD_TYPES = frozenset({b"1", b"2", b"3", b"4", b"5", b"6"})
+_REGULAR_TYPES = frozenset({b"0", b"\x00", b"7"})
 _TAR_BLOCK = 512
 
 # Aggregate extraction caps (fail-fast against decompression bombs). The
@@ -153,6 +163,24 @@ def tarball_to_wheel_file(tarball_path: Path, output_dir: Path) -> Path:
     return output_path
 
 
+def _tar_octal_text(field: bytes) -> bytes:
+    r"""Return the octal text ``tarfile`` parses: the bytes before the first NUL.
+
+    ``tarfile.nti`` decodes a numeric field with ``nts``, which truncates at the
+    first NUL and only then strips padding. Stripping trailing padding instead
+    would reject fields such as ``000644\0x`` that ``tarfile`` still accepts,
+    which would let this pre-scan stop before the bytes ``tarfile`` reads.
+
+    Args:
+        field: Raw numeric field bytes from a tar header.
+
+    Returns:
+        The field truncated at the first NUL byte.
+    """
+    nul = field.find(b"\0")
+    return field if nul == -1 else field[:nul]
+
+
 def _header_declared_size(header: bytes) -> int | None:
     """Decode the size field of a raw tar header block.
 
@@ -161,19 +189,21 @@ def _header_declared_size(header: bytes) -> int | None:
 
     Returns:
         Declared payload size, or ``None`` when the field is unparseable
-        (a corrupt archive that ``tarfile`` rejects on its own).
+        (a corrupt archive that ``tarfile`` rejects on its own). A negative
+        value means a GNU base-256 two's-complement size.
     """
     field = header[124:136]
-    if field[:1] and field[0] & 0x80:
-        # GNU base-256 encoding: the high bit of the first byte is the marker.
-        # Every byte is significant, so the field must not be stripped: a value
-        # whose low-order bytes are zero otherwise decodes far too small.
-        return int.from_bytes(field, "big") & ((1 << (8 * len(field) - 1)) - 1)
-    raw = field.rstrip(b"\0 ")
-    if not raw:
-        return 0
+    if field[:1] in (b"\x80", b"\xff"):
+        # GNU base-256 encoding: the high bit of the first byte is the marker
+        # (``0xff`` marks a negative two's-complement value). Every byte is
+        # significant, so the field must not be stripped: a value whose
+        # low-order bytes are zero otherwise decodes far too small.
+        value = int.from_bytes(field[1:], "big")
+        if field[:1] == b"\xff":
+            return value - (1 << (8 * (len(field) - 1)))
+        return value
     try:
-        return int(raw, 8)
+        return int(_tar_octal_text(field).strip() or b"0", 8)
     except ValueError:
         return None
 
@@ -187,14 +217,59 @@ def _header_checksum_ok(header: bytes) -> bool:
     Returns:
         ``True`` when the stored checksum matches the unsigned or signed sum.
     """
-    raw = header[148:156].rstrip(b"\0 ")
     try:
-        expected = int(raw, 8)
+        expected = int(_tar_octal_text(header[148:156]).strip() or b"0", 8)
     except ValueError:
         return False
     unsigned = sum(header[:148]) + 8 * 0x20 + sum(header[156:])
     signed = unsigned - 256 * sum(1 for byte in header if byte > 0x7F)
     return expected in (unsigned, signed)
+
+
+def _pax_size_override(payload: bytes) -> int | None:
+    r"""Return the ``size`` record of a PAX extended-header payload, if any.
+
+    PAX records are framed as ``"<length> <keyword>=<value>\\n"`` where
+    *length* covers the whole record. ``tarfile`` applies a ``size`` record to
+    the member that follows the header, which changes where the next header
+    starts.
+
+    Args:
+        payload: PAX header payload bytes (already bounded by the caller).
+
+    Returns:
+        The declared ``size`` value, or ``None`` when the payload has no
+        ``size`` record.
+
+    Raises:
+        ValueError: When the record framing is malformed, which ``tarfile``
+            also rejects.
+    """
+    position = 0
+    override: int | None = None
+    while position < len(payload) and payload[position] != 0:
+        separator = payload.find(b" ", position)
+        if separator == -1:
+            raise ValueError("Malformed PAX header: missing record length")
+        try:
+            length = int(payload[position:separator])
+        except ValueError as exc:
+            raise ValueError("Malformed PAX header: invalid record length") from exc
+        if length < 5 or position + length > len(payload):
+            raise ValueError("Malformed PAX header: record length out of range")
+        record = payload[separator + 1 : position + length]
+        if not record.endswith(b"\n"):
+            raise ValueError("Malformed PAX header: record is not newline-terminated")
+        keyword, equals, value = record[:-1].partition(b"=")
+        if not keyword or not equals:
+            raise ValueError("Malformed PAX header: record without a value separator")
+        if keyword == b"size":
+            try:
+                override = int(value)
+            except ValueError as exc:
+                raise ValueError("Malformed PAX header: invalid size record") from exc
+        position += length
+    return override
 
 
 def _assert_extension_headers_bounded(
@@ -209,13 +284,17 @@ def _assert_extension_headers_bounded(
     the size the header declares — which happens before any member-level cap
     can inspect the member. This walks the raw header blocks of the
     decompressed stream first and rejects extension headers that declare more
-    than *max_header_bytes*, with a flat memory profile (payloads are skipped,
-    never materialized).
+    than *max_header_bytes*, with a flat memory profile (only bounded PAX
+    payloads are read, everything else is skipped).
 
-    The walk shares ``tarfile``'s framing (512-byte blocks, octal/base-256 size
-    fields, checksum validation) and stops at the first block ``tarfile`` would
-    reject, so it cannot end up checking a different byte stream than the
-    parser it protects.
+    The walk follows ``tarfile``'s framing exactly: 512-byte header blocks,
+    ``nti``-style octal/base-256 size fields truncated at the first NUL,
+    checksum validation, padded payloads, payload-less member types, and the
+    next-header offset recomputed from a PAX ``size`` record of a preceding
+    per-file ``x`` header. It stops where ``tarfile`` stops (end-of-archive
+    marker, truncated block, or a header ``tarfile`` rejects) and rejects
+    archives whose framing it cannot mirror, so it can never validate a
+    different byte stream than the parser it protects.
 
     Args:
         tarball_data: Raw bytes of the gzipped archive.
@@ -223,11 +302,24 @@ def _assert_extension_headers_bounded(
         max_header_bytes: Largest extension-header payload allowed.
 
     Raises:
-        ValueError: When the decompressed stream exceeds *max_bytes* or an
-            extension header declares more than *max_header_bytes*.
+        ValueError: When the decompressed stream exceeds *max_bytes*, an
+            extension header declares more than *max_header_bytes*, or the
+            archive uses tar framing this walk cannot mirror (GNU sparse
+            members, negative sizes, malformed PAX records).
     """
+
+    def _skip(stream: io.BufferedIOBase, count: int) -> bool:
+        remaining = count
+        while remaining > 0:
+            chunk = stream.read(min(remaining, 64 * 1024))
+            if not chunk:
+                return False
+            remaining -= len(chunk)
+        return True
+
     with gzip.GzipFile(fileobj=io.BytesIO(tarball_data)) as stream:
         total = 0
+        pax_size: int | None = None
         while True:
             header = stream.read(_TAR_BLOCK)
             if len(header) < _TAR_BLOCK:
@@ -243,19 +335,48 @@ def _assert_extension_headers_bounded(
                 raise ValueError(f"Tarball size limit exceeded: {total} bytes (max {max_bytes} bytes)")
             size = _header_declared_size(header)
             if size is None:
+                # ``tarfile`` rejects the header itself and stops iterating.
                 return
-            if header[156:157] in _EXTENSION_HEADER_TYPES and size > max_header_bytes:
+            if size < 0:
+                raise ValueError("Tarball header declares a negative size; refusing to scan it")
+            typeflag = header[156:157]
+            if typeflag in _EXTENSION_HEADER_TYPES and size > max_header_bytes:
                 raise ValueError(f"Tarball extension header too large: {size} bytes (max {max_header_bytes} bytes)")
-            padded = (size + _TAR_BLOCK - 1) // _TAR_BLOCK * _TAR_BLOCK
+            if typeflag == _GNU_SPARSE_TYPE:
+                raise ValueError("Tarball contains a GNU sparse member, which cannot be bounded before parsing")
+            per_file_override = pax_size
+            pax_size = None
+            already_read = False
+            if typeflag in _PAX_PER_FILE_TYPES:
+                if per_file_override is not None:
+                    raise ValueError(
+                        "Tarball nests a PAX size override in front of another PAX header; "
+                        "the next header offset cannot be mirrored"
+                    )
+                payload = stream.read(size)
+                if len(payload) < size:
+                    return
+                pax_size = _pax_size_override(payload)
+                consumed = size
+                already_read = True
+            elif typeflag in _EXTENSION_HEADER_TYPES:
+                consumed = size
+            elif per_file_override is not None:
+                # Only a per-file PAX header recomputes where the next header
+                # starts; ``tarfile`` advances by the effective (overridden)
+                # size for regular and unknown member types.
+                consumed = per_file_override if typeflag in _REGULAR_TYPES or typeflag not in _NO_PAYLOAD_TYPES else 0
+            elif typeflag in _REGULAR_TYPES or typeflag not in _NO_PAYLOAD_TYPES:
+                consumed = size
+            else:
+                consumed = 0
+            padded = (consumed + _TAR_BLOCK - 1) // _TAR_BLOCK * _TAR_BLOCK
             total += padded
             if total > max_bytes:
                 raise ValueError(f"Tarball size limit exceeded: {total} bytes (max {max_bytes} bytes)")
-            remaining = padded
-            while remaining > 0:
-                chunk = stream.read(min(remaining, 64 * 1024))
-                if not chunk:
-                    return
-                remaining -= len(chunk)
+            skip = padded - consumed if already_read else padded
+            if not _skip(stream, skip):
+                return
 
 
 def _extract_tarball(tarball_data: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
