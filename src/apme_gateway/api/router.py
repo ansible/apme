@@ -1662,7 +1662,7 @@ _SECRET_REDACT_JSON_RE = None  # compiled lazily in _redact_import_secrets
 _SECRET_REDACT_JSON_KEY = (
     r'"(?:api[_-]?key|auth[_-]?token|access[_-]?token|secret|passwd|password'
     r"|private[_-]?key|bearer|aws[_-]?secret|aws[_-]?access[_-]?key[_-]?id"
-    r'|aws[_-]?session[_-]?token|github[_-]?token|\bpwd\b)"'
+    r'|aws[_-]?session[_-]?token|github[_-]?token|\btoken\b|\bpwd\b)"'
 )
 # An unterminated JSON value (truncated log line, malformed payload) has no
 # closing quote to anchor on, so the escaped-aware pattern cannot match it.
@@ -1720,7 +1720,7 @@ def _redact_import_secrets(message: str) -> str:
         _SECRET_REDACT_RE = _re.compile(
             r"(?i)(api[_-]?key|auth[_-]?token|access[_-]?token|secret|passwd|password"
             r"|private[_-]?key|bearer|aws[_-]?secret|aws[_-]?access[_-]?key[_-]?id"
-            r"|aws[_-]?session[_-]?token|github[_-]?token|\bpwd\b)"
+            r"|aws[_-]?session[_-]?token|github[_-]?token|\btoken\b|\bpwd\b)"
             r"\s*[:=]\s*\S+"
         )
     # Remove complete PEM blocks before the keyed expression consumes the

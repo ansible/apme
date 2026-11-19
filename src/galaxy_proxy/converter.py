@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import logging
@@ -27,6 +28,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 GALAXY_META_FILES = {"FILES.json"}
+
+# ``tarfile`` buffers an ``x``/``g``/``L``/``K`` header payload at the size the
+# header declares, *before* any member-level cap can run. Real PAX/GNU headers
+# only carry a path or a few attributes, so 1 MiB is far above legitimate use
+# and far below an allocation an attacker can use to exhaust memory.
+_MAX_EXTENSION_HEADER_BYTES = 1024 * 1024
+_EXTENSION_HEADER_TYPES = frozenset({b"x", b"g", b"L", b"K"})
+_TAR_BLOCK = 512
 
 # Aggregate extraction caps (fail-fast against decompression bombs). The
 # tarball itself travels via ansible-galaxy download; this guards the
@@ -144,6 +153,108 @@ def tarball_to_wheel_file(tarball_path: Path, output_dir: Path) -> Path:
     return output_path
 
 
+def _header_declared_size(header: bytes) -> int | None:
+    """Decode the size field of a raw tar header block.
+
+    Args:
+        header: One 512-byte header block.
+
+    Returns:
+        Declared payload size, or ``None`` when the field is unparseable
+        (a corrupt archive that ``tarfile`` rejects on its own).
+    """
+    raw = header[124:136].rstrip(b"\0 ")
+    if not raw:
+        return 0
+    if raw[0] & 0x80:
+        # GNU base-256 encoding: the high bit is the marker.
+        return int.from_bytes(raw, "big") & ((1 << (8 * len(raw) - 1)) - 1)
+    try:
+        return int(raw, 8)
+    except ValueError:
+        return None
+
+
+def _header_checksum_ok(header: bytes) -> bool:
+    """Validate a raw tar header checksum the way ``tarfile`` does.
+
+    Args:
+        header: One 512-byte header block.
+
+    Returns:
+        ``True`` when the stored checksum matches the unsigned or signed sum.
+    """
+    raw = header[148:156].rstrip(b"\0 ")
+    try:
+        expected = int(raw, 8)
+    except ValueError:
+        return False
+    unsigned = sum(header[:148]) + 8 * 0x20 + sum(header[156:])
+    signed = unsigned - 256 * sum(1 for byte in header if byte > 0x7F)
+    return expected in (unsigned, signed)
+
+
+def _assert_extension_headers_bounded(
+    tarball_data: bytes,
+    *,
+    max_bytes: int,
+    max_header_bytes: int = _MAX_EXTENSION_HEADER_BYTES,
+) -> None:
+    """Reject oversized PAX/GNU extension headers before ``tarfile`` reads them.
+
+    ``tarfile`` consumes ``x``/``g``/``L``/``K`` payloads while iterating, at
+    the size the header declares — which happens before any member-level cap
+    can inspect the member. This walks the raw header blocks of the
+    decompressed stream first and rejects extension headers that declare more
+    than *max_header_bytes*, with a flat memory profile (payloads are skipped,
+    never materialized).
+
+    The walk shares ``tarfile``'s framing (512-byte blocks, octal/base-256 size
+    fields, checksum validation) and stops at the first block ``tarfile`` would
+    reject, so it cannot end up checking a different byte stream than the
+    parser it protects.
+
+    Args:
+        tarball_data: Raw bytes of the gzipped archive.
+        max_bytes: Aggregate decompressed byte cap.
+        max_header_bytes: Largest extension-header payload allowed.
+
+    Raises:
+        ValueError: When the decompressed stream exceeds *max_bytes* or an
+            extension header declares more than *max_header_bytes*.
+    """
+    with gzip.GzipFile(fileobj=io.BytesIO(tarball_data)) as stream:
+        total = 0
+        while True:
+            header = stream.read(_TAR_BLOCK)
+            if len(header) < _TAR_BLOCK:
+                return
+            if header.strip(b"\0") == b"":
+                # End-of-archive marker (or padding); nothing else to parse.
+                return
+            if not _header_checksum_ok(header):
+                # ``tarfile`` raises InvalidHeaderError before reading payload.
+                return
+            total += _TAR_BLOCK
+            if total > max_bytes:
+                raise ValueError(f"Tarball size limit exceeded: {total} bytes (max {max_bytes} bytes)")
+            size = _header_declared_size(header)
+            if size is None:
+                return
+            if header[156:157] in _EXTENSION_HEADER_TYPES and size > max_header_bytes:
+                raise ValueError(f"Tarball extension header too large: {size} bytes (max {max_header_bytes} bytes)")
+            padded = (size + _TAR_BLOCK - 1) // _TAR_BLOCK * _TAR_BLOCK
+            total += padded
+            if total > max_bytes:
+                raise ValueError(f"Tarball size limit exceeded: {total} bytes (max {max_bytes} bytes)")
+            remaining = padded
+            while remaining > 0:
+                chunk = stream.read(min(remaining, 64 * 1024))
+                if not chunk:
+                    return
+                remaining -= len(chunk)
+
+
 def _extract_tarball(tarball_data: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
     """Extract a Galaxy tarball into metadata and file contents.
 
@@ -163,7 +274,9 @@ def _extract_tarball(tarball_data: bytes) -> tuple[dict[str, Any], dict[str, byt
     reading its content.
     The layout scan is capped, and extraction counts every member header,
     including directories and special entries. This bounds ``tarfile``'s
-    internal member cache while iterating.
+    internal member cache while iterating. PAX/GNU extension-header payloads
+    are bounded separately, before ``tarfile`` reads them, since those reads
+    happen ahead of every cap above.
 
     Args:
         tarball_data: Raw bytes of the ``.tar.gz`` archive.
@@ -182,6 +295,9 @@ def _extract_tarball(tarball_data: bytes) -> tuple[dict[str, Any], dict[str, byt
     max_bytes = _tarball_max_bytes()
     max_files = _tarball_max_files()
     max_file_bytes = _tarball_max_file_bytes()
+    # Do this before ``tarfile`` sees the bytes: it buffers PAX/GNU extension
+    # payloads at their declared size while iterating, ahead of every cap below.
+    _assert_extension_headers_bounded(tarball_data, max_bytes=max_bytes)
     total_bytes = 0
     member_count = 0
 

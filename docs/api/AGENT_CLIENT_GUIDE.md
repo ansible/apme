@@ -73,7 +73,9 @@ curl -s "$GW/api/v1/activity?limit=5" | jq '.items[]? | {scan_id, scan_type, cre
   stored submit result instead of pushing twice. Replay keys on
   `(project_id, token)` alone once a completed submit result is stored
   — a fresh `scan_id` per atomic attempt does not force a 409 when
-  branch/activity bindings match. After trimming, tokens may be at most 128
+  branch/activity bindings match. A 409 that rejects *changed* inputs
+  under an existing key is terminal, not replayable (see "409 shapes").
+  After trimming, tokens may be at most 128
   characters; after removing hyphens, every character must be hexadecimal and
   at least 32 characters must remain. Hyphenated UUIDs are accepted.
 
@@ -94,6 +96,13 @@ branch idempotency retries on `code == "idempotency_conflict"`,
 treat a string detail + 409 as a non-retryable state conflict
 (already-published / active-operation) unless the message matches a
 known replayable case. Never assume `detail` is a string.
+
+A key that is already bound to a **different** branch, activity, or patch
+set is terminal: resending the same key and inputs cannot recover a stored
+result, so follow the Gateway's recovery message (and use a new key for the
+new intent) instead of retrying. Reserve same-key retries for retryable
+failures (5xx) and unknown outcomes (timeouts, connection resets) where the
+first attempt may still be completing; send the unchanged body each time.
 
 ## Upload / scan caps (three dialects)
 

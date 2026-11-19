@@ -2567,7 +2567,7 @@ class TestSessionGraphRemediate:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.daemon.engine_server import EngineServicer, _reconcile_after_approval
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
 
         node_id = "play.yml/plays[0]/tasks[0]"
@@ -2615,6 +2615,17 @@ class TestSessionGraphRemediate:
         # not be counted there.
         assert session.report.fixed == 0
         assert session.report.fixed_violations == []
+        assert [v.rule_id for v in session.report.remaining_violations] == ["L001"]
+
+        # The ledger must agree: a finding whose bytes never changed cannot
+        # stay ``fixed``, or the Gate 2 report rebuild would re-report it as
+        # resolved from the ledger alone.
+        assert graph.query_violations(status="fixed") == []
+        assert [v["rule_id"] for v in graph.query_violations(status="open")] == ["L001"]
+
+        # A later rebuild with no new approvals keeps it unresolved.
+        _reconcile_after_approval(session, graph, set())
+        assert session.report.fixed == 0
         assert [v.rule_id for v in session.report.remaining_violations] == ["L001"]
 
     @pytest.mark.parametrize("produces_patch", [False, True])  # type: ignore[untyped-decorator]

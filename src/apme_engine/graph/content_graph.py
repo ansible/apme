@@ -1158,6 +1158,36 @@ class ContentGraph:
                 count += 1
         return count
 
+    def reopen_fixed_violations(self, violations: list[ViolationDict]) -> int:
+        """Transition matching ``fixed`` ledger entries back to ``open``.
+
+        Used when an approved edit produced no patch (the splice could not be
+        applied to the file), so the finding's bytes never changed. The ledger
+        is the single source of truth for resolution, so demoting the finding
+        only in one report would let the next report rebuild (Gate 2) query it
+        as ``fixed`` again. Attribution is cleared because the fix did not land
+        and a later pass may re-attribute it.
+
+        Args:
+            violations: Violation dicts identifying ledger rows (``path`` + rule).
+
+        Returns:
+            Number of violations reopened.
+        """
+        count = 0
+        for v in violations:
+            node_id = str(v.get("path", ""))
+            node = self.get_node(node_id)
+            if node is None:
+                continue
+            record = node.violation_ledger.get(_violation_key(v))
+            if record is not None and record.status == "fixed":
+                record.status = "open"
+                record.fixed_by = None
+                record.fixed_in_pass = None
+                count += 1
+        return count
+
     def query_violations(
         self,
         *,

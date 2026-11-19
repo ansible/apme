@@ -76,6 +76,55 @@ def test_session_wheel_access_refreshes_all_wheels_in_scope(monkeypatch: pytest.
     assert proxy_server._session_wheel(store, "scope-a", "b.whl") == b"b"
 
 
+def test_session_scope_expiry_starts_when_preparation_completes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every wheel in a scope gets one deadline stamped at completion.
+
+    Wheels converted early must not expire while later tarballs are still
+    converting, because pip only receives the scope ID with the response.
+
+    Args:
+        monkeypatch: Pytest fixture for controlling the monotonic clock.
+    """
+    now = [0.0]
+    monkeypatch.setattr("galaxy_proxy.proxy.server.time.monotonic", lambda: now[0])
+    store: dict[str, dict[str, tuple[float, bytes]]] = {}
+
+    proxy_server._remember_session_wheel(store, "scope-a", "a.whl", b"a", pending=True)
+    now[0] = 100.0
+    proxy_server._remember_session_wheel(store, "scope-a", "b.whl", b"b", pending=True)
+
+    # In-progress wheels carry no deadline: pip cannot reach them yet.
+    assert store["scope-a"]["a.whl"][0] == float("inf")
+    assert store["scope-a"]["b.whl"][0] == float("inf")
+
+    now[0] = 200.0
+    proxy_server._complete_session_scope(store, "scope-a")
+    expires = {entry[0] for entry in store["scope-a"].values()}
+    assert expires == {200.0 + proxy_server._ON_DEMAND_WHEEL_TTL_S}
+    assert proxy_server._session_wheel(store, "scope-a", "a.whl") == b"a"
+
+
+def test_live_handoff_wheels_filters_and_prunes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only unexpired wheels for the requested collection are returned.
+
+    Args:
+        monkeypatch: Pytest fixture for controlling the monotonic clock.
+    """
+    now = [5.0]
+    monkeypatch.setattr("galaxy_proxy.proxy.server.time.monotonic", lambda: now[0])
+    store: dict[str, tuple[float, bytes]] = {
+        "ansible_collection_ns_coll-1.0.0-py3-none-any.whl": (10.0, b"a"),
+        "ansible_collection_ns_coll-0.9.0-py3-none-any.whl": (4.0, b"b"),
+        "ansible_collection_ns_other-1.0.0-py3-none-any.whl": (10.0, b"c"),
+    }
+
+    live = proxy_server._live_handoff_wheels(store, "ansible_collection_ns_coll-")
+
+    assert live == {"ansible_collection_ns_coll-1.0.0-py3-none-any.whl"}
+    assert "ansible_collection_ns_coll-0.9.0-py3-none-any.whl" not in store
+    assert "ansible_collection_ns_other-1.0.0-py3-none-any.whl" in store
+
+
 def test_prepare_session_wheel_overflow_returns_413(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A scope over budget fails preparation instead of returning missing wheels.
 
@@ -130,9 +179,9 @@ def test_prepare_cleans_scope_after_post_publish_config_change(tmp_path: Path, m
         return DownloadResult(tarball_paths=[tarball])
 
     def remember_then_mark(
-        store: dict[str, dict[str, tuple[float, bytes]]], scope_id: str, filename: str, data: bytes
+        store: dict[str, dict[str, tuple[float, bytes]]], scope_id: str, filename: str, data: bytes, **kwargs: object
     ) -> None:
-        remember(store, scope_id, filename, data)
+        remember(store, scope_id, filename, data, **kwargs)  # type: ignore[arg-type]
         app.state.galaxy_config_generation += 1
 
     with (

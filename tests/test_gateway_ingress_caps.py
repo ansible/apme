@@ -861,6 +861,18 @@ class TestImportScanCaps:
         assert "ghp_abcdefghij1234567890" not in ghp
         assert "[REDACTED]" in ghp
 
+    def test_redact_import_secrets_standalone_token_key(self) -> None:
+        """A bare ``token`` key is redacted in plain and JSON shapes."""
+        from apme_gateway.api.router import _redact_import_secrets
+
+        plain = _redact_import_secrets("hub rejected token=example-value")
+        assert "example-value" not in plain
+        assert "[REDACTED]" in plain
+
+        as_json = _redact_import_secrets('{"token": "example-value"}')
+        assert "example-value" not in as_json
+        assert "[REDACTED]" in as_json
+
     def test_redact_many_unterminated_pem_headers(self) -> None:
         """Unterminated PEM headers preserve their text without backtracking."""
         from apme_gateway.api.router import _redact_import_secrets

@@ -82,6 +82,12 @@ _ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
 
 _UNAUTH_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _ON_DEMAND_WHEEL_TTL_S = 300.0
+# Wheels added to a scope that has not been returned to the Engine yet are not
+# reachable by any client, so they carry no per-wheel deadline: an early
+# dependency must not expire while later tarballs are still converting. The
+# scope's common deadline is stamped by ``_complete_session_scope`` right
+# before the response hands out the scope ID.
+_IN_PROGRESS_WHEEL_EXPIRY = float("inf")
 _ON_DEMAND_WHEEL_LIMIT_BYTES = 64 * 1024 * 1024
 _MAX_SESSION_WHEEL_SCOPE_BYTES = _ON_DEMAND_WHEEL_LIMIT_BYTES
 _MAX_SESSION_WHEEL_TOTAL_BYTES = 4 * _ON_DEMAND_WHEEL_LIMIT_BYTES
@@ -928,7 +934,7 @@ def create_app(
         """
         path = request.url.path
         log_path = re.sub(
-            r"(/(?:simple/session|session-wheels)/)[A-Za-z0-9_-]{32}(?=/|$)",
+            r"(/(?:simple/session|session-wheels|admin/session-scopes)/)[A-Za-z0-9_-]{32}(?=/|$)",
             r"\1[redacted]",
             path,
         )
@@ -1373,7 +1379,9 @@ def create_app(
                             # and publishing to disk or the in-memory handoff.
                             _require_current_config(generation)
                             if session_scope_id is not None:
-                                _remember_session_wheel(_session_wheels, session_scope_id, whl_name, whl_data)
+                                _remember_session_wheel(
+                                    _session_wheels, session_scope_id, whl_name, whl_data, pending=True
+                                )
                             elif not _cache_downloaded_wheel(cache, whl_name, whl_data):
                                 _remember_on_demand_wheel(_on_demand_wheels, whl_name, whl_data)
                             prepared.append(whl_name)
@@ -1414,6 +1422,11 @@ def create_app(
                 "failed_specs": sorted(set(failed)),
             }
             if session_scope_id is not None:
+                # No await between the generation check below and this stamp:
+                # the scope becomes reachable to pip only once the response is
+                # built, so its deadline must start here.
+                _require_current_config(generation)
+                _complete_session_scope(_session_wheels, session_scope_id)
                 response["scope_id"] = session_scope_id
             success = True
             return response
@@ -1607,11 +1620,7 @@ def create_app(
                 del _prepare_fallback_wheels[filename]
             elif filename.startswith(f"ansible_collection_{namespace}_{name}-"):
                 cached_wheel_set.add(filename)
-        for filename, (expires_at, _data) in list(_on_demand_wheels.items()):
-            if expires_at <= now:
-                del _on_demand_wheels[filename]
-            elif filename.startswith(f"ansible_collection_{namespace}_{name}-"):
-                cached_wheel_set.add(filename)
+        cached_wheel_set |= _live_handoff_wheels(_on_demand_wheels, f"ansible_collection_{namespace}_{name}-")
 
         if not cached_wheel_set:
             lock_key = f"{namespace}.{name}:latest"
@@ -1625,6 +1634,11 @@ def create_app(
             try:
                 _require_current_config(generation)
                 cached_wheel_set = set(await asyncio.to_thread(_list_cached_wheels, cache, namespace, name))
+                # A concurrent request that lost the disk-cache write published
+                # its wheel to the in-memory handoff instead; reuse it rather
+                # than downloading the same collection again while holding the
+                # lock (which starves every other waiter).
+                cached_wheel_set |= _live_handoff_wheels(_on_demand_wheels, f"ansible_collection_{namespace}_{name}-")
                 _require_current_config(generation)
                 if not cached_wheel_set:
                     try:
@@ -1885,6 +1899,10 @@ def create_app(
                 logger.exception("Failed to convert tarball: %s", tb.name)
                 failed.append(tb.name)
 
+        # Final generation check: the awaits above (wheel caching, hash
+        # remembering) can let a configuration update bind generation N+1 and
+        # clear the cache, so the returned filenames may no longer exist.
+        _require_current_config(generation)
         return {"converted": converted, "failed": failed}
 
     return app
@@ -2034,6 +2052,26 @@ def _cache_downloaded_wheel(cache: ProxyCache, filename: str, data: bytes) -> bo
     return True
 
 
+def _live_handoff_wheels(store: dict[str, tuple[float, bytes]], prefix: str) -> set[str]:
+    """Return unexpired in-memory handoff wheel names for one collection.
+
+    Args:
+        store: Per-app in-memory wheel handoff.
+        prefix: Wheel filename prefix identifying the collection.
+
+    Returns:
+        Names of live wheels whose filename starts with ``prefix``.
+    """
+    now = time.monotonic()
+    live: set[str] = set()
+    for filename, (expires_at, _data) in list(store.items()):
+        if expires_at <= now:
+            del store[filename]
+        elif filename.startswith(prefix):
+            live.add(filename)
+    return live
+
+
 def _remember_on_demand_wheel(store: dict[str, tuple[float, bytes]], filename: str, data: bytes) -> None:
     """Keep a bounded, short-lived in-memory wheel handoff after disk failure.
 
@@ -2058,6 +2096,8 @@ def _remember_session_wheel(
     scope_id: str,
     filename: str,
     data: bytes,
+    *,
+    pending: bool = False,
 ) -> None:
     """Retain a short-lived wheel without evicting data from another scope.
 
@@ -2066,6 +2106,8 @@ def _remember_session_wheel(
         scope_id: Random identifier returned to the requesting Engine.
         filename: Wheel basename.
         data: Converted wheel bytes.
+        pending: When True the scope is still being prepared and its wheels
+            carry no deadline until ``_complete_session_scope`` stamps one.
 
     Raises:
         HTTPException: If the scope, total byte, or active scope limit is exceeded.
@@ -2098,7 +2140,27 @@ def _remember_session_wheel(
             raise HTTPException(status_code=503, detail="Too many active session wheel scopes; retry later")
         wheels = {}
         store[scope_id] = wheels
-    wheels[filename] = (now + _ON_DEMAND_WHEEL_TTL_S, data)
+    wheels[filename] = (_IN_PROGRESS_WHEEL_EXPIRY if pending else now + _ON_DEMAND_WHEEL_TTL_S, data)
+
+
+def _complete_session_scope(store: dict[str, dict[str, tuple[float, bytes]]], scope_id: str) -> None:
+    """Stamp one common deadline on a fully prepared scope.
+
+    Every wheel in a scope must stay readable for the same window: pip receives
+    the scope ID only with the prepare response, so a wheel that expired while
+    later tarballs were still converting would be advertised as prepared but
+    could never be downloaded.
+
+    Args:
+        store: Per-app map of opaque scope IDs to wheel data.
+        scope_id: Random identifier returned to the requesting Engine.
+    """
+    scope = store.get(scope_id)
+    if scope is None:
+        return
+    expires_at = time.monotonic() + _ON_DEMAND_WHEEL_TTL_S
+    for name in list(scope):
+        scope[name] = (expires_at, scope[name][1])
 
 
 def _session_wheel(store: dict[str, dict[str, tuple[float, bytes]]], scope_id: str, filename: str) -> bytes | None:

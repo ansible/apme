@@ -243,10 +243,13 @@ curl -X POST $GW/api/v1/projects/<id>/operation/submit \
   -d '{"branch_name":"apme/remediate-abc123","create_pr":true}'
 ```
 
-If that call times out or fails with 409/500/502/503/504, re-send the
-*unchanged* body with the same `$KEY` to get the stored result instead of a
-second push. Changing the branch, activity, or patch set under the same key
-is rejected (409) rather than silently re-pushed. Omitting the header is the
+Re-send the *unchanged* body with the same `$KEY` when the call times out or
+fails with 500/502/503/504: the outcome is unknown or retryable, so the key
+recovers the stored result instead of pushing twice. A 409 is different —
+the Gateway already has a definitive answer, so follow its message. Changing
+the branch, activity, or patch set under the same key is rejected (409) and
+resending that request unchanged repeats the conflict; start the new intent
+with a fresh `$KEY` instead of retrying. Omitting the header is the
 only way to start an unclaimed operation; `apme submit --no-idempotency-key`
 does that deliberately, and the call then cannot be replayed safely.
 

@@ -531,13 +531,63 @@ async def test_download_lock_eviction_skips_held_locks(tmp_path: Path) -> None:
         locks.clear()
 
 
-def test_tarball_layout_pass_is_bounded_by_declared_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The prefix-detection pass stops at the byte cap, not just the file cap.
+def test_tarball_oversized_pax_header_rejected_before_parsing() -> None:
+    """A PAX header declaring a huge payload is rejected before it is buffered.
 
-    That pass breaks at the first name that is not under the shared prefix, so
-    a tarball whose leading members stay in one prefix keeps iterating. If it
-    only tracked the member count, a stream of small members could walk far
-    past the aggregate byte cap before the second pass ever ran.
+    ``tarfile`` allocates the extension-header payload at its declared size
+    while iterating, before any member-level cap runs, so the bound has to
+    happen on the raw header blocks.
+    """
+    from galaxy_proxy.converter import _extract_tarball
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tf:
+        data = b"namespace: ns\nname: coll\nversion: 1.0.0\n"
+        info = tarfile.TarInfo("galaxy.yml")
+        info.size = len(data)
+        info.pax_headers = {"comment": "x" * (2 * 1024 * 1024)}
+        tf.addfile(info, io.BytesIO(data))
+
+    with pytest.raises(ValueError, match="extension header too large"):
+        _extract_tarball(buf.getvalue())
+
+
+@pytest.mark.parametrize("fmt", [tarfile.PAX_FORMAT, tarfile.GNU_FORMAT])  # type: ignore[untyped-decorator]
+def test_tarball_long_names_still_convert(fmt: int) -> None:
+    """Legitimate long-name extension headers stay below the bound.
+
+    Args:
+        fmt: Tar format that encodes the long path as an extension header.
+    """
+    from galaxy_proxy.converter import _extract_tarball
+
+    long_dir = "/".join(["d" * 60] * 4)
+    long_path = f"{long_dir}/notes.txt"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=fmt) as tf:
+        galaxy_yml = b"namespace: ns\nname: coll\nversion: 1.0.0\n"
+        info = tarfile.TarInfo("galaxy.yml")
+        info.size = len(galaxy_yml)
+        tf.addfile(info, io.BytesIO(galaxy_yml))
+
+        payload = b"notes"
+        info = tarfile.TarInfo(long_path)
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+
+    galaxy, files = _extract_tarball(buf.getvalue())
+
+    assert galaxy["name"] == "coll"
+    assert files[long_path] == b"notes"
+
+
+def test_tarball_byte_cap_trips_before_tarfile_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The declared-bytes bound trips before any tarfile pass starts.
+
+    The layout pass breaks at the first name outside the shared prefix, so a
+    tarball whose leading members stay in one prefix would iterate far past
+    the aggregate byte cap; the pre-parse header walk now rejects it first,
+    so no tarfile parse (and no member cache) is ever started.
 
     Args:
         monkeypatch: Pytest fixture for modifying environment.
@@ -565,6 +615,5 @@ def test_tarball_layout_pass_is_bounded_by_declared_bytes(monkeypatch: pytest.Mo
         pytest.raises(ValueError, match="size limit exceeded"),
     ):
         _extract_tarball(tarball)
-    # The layout pass alone must trip the cap: the full extraction pass never
-    # starts.
-    assert counting.call_count == 1
+    # The header walk alone trips the cap: neither tarfile pass starts.
+    assert counting.call_count == 0

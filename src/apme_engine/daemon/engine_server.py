@@ -5942,6 +5942,17 @@ def _reconcile_after_approval(
                 len(skipped_fixed),
                 ", ".join(sorted(unspliced_files)[:8]),
             )
+            # The ledger is the source of truth for later report rebuilds (Gate
+            # 2 queries ``fixed`` again), so a finding whose file never changed
+            # must not stay certified as fixed there either.
+            reopened = graph.reopen_fixed_violations(skipped_fixed)
+            if reopened != len(skipped_fixed):
+                logger.warning(
+                    "Reopened %d of %d skipped-edit finding(s) in the ledger (session=%s)",
+                    reopened,
+                    len(skipped_fixed),
+                    session.session_id,
+                )
             # Skipped edits are manual review, not auto-fixable.
             fixed = kept_fixed
             remaining.extend(skipped_fixed)

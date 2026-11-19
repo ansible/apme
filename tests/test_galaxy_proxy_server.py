@@ -91,6 +91,31 @@ def test_response_middleware_logs_unhandled_failures(
     assert "sensitive failure detail" not in caplog.text
 
 
+def test_response_middleware_redacts_release_scope_id(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unsuccessful release still must not log the live scope capability.
+
+    Args:
+        tmp_path: Temporary directory for the proxy cache.
+        caplog: Captured log records.
+    """
+    application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
+    scope_id = "B" * 32
+
+    with (
+        caplog.at_level("INFO", logger="galaxy_proxy.proxy.server"),
+        TestClient(application) as client,
+    ):
+        response = client.delete(f"/admin/session-scopes/{scope_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {"released": False}
+    assert scope_id not in caplog.text
+    assert "/admin/session-scopes/[redacted]" in caplog.text
+
+
 @pytest.fixture()  # type: ignore[untyped-decorator]
 def app(tmp_path: Path) -> Iterator[TestClient]:
     """Create a test client for the proxy app with temp cache.
@@ -537,6 +562,35 @@ class TestConvertTarballs:
         data = resp.json()
         assert len(data["converted"]) == 1
         assert data["failed"] == []
+
+    def test_convert_rejects_result_after_config_change(self, tmp_path: Path) -> None:
+        """A configuration update during conversion invalidates the response.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        application = create_app(cache_dir=tmp_path / "cache")
+
+        tarball_dir = tmp_path / "tarballs"
+        tarball_dir.mkdir()
+        (tarball_dir / "ansible-posix-1.5.4.tar.gz").write_bytes(b"fake-tarball")
+
+        whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+        original_put = ProxyCache.put_wheel
+
+        def put_and_rebind(cache: ProxyCache, filename: str, data: bytes) -> Path:
+            written = original_put(cache, filename, data)
+            application.state.galaxy_config_generation += 1
+            return written
+
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(whl_name, b"PK\x03\x04fake-wheel")),
+            patch.object(ProxyCache, "put_wheel", put_and_rebind),
+        ):
+            resp = client.post("/convert-tarballs", params={"tarball_dir": str(tarball_dir)})
+
+        assert resp.status_code == 409
 
     def test_convert_nonexistent_dir(self, tmp_path: Path) -> None:
         """Nonexistent directory returns 400.

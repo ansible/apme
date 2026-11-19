@@ -301,6 +301,31 @@ def _migrate_proposals_table(conn: object) -> None:
         conn.execute(text(stmt))
 
 
+def _scans_column_migrations(dialect_name: str, existing: set[str]) -> list[str]:
+    """Build the missing ``scans`` column statements for one dialect.
+
+    Args:
+        dialect_name: SQLAlchemy dialect name (``postgresql``, ``sqlite``, ...).
+        existing: Column names already present on the table.
+
+    Returns:
+        ``ALTER TABLE`` statements for columns this schema adds when missing.
+    """
+    # Two replicas can both inspect a pre-upgrade ``scans`` table before either
+    # commits its ``ALTER``; PostgreSQL's ``IF NOT EXISTS`` makes the loser a
+    # no-op instead of a fatal duplicate-column error. SQLite has no such
+    # clause, so it keeps the plain statement (its upgrades are single-writer).
+    add_column = "ADD COLUMN IF NOT EXISTS" if dialect_name == "postgresql" else "ADD COLUMN"
+    columns = (
+        ("pr_url", "TEXT DEFAULT NULL"),
+        ("branch_name", "TEXT DEFAULT NULL"),
+        ("commit_sha", "TEXT DEFAULT NULL"),
+        ("submit_token", "TEXT DEFAULT NULL"),
+        ("scm_provider", "TEXT DEFAULT NULL"),
+    )
+    return [f"ALTER TABLE scans {add_column} {name} {ddl}" for name, ddl in columns if name not in existing]
+
+
 def _migrate_scans_table(conn: object) -> None:
     """Add SCM publish columns and enforce project-scoped token uniqueness (ADR-050).
 
@@ -325,17 +350,7 @@ def _migrate_scans_table(conn: object) -> None:
         return
     existing = {c["name"] for c in insp.get_columns("scans")}
 
-    migrations: list[str] = []
-    if "pr_url" not in existing:
-        migrations.append("ALTER TABLE scans ADD COLUMN pr_url TEXT DEFAULT NULL")
-    if "branch_name" not in existing:
-        migrations.append("ALTER TABLE scans ADD COLUMN branch_name TEXT DEFAULT NULL")
-    if "commit_sha" not in existing:
-        migrations.append("ALTER TABLE scans ADD COLUMN commit_sha TEXT DEFAULT NULL")
-    if "submit_token" not in existing:
-        migrations.append("ALTER TABLE scans ADD COLUMN submit_token TEXT DEFAULT NULL")
-    if "scm_provider" not in existing:
-        migrations.append("ALTER TABLE scans ADD COLUMN scm_provider TEXT DEFAULT NULL")
+    migrations = _scans_column_migrations(conn.dialect.name, existing)
 
     for stmt in migrations:
         conn.execute(text(stmt))

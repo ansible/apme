@@ -1255,7 +1255,7 @@ def test_prepare_collections_forwards_session_galaxy_servers(monkeypatch: pytest
         }
     ]
     with patch("apme_engine.venv_manager.session.httpx.post", return_value=response) as post:
-        scope_id = _prepare_collections_via_proxy(
+        outcome = _prepare_collections_via_proxy(
             "http://127.0.0.1:8765",
             ["ansible.posix:1.5.4"],
             galaxy_servers,
@@ -1263,7 +1263,28 @@ def test_prepare_collections_forwards_session_galaxy_servers(monkeypatch: pytest
 
     assert post.call_args.kwargs["headers"] == {"x-apme-proxy-token": "shared-secret"}
     assert post.call_args.kwargs["json"] == {"specs": ["ansible.posix:1.5.4"], "servers": galaxy_servers}
-    assert scope_id == "A" * 32
+    assert outcome.scope_id == "A" * 32
+    assert outcome.failed_specs == []
+
+
+def test_prepare_collections_reports_unprepared_specs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy's ``failed_specs`` reach the caller for scoped installs.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _prepare_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [], "failed_specs": ["ansible.posix:1.5.4", 7]}
+
+    with patch("apme_engine.venv_manager.session.httpx.post", return_value=response):
+        outcome = _prepare_collections_via_proxy("http://127.0.0.1:8765", ["ansible.posix:1.5.4"])
+
+    assert outcome.scope_id is None
+    assert outcome.failed_specs == ["ansible.posix:1.5.4"]
 
 
 def test_scoped_prepare_uses_its_isolated_package_index(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1304,6 +1325,92 @@ def test_scoped_prepare_uses_its_isolated_package_index(monkeypatch: pytest.Monk
 
     assert failures == []
     assert install.call_args.args[2] == f"http://proxy/simple/session/{scope_id}/"
+    release.assert_called_once_with(
+        f"http://proxy/admin/session-scopes/{scope_id}",
+        headers={"x-apme-proxy-token": "shared-secret"},
+        timeout=10.0,
+    )
+
+
+def test_scoped_install_skips_specs_the_source_could_not_prepare(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unprepared specs are never installed from the default index.
+
+    The scoped index is an extra index, so an unprepared spec left in the
+    install command could be satisfied by the default index and reported as
+    installed from the private Hub. It must be excluded and reported failed.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    release_response = MagicMock()
+    release_response.raise_for_status.return_value = None
+    scope_id = "D" * 32
+    response.json.return_value = {
+        "prepared": [],
+        "failed_specs": ["ansible.posix:1.5.4"],
+        "scope_id": scope_id,
+    }
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch("apme_engine.venv_manager.session.httpx.delete", return_value=release_response),
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4", "community.general:9.0.0"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=[{"name": "private", "url": "https://hub.example.com/"}],
+        )
+
+    assert failures == ["ansible.posix:1.5.4"]
+    assert install.call_args.args[1] == ["ansible-collection-community-general==9.0.0"]
+
+
+def test_scoped_install_fails_when_every_spec_was_unprepared(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An all-unprepared scoped batch installs nothing and releases the scope.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    release_response = MagicMock()
+    release_response.raise_for_status.return_value = None
+    scope_id = "E" * 32
+    response.json.return_value = {
+        "prepared": [],
+        "failed_specs": ["ansible.posix:1.5.4"],
+        "scope_id": scope_id,
+    }
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch("apme_engine.venv_manager.session.httpx.delete", return_value=release_response) as release,
+        patch("apme_engine.venv_manager.session._run_pip_install") as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=[{"name": "private", "url": "https://hub.example.com/"}],
+        )
+
+    assert failures == ["ansible.posix:1.5.4"]
+    install.assert_not_called()
     release.assert_called_once_with(
         f"http://proxy/admin/session-scopes/{scope_id}",
         headers={"x-apme-proxy-token": "shared-secret"},

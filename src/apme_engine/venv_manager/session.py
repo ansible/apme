@@ -46,6 +46,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field
 from functools import partial
 from pathlib import Path
+from typing import NamedTuple
 
 import httpx
 
@@ -370,11 +371,23 @@ def _extract_unbuildable_packages(output: str) -> list[str]:
     return result
 
 
+class _PrepareOutcome(NamedTuple):
+    """Result of asking the proxy to resolve collection specs.
+
+    Attributes:
+        scope_id: Opaque PEP 503 scope ID for request-scoped settings, else ``None``.
+        failed_specs: Requested specs the proxy could not resolve or download.
+    """
+
+    scope_id: str | None
+    failed_specs: list[str]
+
+
 def _prepare_collections_via_proxy(
     proxy_url: str,
     collection_specs: list[str],
     galaxy_server_configs: list[dict[str, object]] | None = None,
-) -> str | None:
+) -> _PrepareOutcome:
     """Ask the proxy to resolve pins/latest versions using its Galaxy CLI.
 
     Args:
@@ -387,7 +400,8 @@ def _prepare_collections_via_proxy(
         RuntimeError: If the proxy cannot prepare the requested collections.
 
     Returns:
-        Opaque PEP 503 scope ID for session-specific settings, otherwise ``None``.
+        Scope ID for session-specific settings plus the requested specs the
+        proxy reported as unprepared (both empty/``None`` when nothing failed).
     """
     token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
     headers = {_PROXY_ADMIN_TOKEN_HEADER: token} if token else {}
@@ -410,10 +424,31 @@ def _prepare_collections_via_proxy(
     except ValueError as exc:
         raise RuntimeError("Galaxy proxy returned an invalid prepare response") from exc
     failed = payload.get("failed_specs", []) if isinstance(payload, dict) else []
-    if failed:
-        logger.warning("Galaxy proxy could not prepare collection specs: %s", failed)
+    failed_specs = [spec for spec in failed if isinstance(spec, str)] if isinstance(failed, list) else []
+    if failed_specs:
+        logger.warning("Galaxy proxy could not prepare collection specs: %s", failed_specs)
     scope_id = payload.get("scope_id") if isinstance(payload, dict) else None
-    return scope_id if isinstance(scope_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id) else None
+    valid_scope = scope_id if isinstance(scope_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id) else None
+    return _PrepareOutcome(scope_id=valid_scope, failed_specs=failed_specs)
+
+
+def _unprepared_requested_specs(failed_specs: list[str], requested: list[str]) -> list[str]:
+    """Match proxy ``failed_specs`` entries back to the requested specs.
+
+    The proxy echoes the requested spec strings verbatim (``ns.name`` or
+    ``ns.name:<constraint>``), so this is an exact comparison after trimming
+    and case-folding; a looser match would exclude collections that installed
+    fine.
+
+    Args:
+        failed_specs: Spec strings the proxy reported as unprepared.
+        requested: Spec strings passed to the prepare request.
+
+    Returns:
+        Requested specs that must not be installed, in request order.
+    """
+    blocked = {spec.strip().lower() for spec in failed_specs}
+    return [spec for spec in requested if spec.strip().lower() in blocked]
 
 
 def _release_session_scope(proxy_url: str, scope_id: str) -> None:
@@ -479,6 +514,12 @@ def _install_collections_via_proxy(
     Note:
         A stalled pip/uv install propagates ``PipInstallTimeout`` from the
         install helpers — failing fast instead of walking the fallback chain.
+
+        For a request-scoped Galaxy source, specs the proxy reported in
+        ``failed_specs`` are excluded from the install command and returned as
+        failures. The scoped index is added as an extra index, so leaving them
+        in would let pip/uv satisfy them from another index and report success
+        for content that never came from this scope.
     """
     simple_url = proxy_url.rstrip("/") + "/simple/"
     installable: list[tuple[str, str]] = []
@@ -498,9 +539,12 @@ def _install_collections_via_proxy(
     # wheels and does not enumerate remote Galaxy versions. A config update can
     # race this request and return 409, so retry once after that conflict.
     session_scope_id: str | None = None
+    unprepared: list[str] = []
     for attempt in range(2):
         try:
-            session_scope_id = _prepare_collections_via_proxy(proxy_url, installable_specs, galaxy_server_configs)
+            outcome = _prepare_collections_via_proxy(proxy_url, installable_specs, galaxy_server_configs)
+            session_scope_id = outcome.scope_id
+            unprepared = outcome.failed_specs
             break
         except RuntimeError as exc:
             cause = exc.__cause__
@@ -518,6 +562,27 @@ def _install_collections_via_proxy(
         return failed + installable_specs
     if session_scope_id is not None:
         simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
+        # The scoped index is an *extra* index: pip and uv keep the default one
+        # enabled, so a spec the proxy could not prepare would still resolve
+        # elsewhere, install "successfully", and be recorded against this
+        # scope. Drop those specs from the install command entirely and report
+        # them as failed instead.
+        blocked = _unprepared_requested_specs(unprepared, installable_specs)
+        if blocked:
+            logger.warning(
+                "Not installing %d collection spec(s) the scoped Galaxy source could not prepare: %s",
+                len(blocked),
+                ", ".join(sorted(blocked)),
+            )
+            failed.extend(blocked)
+            installable = [(spec, pip_spec) for spec, pip_spec in installable if spec not in blocked]
+            installable_specs = [spec for spec, _ in installable]
+            pip_specs = [pip_spec for _, pip_spec in installable]
+            if not installable:
+                # Nothing will consume the prepared scope, so release it now
+                # instead of leaving it to the proxy TTL.
+                _release_session_scope(proxy_url, session_scope_id)
+                return failed
 
     try:
         result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)

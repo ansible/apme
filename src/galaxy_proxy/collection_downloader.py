@@ -215,6 +215,35 @@ def write_temp_ansible_cfg(
     return cfg_path
 
 
+def write_isolated_ansible_cfg(dest_dir: Path) -> Path:
+    """Write a minimal ``ansible.cfg`` that suppresses default discovery.
+
+    Used for request-scoped Galaxy servers, whose credentials are injected as
+    ``ANSIBLE_GALAXY_SERVER_*`` environment variables. Pointing
+    ``ANSIBLE_CONFIG`` at this file keeps ansible from falling back to a
+    discovered ``ansible.cfg`` (cwd, ``~/.ansible.cfg``, ``/etc/ansible``)
+    whose same-named ``[galaxy_server.<name>]`` section could supply a token
+    or ``auth_url`` for a request-supplied URL. TLS verification stays on, as
+    for any other generated config; an explicit ``ANSIBLE_GALAXY_IGNORE=true``
+    in the environment still opts out.
+
+    Args:
+        dest_dir: Directory to write the config file into.
+
+    Returns:
+        Path to the written ``ansible.cfg``.
+    """
+    cfg = configparser.ConfigParser(interpolation=None)
+    cfg.add_section("galaxy")
+    cfg.set("galaxy", "ignore_certs", "false")
+
+    cfg_path = dest_dir / "ansible.cfg"
+    fd = os.open(str(cfg_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        cfg.write(f)
+    return cfg_path
+
+
 def _find_tarballs(directory: Path) -> list[Path]:
     """Find all ``.tar.gz`` files in a directory (non-recursive).
 
@@ -268,8 +297,14 @@ def _inject_galaxy_env(env: dict[str, str], servers: list[GalaxyServerConfig]) -
         env[f"{prefix}URL"] = s.url
         if s.token:
             env[f"{prefix}TOKEN"] = s.token
+        else:
+            # A scoped server that omits its credential must not inherit the
+            # pod environment's value: it would be sent to the caller's URL.
+            env.pop(f"{prefix}TOKEN", None)
         if s.auth_url:
             env[f"{prefix}AUTH_URL"] = s.auth_url
+        else:
+            env.pop(f"{prefix}AUTH_URL", None)
         if s.validate_certs is not None:
             env[f"{prefix}VALIDATE_CERTS"] = str(s.validate_certs).lower()
         else:
@@ -432,7 +467,22 @@ async def download_collections(
         # ansible.cfg (their galaxy.ignore_certs setting must win).
         if ansible_cfg_path is None:
             env.setdefault("ANSIBLE_GALAXY_IGNORE", "false")
-        if servers:
+        if servers and ansible_cfg_path is None:
+            # Request-scoped servers are the only trusted Galaxy config source
+            # for this download. Isolate it from default ansible.cfg discovery
+            # so a same-named section cannot inject credentials, while keeping
+            # the env-var injection path (ADR-045) as the primary mechanism.
+            temp_cfg_dir = Path(tempfile.mkdtemp(prefix="apme-galaxy-proxy-"))
+            try:
+                _inject_galaxy_env(env, servers)
+                env["ANSIBLE_CONFIG"] = str(write_isolated_ansible_cfg(temp_cfg_dir))
+            except ValueError:
+                for key in list(env):
+                    if key == "ANSIBLE_GALAXY_SERVER_LIST" or key.startswith("ANSIBLE_GALAXY_SERVER_"):
+                        env.pop(key, None)
+                env["ANSIBLE_CONFIG"] = str(write_temp_ansible_cfg(servers, temp_cfg_dir))
+                logger.info("Falling back to temp ansible.cfg for Galaxy config because server names are not env-safe")
+        elif servers:
             try:
                 _inject_galaxy_env(env, servers)
             except ValueError:
