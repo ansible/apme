@@ -4,40 +4,22 @@ import * as dagre from 'dagre';
 import type { GraphData } from '@apme/client';
 import { SvgExportButtons } from './SvgExportButtons';
 
-const NODE_COLORS: Record<string, string> = {
-  playbook: '#f85149',
-  play: '#f0883e',
-  role: '#d2a8ff',
-  taskfile: '#79c0ff',
-  task: '#58a6ff',
-  handler: '#3fb950',
-  block: '#d29922',
-  vars_file: '#8b949e',
-  module: '#56d364',
-  collection: '#a371f7',
-  python_package: '#58a6ff',
-};
+import { nodeColor, themeColor } from '../shared/colors';
 
-const MARKER_COLORS: Record<string, string> = {
-  flow: '#8b949e',
-  contains: '#30363d',
-  import: '#58a6ff',
-  include: '#d2a8ff',
-  dependency: '#f0883e',
-  data_flow: '#f778ba',
-  notify: '#3fb950',
-  listen: '#3fb950',
-  vars_include: '#79c0ff',
-  rescue: '#f85149',
-  always: '#d29922',
-  invokes: '#56d364',
-  py_imports: '#a371f7',
-};
-
-const GROUP_COLORS: Record<string, string> = {
-  play: '#f0883e',
-  role: '#d2a8ff',
-  block: '#d29922',
+const MARKER_COLORS = {
+  flow: themeColor('neutral'),
+  contains: 'var(--graph-border)',
+  import: themeColor('blue'),
+  include: themeColor('violet'),
+  dependency: themeColor('orange'),
+  data_flow: themeColor('pink'),
+  notify: themeColor('green'),
+  listen: themeColor('green'),
+  vars_include: themeColor('teal'),
+  rescue: themeColor('red'),
+  always: themeColor('amber'),
+  invokes: themeColor('green'),
+  py_imports: themeColor('indigo'),
 };
 
 interface NodeInfo {
@@ -250,7 +232,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
       if (!dn) return;
       const x = dn.x - n.w / 2;
       const y = dn.y - n.h / 2;
-      const color = NODE_COLORS[n.type] || '#484f58';
+      const color = nodeColor(n.type);
       const grp = nodeGroup.append('g').attr('transform', `translate(${x},${y})`);
 
       grp
@@ -410,8 +392,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
 
       groupLayer.selectAll('.grp-' + type).remove();
       if (!visible) return;
-      const color = GROUP_COLORS[type];
-      if (!color) return;
+      const color = nodeColor(type);
 
       function descendants(nodeId: string): string[] {
         const result: string[] = [];
@@ -468,7 +449,6 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
             .attr('x', b.x + 6)
             .attr('y', b.y + 4)
             .attr('fill', color)
-            .attr('fill-opacity', 0.7)
             .text(n.fullName);
         });
     },
@@ -486,7 +466,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
 
       groupLayer.selectAll('.grp-include').remove();
       if (!visible) return;
-      const color = '#d2a8ff';
+      const color = MARKER_COLORS.include;
 
       function descendants(nodeId: string): string[] {
         const result: string[] = [];
@@ -545,7 +525,6 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
           .attr('x', b.x + 6)
           .attr('y', b.y + 4)
           .attr('fill', color)
-          .attr('fill-opacity', 0.7)
           .text(e.type + ': ' + srcName);
       });
     },
@@ -583,23 +562,33 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
   return (
     <div ref={containerRef} className="graph-container" role="region" aria-label={`${title} visualization`}>
       <style>{`
-        .graph-container { position: relative; width: 100%; height: 70vh; min-height: 400px; background: #0d1117; border-radius: 8px; overflow: hidden; }
+        .graph-container {
+          --graph-surface: var(--bui-bg-neutral-1, light-dark(#ffffff, #0d1117));
+          --graph-panel: var(--bui-bg-neutral-2, light-dark(#f7f7f7, #161b22));
+          --graph-control: var(--bui-bg-neutral-3, light-dark(#edf1f5, #21262d));
+          --graph-hover: var(--bui-bg-neutral-2-hover, light-dark(#e2e8ef, #30363d));
+          --graph-muted: var(--bui-fg-secondary, light-dark(#4f5b68, #bac5d2));
+          --graph-text: var(--bui-fg-primary, light-dark(#202632, #edf2f7));
+          --graph-border: var(--bui-border-1, light-dark(#cdd5de, #394553));
+          --graph-focus: var(--bui-ring, light-dark(#155fa9, #85bcff));
+        }
+        .graph-container { position: relative; width: 100%; height: 70vh; min-height: 400px; background: var(--graph-surface); border-radius: 8px; overflow: hidden; }
         .graph-container > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-        .graph-container .graph-edge { fill: none; stroke: #484f58; stroke-width: 1.2; }
-        .graph-container .graph-edge.flow { stroke: #8b949e; stroke-width: 1.6; }
-        .graph-container .graph-edge.contains { stroke: #30363d; stroke-opacity: 0.18; stroke-width: 0.6; }
-        .graph-container .graph-edge.import { stroke: #58a6ff; stroke-dasharray: 6 3; }
-        .graph-container .graph-edge.include { stroke: #d2a8ff; stroke-dasharray: 4 4; }
-        .graph-container .graph-edge.dependency { stroke: #f0883e; stroke-width: 1.8; }
-        .graph-container .graph-edge.notify { stroke: #3fb950; stroke-dasharray: 2 4; }
-        .graph-container .graph-edge.listen { stroke: #3fb950; stroke-dasharray: 2 4; }
-        .graph-container .graph-edge.data_flow { stroke: #f778ba; stroke-dasharray: 8 3; }
-        .graph-container .graph-edge.vars_include { stroke: #79c0ff; stroke-dasharray: 3 3; }
-        .graph-container .graph-edge.rescue { stroke: #f85149; }
-        .graph-container .graph-edge.always { stroke: #d29922; }
-        .graph-container .graph-edge.invokes { stroke: #56d364; stroke-dasharray: 5 2; }
-        .graph-container .graph-edge.py_imports { stroke: #a371f7; stroke-dasharray: 3 5; }
+        .graph-container .graph-edge { fill: none; stroke: var(--graph-muted); stroke-width: 1.2; }
+        .graph-container .graph-edge.flow { stroke: ${MARKER_COLORS.flow}; stroke-width: 1.6; }
+        .graph-container .graph-edge.contains { stroke: ${MARKER_COLORS.contains}; stroke-opacity: 0.18; stroke-width: 0.6; }
+        .graph-container .graph-edge.import { stroke: ${MARKER_COLORS.import}; stroke-dasharray: 6 3; }
+        .graph-container .graph-edge.include { stroke: ${MARKER_COLORS.include}; stroke-dasharray: 4 4; }
+        .graph-container .graph-edge.dependency { stroke: ${MARKER_COLORS.dependency}; stroke-width: 1.8; }
+        .graph-container .graph-edge.notify { stroke: ${MARKER_COLORS.notify}; stroke-dasharray: 2 4; }
+        .graph-container .graph-edge.listen { stroke: ${MARKER_COLORS.listen}; stroke-dasharray: 2 4; }
+        .graph-container .graph-edge.data_flow { stroke: ${MARKER_COLORS.data_flow}; stroke-dasharray: 8 3; }
+        .graph-container .graph-edge.vars_include { stroke: ${MARKER_COLORS.vars_include}; stroke-dasharray: 3 3; }
+        .graph-container .graph-edge.rescue { stroke: ${MARKER_COLORS.rescue}; }
+        .graph-container .graph-edge.always { stroke: ${MARKER_COLORS.always}; }
+        .graph-container .graph-edge.invokes { stroke: ${MARKER_COLORS.invokes}; stroke-dasharray: 5 2; }
+        .graph-container .graph-edge.py_imports { stroke: ${MARKER_COLORS.py_imports}; stroke-dasharray: 3 5; }
 
         .graph-container .graph-group-rect { pointer-events: none; rx: 8; ry: 8; }
         .graph-container .graph-group-label { pointer-events: none; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; dominant-baseline: hanging; }
@@ -608,30 +597,30 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
         .graph-container .graph-node.owned { fill-opacity: 0.15; }
         .graph-container .graph-node.referenced { fill-opacity: 0.05; stroke-dasharray: 4 2; }
 
-        .graph-container .graph-node-label { font-size: 11px; fill: #e6edf3; pointer-events: none; dominant-baseline: central; }
-        .graph-container .graph-node-badge { font-size: 9px; fill-opacity: 0.7; pointer-events: none; dominant-baseline: central; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+        .graph-container .graph-node-label { font-size: 11px; fill: var(--graph-text); pointer-events: none; dominant-baseline: central; }
+        .graph-container .graph-node-badge { font-size: 9px; pointer-events: none; dominant-baseline: central; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
 
-        .graph-container .graph-tooltip { position: absolute; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 14px; font-size: 12px; pointer-events: none; display: none; max-width: 600px; max-height: 70vh; overflow-y: auto; z-index: 20; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.4); color: #c9d1d9; }
-        .graph-container .graph-tooltip .f { color: #8b949e; }
-        .graph-container .graph-tooltip .v { color: #c9d1d9; font-family: ui-monospace, monospace; font-size: 11px; }
-        .graph-container .graph-tooltip .v.mod { color: #d2a8ff; }
-        .graph-container .graph-tooltip pre { margin-top: 6px; padding: 8px; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 10px; color: #c9d1d9; white-space: pre; overflow-x: auto; max-height: 300px; line-height: 1.4; }
+        .graph-container .graph-tooltip { position: absolute; background: var(--graph-panel); border: 1px solid var(--graph-border); border-radius: 6px; padding: 10px 14px; font-size: 12px; pointer-events: none; display: none; max-width: 600px; max-height: 70vh; overflow-y: auto; z-index: 20; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.4); color: var(--graph-text); }
+        .graph-container .graph-tooltip .f { color: var(--graph-muted); }
+        .graph-container .graph-tooltip .v { color: var(--graph-text); font-family: ui-monospace, monospace; font-size: 11px; }
+        .graph-container .graph-tooltip .v.mod { color: ${themeColor('violet')}; }
+        .graph-container .graph-tooltip pre { margin-top: 6px; padding: 8px; background: var(--graph-surface); border: 1px solid var(--graph-control); border-radius: 4px; font-family: ui-monospace, monospace; font-size: 10px; color: var(--graph-text); white-space: pre; overflow-x: auto; max-height: 300px; line-height: 1.4; }
 
-        .graph-container .graph-controls { position: absolute; top: 12px; left: 12px; max-width: calc(100% - 24px); box-sizing: border-box; padding: 8px; font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; }
-        .graph-container .graph-controls button { min-width: 28px; min-height: 28px; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
-        .graph-container .graph-controls button:hover { background: #30363d; }
-        .graph-container .graph-controls button:focus-visible, .graph-container .graph-legend summary:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
-        .graph-container .graph-controls .sep { width: 1px; background: #30363d; margin: 0 2px; }
-        .graph-container .graph-controls button.tog-on { border-color: currentColor; background: #30363d; }
+        .graph-container .graph-controls { position: absolute; top: 12px; left: 12px; max-width: calc(100% - 24px); box-sizing: border-box; padding: 8px; font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; background: var(--graph-panel); border: 1px solid var(--graph-border); border-radius: 6px; z-index: 10; }
+        .graph-container .graph-controls button { min-width: 28px; min-height: 28px; background: var(--graph-control); border: 1px solid var(--graph-border); color: var(--graph-text); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+        .graph-container .graph-controls button:hover { background: var(--graph-hover); }
+        .graph-container .graph-controls button:focus-visible, .graph-container .graph-legend summary:focus-visible { outline: 2px solid var(--graph-focus); outline-offset: 2px; }
+        .graph-container .graph-controls .sep { width: 1px; background: var(--graph-border); margin: 0 2px; }
+        .graph-container .graph-controls button.tog-on { border-color: currentColor; background: var(--graph-control); }
 
-        .graph-container .graph-legend { position: absolute; bottom: 12px; right: 12px; max-width: calc(100% - 24px); max-height: calc(100% - 100px); overflow: auto; box-sizing: border-box; padding: 8px 12px; font-size: 11px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; color: #c9d1d9; user-select: none; }
+        .graph-container .graph-legend { position: absolute; bottom: 12px; right: 12px; max-width: calc(100% - 24px); max-height: calc(100% - 100px); overflow: auto; box-sizing: border-box; padding: 8px 12px; font-size: 11px; background: var(--graph-panel); border: 1px solid var(--graph-border); border-radius: 6px; z-index: 10; color: var(--graph-text); user-select: none; }
         .graph-container .graph-legend summary { cursor: pointer; min-height: 20px; line-height: 20px; font-size: 12px; }
         .graph-container .graph-legend[open] summary { margin-bottom: 8px; }
-        .graph-container .graph-legend h3 { margin-bottom: 6px; font-size: 12px; color: #f0f6fc; }
+        .graph-container .graph-legend h3 { margin-bottom: 6px; font-size: 12px; color: var(--graph-text); }
         .graph-container .graph-legend .li { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
         .graph-container .graph-legend .sw { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
 
-        .graph-container .graph-stats { position: absolute; bottom: 12px; left: 12px; padding: 8px 14px; font-size: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; z-index: 10; color: #c9d1d9; }
+        .graph-container .graph-stats { position: absolute; bottom: 12px; left: 12px; padding: 8px 14px; font-size: 12px; background: var(--graph-panel); border: 1px solid var(--graph-border); border-radius: 6px; z-index: 10; color: var(--graph-text); }
       `}</style>
 
       <svg ref={svgRef} role="img" aria-label={`${title}: ${nodeCount} nodes and ${edgeCount} edges.`} />
@@ -647,7 +636,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
           type="button"
           className={groupState.play ? 'tog-on' : ''}
           aria-pressed={groupState.play}
-          style={{ color: '#f0883e' }}
+          style={{ color: nodeColor('play') }}
           onClick={() => toggleGroup('play')}
         >
           Plays
@@ -656,7 +645,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
           type="button"
           className={groupState.role ? 'tog-on' : ''}
           aria-pressed={groupState.role}
-          style={{ color: '#d2a8ff' }}
+          style={{ color: nodeColor('role') }}
           onClick={() => toggleGroup('role')}
         >
           Roles
@@ -665,7 +654,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
           type="button"
           className={groupState.block ? 'tog-on' : ''}
           aria-pressed={groupState.block}
-          style={{ color: '#d29922' }}
+          style={{ color: nodeColor('block') }}
           onClick={() => toggleGroup('block')}
         >
           Blocks
@@ -674,7 +663,7 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
           type="button"
           className={incVisible ? 'tog-on' : ''}
           aria-pressed={incVisible}
-          style={{ color: '#d2a8ff' }}
+          style={{ color: MARKER_COLORS.include }}
           onClick={toggleIncludes}
         >
           Includes
@@ -684,7 +673,6 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
         <SvgExportButtons
           svgRef={svgRef}
           filename={title}
-          backgroundColor="#0d1117"
           prepareSvg={prepareGraphExport}
         />
       </div>
@@ -692,33 +680,33 @@ export function GraphVisualization({ data, variant = 'content' }: Props) {
       <details className="graph-legend" open={variant === 'content'}>
         <summary>Legend</summary>
         {variant === 'dependencies' ? <>
-          <div className="li"><div className="sw" style={{background: NODE_COLORS.python_package}} />Python package</div>
+          <div className="li"><div className="sw" style={{background: nodeColor('python_package')}} />Python package</div>
           <div className="li">Arrows point from a package to its dependencies.</div>
         </> : <>
         <h3>Nodes</h3>
-        <div className="li"><div className="sw" style={{ background: '#f85149' }} />Playbook</div>
-        <div className="li"><div className="sw" style={{ background: '#f0883e' }} />Play</div>
-        <div className="li"><div className="sw" style={{ background: '#d2a8ff' }} />Role</div>
-        <div className="li"><div className="sw" style={{ background: '#79c0ff' }} />TaskFile</div>
-        <div className="li"><div className="sw" style={{ background: '#58a6ff' }} />Task</div>
-        <div className="li"><div className="sw" style={{ background: '#3fb950' }} />Handler</div>
-        <div className="li"><div className="sw" style={{ background: '#d29922' }} />Block</div>
-        <div className="li"><div className="sw" style={{ background: '#8b949e' }} />VarsFile</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('playbook') }} />Playbook</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('play') }} />Play</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('role') }} />Role</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('taskfile') }} />TaskFile</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('task') }} />Task</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('handler') }} />Handler</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('block') }} />Block</div>
+        <div className="li"><div className="sw" style={{ background: nodeColor('vars_file') }} />VarsFile</div>
         <h3 style={{ marginTop: 8 }}>Edges</h3>
         <div className="li">
-          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#8b949e" strokeWidth="1.6" /></svg>
+          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke={MARKER_COLORS.flow} strokeWidth="1.6" /></svg>
           flow
         </div>
         <div className="li">
-          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#f0883e" strokeWidth="1.8" /></svg>
+          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke={MARKER_COLORS.dependency} strokeWidth="1.8" /></svg>
           dependency
         </div>
         <div className="li">
-          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#f778ba" strokeWidth="1.2" strokeDasharray="8 3" /></svg>
+          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke={MARKER_COLORS.data_flow} strokeWidth="1.2" strokeDasharray="8 3" /></svg>
           data_flow
         </div>
         <div className="li">
-          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#3fb950" strokeWidth="1.2" strokeDasharray="2 4" /></svg>
+          <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke={MARKER_COLORS.notify} strokeWidth="1.2" strokeDasharray="2 4" /></svg>
           notify
         </div>
         </>}

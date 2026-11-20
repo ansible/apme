@@ -16,10 +16,7 @@ import {
 import { ThemeProvider, createTheme } from "@material-ui/core";
 import { MemoryRouter } from "react-router-dom";
 import type { Project } from "../../../common/types";
-import {
-  chipStyleForSeverity,
-  SEVERITY_STYLES,
-} from "../../../common/severity";
+import { chipStyleForSeverity } from "../../../common/severity";
 import { ApmeRepoStatusChip } from "./ApmeRepoStatusChip";
 
 const mockNavigate = jest.fn();
@@ -151,9 +148,9 @@ describe("ApmeRepoStatusChip", () => {
     renderChip();
     const chip = await screen.findByText("3 violations");
     expect(chip).toBeInTheDocument();
-    expect(chip).not.toHaveStyle({
-      backgroundColor: SEVERITY_STYLES.critical.background,
-    });
+    expect(chip.closest(".MuiChip-root")).not.toHaveStyle(
+      chipStyleForSeverity("medium", "light"),
+    );
   });
 
   it("colors the chip by worst severity when breakdown is present", async () => {
@@ -167,7 +164,7 @@ describe("ApmeRepoStatusChip", () => {
     renderChip();
     const label = await screen.findByText("4 violations");
     expect(label.closest(".MuiChip-root")).toHaveStyle(
-      chipStyleForSeverity("high"),
+      chipStyleForSeverity("high", "light"),
     );
   });
 

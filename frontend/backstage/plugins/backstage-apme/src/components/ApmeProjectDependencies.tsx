@@ -14,6 +14,7 @@ import {
 } from "@backstage/ui";
 import { getProjectDependencies } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
+import { dependencySourceColor } from "@apme/ui-workflow/colors";
 import { DataStatus, PageControls } from "./DataStatus";
 import { DependencyDiagram } from "./DependencyDiagram";
 import { useLoad } from "./useLoad";
@@ -123,7 +124,15 @@ function ApmeProjectDependenciesContent({
                       <Row id={item.id}>
                         <Cell>{item.fqcn}</Cell>
                         <Cell>{item.version}</Cell>
-                        <Cell>{item.source}</Cell>
+                        <Cell>
+                          <span
+                            style={{
+                              color: dependencySourceColor(item.source),
+                            }}
+                          >
+                            {item.source}
+                          </span>
+                        </Cell>
                         <Cell>{item.license || "Not recorded"}</Cell>
                         <Cell>{item.supplier || "Not recorded"}</Cell>
                         <Cell>{renderIssues("collection", item.fqcn)}</Cell>

@@ -3,23 +3,13 @@
  */
 
 import { Flex, ToggleButton } from '@backstage/ui';
-
-export type ReviewFilterLabelColor =
-  | 'red'
-  | 'orange'
-  | 'yellow'
-  | 'blue'
-  | 'grey'
-  | 'green'
-  | 'teal'
-  | 'purple'
-  | 'orangered';
+import type { CSSProperties } from 'react';
 
 export interface ReviewFilterOption {
   id: string;
   label: string;
   count?: number;
-  color?: ReviewFilterLabelColor;
+  color?: string;
   selected: boolean;
   onToggle: () => void;
 }
@@ -66,18 +56,14 @@ export function ReviewFilterBar({ groups }: ReviewFilterBarProps) {
                 size="small"
                 isSelected={opt.selected}
                 onChange={opt.onToggle}
-                style={{
-                  color:
-                    opt.color === 'red' || opt.color === 'orangered'
-                      ? 'var(--bui-fg-danger)'
-                      : opt.color === 'green'
-                        ? 'var(--bui-fg-success)'
-                        : opt.color === 'orange' || opt.color === 'yellow'
-                          ? 'var(--bui-fg-warning)'
-                          : opt.color === 'grey'
-                            ? 'var(--bui-fg-secondary)'
-                            : 'var(--bui-fg-info)',
-                }}
+                style={
+                  opt.color
+                    ? ({
+                        color: opt.color,
+                        '--bui-bg-solid': `color-mix(in srgb, ${opt.color} 18%, var(--bui-bg-neutral-1))`,
+                      } as CSSProperties)
+                    : undefined
+                }
               >
                 {opt.count != null ? `${opt.label} (${opt.count})` : opt.label}
               </ToggleButton>

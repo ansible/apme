@@ -15,6 +15,9 @@
       "@apme/client/*": ["../packages/apme-client/src/*"],
       "@apme/ui-workflow": ["../packages/ui-workflow/src/index.ts"],
       "@apme/ui-workflow/headless": ["../packages/ui-workflow/src/headless.ts"],
+      "@apme/ui-workflow/colors": [
+        "../packages/ui-workflow/src/shared/colors.ts"
+      ],
       "react": ["../../node_modules/@types/react"],
       "react/*": ["../../node_modules/@types/react/*"],
       "react-dom": ["../../node_modules/@types/react-dom"],

@@ -157,9 +157,13 @@ const useStyles = makeStyles((theme) => ({
 
 function SeverityBadge({ severity }: Readonly<{ severity: Severity }>) {
   const classes = useStyles();
+  const mode = useTheme().palette.type === "dark" ? "dark" : "light";
   const level = normalizeSeverity(severity);
   return (
-    <span className={classes.severityChip} style={chipStyleForSeverity(level)}>
+    <span
+      className={classes.severityChip}
+      style={chipStyleForSeverity(level, mode)}
+    >
       {severityLabel(level)}
     </span>
   );

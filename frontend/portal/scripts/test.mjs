@@ -52,6 +52,10 @@ try {
                   "/node_modules/(?!(@backstage|@ansible|@spotify|@backstage-community|lodash-es|nanoid|uuid|jose|@sindresorhus|@octokit|@mswjs|msw)/)",
               ],
         moduleNameMapper: {
+            "^@apme/ui-workflow/colors$": join(
+                root,
+                "frontend/packages/ui-workflow/src/shared/colors.ts",
+            ),
             // Shared source tests cross workspace boundaries. Use the host's
             // React, router and BUI instances for providers and rendered controls.
             ...Object.fromEntries(

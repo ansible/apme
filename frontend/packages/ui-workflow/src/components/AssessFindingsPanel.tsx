@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Badge } from '@backstage/ui';
+import { fixColor, nodeColor, severityColor } from '../shared/colors';
 import { RuleId } from '../shared/RuleId';
 import { CurrentYamlView } from './DiffView';
 import { type NodeReviewItem } from './NodeReviewList';
@@ -18,7 +19,6 @@ import {
   SEVERITY_ORDER,
   severityClass,
   severityDisplayLabel,
-  severityLabelColor,
 } from '../shared/severity';
 import {
   resolveSnippetHighlight,
@@ -28,9 +28,7 @@ import {
   effectiveFixType,
   filterByRuleKeepingNodeContext,
   fixMethodLabel,
-  fixTypeLabelColor,
   nodeTypeLabel,
-  nodeTypeLabelColor,
   normalizeFindingNodeType,
   orderPresentNodeTypes,
   presentRuleIds,
@@ -187,19 +185,13 @@ function FindingRow({
       />
       <Badge
         size="small"
-        style={{
-          color: {
-            red: 'var(--bui-fg-danger)',
-            orange: 'var(--bui-fg-warning)',
-            yellow: 'var(--bui-fg-warning)',
-            blue: 'var(--bui-fg-info)',
-            grey: 'var(--bui-fg-secondary)',
-          }[severityLabelColor(sev, f.rule_id)],
-        }}
+        style={{ color: severityColor(severityClass(sev, f.rule_id)) }}
       >
         {severityDisplayLabel(sev, f.rule_id)}
       </Badge>
-      <Badge size="small">{fixMethodLabel(fix)}</Badge>
+      <Badge size="small" style={{ color: fixColor(fix) }}>
+        {fixMethodLabel(fix)}
+      </Badge>
       {review ? (
         <Badge size="small" style={{ color: 'var(--bui-fg-secondary)' }}>
           {formatReviewStatus(review)}
@@ -295,18 +287,7 @@ function findingsToNodeItem(
         </Badge>
         <Badge
           size="small"
-          style={{
-            color: {
-              red: 'var(--bui-fg-danger)',
-              orange: 'var(--bui-fg-warning)',
-              yellow: 'var(--bui-fg-warning)',
-              blue: 'var(--bui-fg-info)',
-              grey: 'var(--bui-fg-secondary)',
-              green: 'var(--bui-fg-success)',
-              teal: 'var(--bui-fg-info)',
-              purple: 'var(--bui-fg-info)',
-            }[nodeTypeLabelColor(nodeType)],
-          }}
+          style={{ color: nodeColor(nodeType) }}
         >
           {nodeTypeLabel(nodeType)}
         </Badge>
@@ -582,7 +563,7 @@ export function AssessFindingsPanel({
           id: sev,
           label: SEVERITY_LABELS[sev] ?? sev,
           count: severityCounts.get(sev) ?? 0,
-          color: severityLabelColor(sev),
+          color: severityColor(severityClass(sev)),
           selected: sevFilters.has(sev),
           onToggle: () => setSevFilters((prev) => toggleInFilterSet(prev, sev)),
         })),
@@ -594,7 +575,7 @@ export function AssessFindingsPanel({
           id: fix,
           label: fixMethodLabel(fix),
           count: fixTypeCounts.get(fix) ?? 0,
-          color: fixTypeLabelColor(fix),
+          color: fixColor(fix),
           selected: fixFilters.has(fix),
           onToggle: () => setFixFilters((prev) => toggleInFilterSet(prev, fix)),
         })),
@@ -606,7 +587,7 @@ export function AssessFindingsPanel({
           id: nt,
           label: nodeTypeLabel(nt),
           count: nodeTypeCounts.get(nt) ?? 0,
-          color: nodeTypeLabelColor(nt),
+          color: nodeColor(nt),
           selected: nodeTypeFilters.has(nt),
           onToggle: () =>
             setNodeTypeFilters((prev) => toggleInFilterSet(prev, nt)),

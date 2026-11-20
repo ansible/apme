@@ -33,6 +33,7 @@ import {
   useProjectWorkflow,
   type ProjectWorkflowController,
 } from "@apme/ui-workflow";
+import { healthScoreColor } from "@apme/ui-workflow/colors";
 import { apmeApiRef } from "../../api";
 import { useApmeAiEnabled } from "../../hooks/useApmeEnabled";
 import { useApmeWorkflowAiModel } from "../../hooks/useApmeWorkflowAiModel";
@@ -202,7 +203,16 @@ function WorkflowBody({ projectId }: Readonly<{ projectId: string }>) {
           </FlexItem>
           <Flex gap={{ default: "gapLg" }}>
             <FlexItem>
-              <div style={{ fontSize: 28, fontWeight: 700 }}>
+              <div
+                style={{
+                  fontSize: 28,
+                  fontWeight: 700,
+                  color:
+                    typeof project.health_score === "number"
+                      ? healthScoreColor(project.health_score)
+                      : undefined,
+                }}
+              >
                 {project.health_score ?? "—"}
               </div>
               <div style={{ opacity: 0.7 }}>Health</div>

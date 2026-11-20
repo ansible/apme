@@ -4,6 +4,8 @@ import { Flex, Text } from "@backstage/ui";
 import { getProject, type ProjectDetail } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
 import { severityOrder } from "@apme/ui-workflow/headless";
+import { severityClass } from "@apme/ui-workflow";
+import { healthScoreColor, severityColor } from "@apme/ui-workflow/colors";
 import "./layout.css";
 import { useLoad } from "./useLoad";
 import { DataStatus } from "./DataStatus";
@@ -40,7 +42,10 @@ export function ProjectDetails({
           </Text>
           {typeof project.health_score === "number" && (
             <Text color="secondary">
-              Health: {Math.round(project.health_score)}%
+              Health:{" "}
+              <span style={{ color: healthScoreColor(project.health_score) }}>
+                {Math.round(project.health_score)}%
+              </span>
             </Text>
           )}
           {project.last_scanned_at && (
@@ -70,10 +75,14 @@ export function ProjectDetails({
                 .filter(([, count]) => count > 0)
                 .sort(
                   ([left], [right]) =>
-                    severityOrder(left) - severityOrder(right),
+                    severityOrder(severityClass(left)) -
+                    severityOrder(severityClass(right)),
                 )
                 .map(([level, count]) => (
-                  <span key={level}>
+                  <span
+                    key={level}
+                    style={{ color: severityColor(severityClass(level)) }}
+                  >
                     {count} {level}
                   </span>
                 ))}

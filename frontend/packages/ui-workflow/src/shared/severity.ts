@@ -62,7 +62,7 @@ export function isSecRule(ruleId?: string): boolean {
   return ruleId?.startsWith('SEC:') ?? false;
 }
 
-export function severityClass(level: string, ruleId?: string): string {
+export function severityClass(level: string, ruleId?: string): (typeof SEVERITY_ORDER)[number] {
   if (isSecRule(ruleId)) return 'critical';
   const l = level.toLowerCase();
   if (l === 'fatal' || l === 'critical') return 'critical';
@@ -121,10 +121,12 @@ export function severityOrder(cls: string): number {
  * 0–24 red, 25–49 orange, 50–74 yellow/gold, 75–100 green.
  */
 export function healthColor(score: number): string {
-  if (score < 25) return 'var(--apme-sev-critical)';
-  if (score < 50) return 'var(--apme-sev-high)';
-  if (score < 75) return 'var(--apme-sev-medium)';
-  return 'var(--apme-green)';
+  return {
+    red: 'var(--apme-sev-critical)',
+    orange: 'var(--apme-sev-high)',
+    yellow: 'var(--apme-sev-medium)',
+    green: 'var(--apme-green)',
+  }[healthLabelColor(score)];
 }
 
 /**

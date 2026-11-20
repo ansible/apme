@@ -9,10 +9,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Badge } from '@backstage/ui';
 import type { AssessFinding } from '../hooks/useProjectOperationState';
+import { nodeColor, severityColor } from '../shared/colors';
 import {
   normalizeFindingNodeType,
   nodeTypeLabel,
-  nodeTypeLabelColor,
   orderPresentNodeTypes,
   type FindingNodeType,
 } from '../remediation/nodeType';
@@ -27,7 +27,6 @@ import {
   SEVERITY_LABELS,
   SEVERITY_ORDER,
   severityClass,
-  severityLabelColor,
 } from '../shared/severity';
 
 export interface AiEscalateTarget {
@@ -302,18 +301,7 @@ export function AiEscalationPanel({
               </Badge>
               <Badge
                 size="small"
-                style={{
-                  color: {
-                    red: 'var(--bui-fg-danger)',
-                    orange: 'var(--bui-fg-warning)',
-                    yellow: 'var(--bui-fg-warning)',
-                    blue: 'var(--bui-fg-info)',
-                    grey: 'var(--bui-fg-secondary)',
-                    green: 'var(--bui-fg-success)',
-                    teal: 'var(--bui-fg-info)',
-                    purple: 'var(--bui-fg-info)',
-                  }[nodeTypeLabelColor(nt)],
-                }}
+                style={{ color: nodeColor(nt) }}
               >
                 {nodeTypeLabel(nt)}
               </Badge>
@@ -402,7 +390,7 @@ export function AiEscalationPanel({
           id: sev,
           label: SEVERITY_LABELS[sev] ?? sev,
           count: severityCounts.get(sev) ?? 0,
-          color: severityLabelColor(sev),
+          color: severityColor(severityClass(sev)),
           selected: sevFilters.has(sev),
           onToggle: () => setSevFilters((prev) => toggleInFilterSet(prev, sev)),
         })),
@@ -414,7 +402,7 @@ export function AiEscalationPanel({
           id: nt,
           label: nodeTypeLabel(nt),
           count: nodeTypeCounts.get(nt) ?? 0,
-          color: nodeTypeLabelColor(nt),
+          color: nodeColor(nt),
           selected: nodeTypeFilters.has(nt),
           onToggle: () =>
             setNodeTypeFilters((prev) => toggleInFilterSet(prev, nt)),

@@ -1,7 +1,7 @@
 /* Copyright Red Hat. Licensed under the Apache License, Version 2.0. */
 import { ApmeDialogFooter as DialogFooter } from "./layout";
 import { ApmeButton as Button, ApmeDialog as Dialog } from "./layout";
-import { useCallback, useState } from "react";
+import { useCallback, useState, type CSSProperties } from "react";
 import {
   Alert,
   Cell,
@@ -29,7 +29,12 @@ import { DataStatus, PageControls } from "./DataStatus";
 import { ApmeTable, SectionHeader } from "./layout";
 import { useLoad } from "./useLoad";
 import { useMutation } from "./useMutation";
-import { SEVERITY_INT_OPTIONS } from "@apme/ui-workflow/headless";
+import {
+  SEVERITY_INT_OPTIONS,
+  SEVERITY_INT_TO_API,
+  severityClass,
+} from "@apme/ui-workflow";
+import { severityColor } from "@apme/ui-workflow/colors";
 
 export interface ApmeRulesProps {
   adapter: ApmeApiAdapter;
@@ -202,7 +207,15 @@ export function ApmeRules({ adapter, canManage = false }: ApmeRulesProps) {
                         }
                       />
                     ) : (
-                      rule.effective_severity
+                      <span
+                        style={{
+                          color: severityColor(
+                            severityClass(rule.effective_severity),
+                          ),
+                        }}
+                      >
+                        {rule.effective_severity}
+                      </span>
                     )}
                   </Cell>
                   <Cell>
@@ -303,6 +316,17 @@ function RuleSeverity({
   return (
     <Select
       className="apme-rule-severity"
+      style={
+        knownSeverity && !saving
+          ? ({
+              "--apme-rule-severity-color": severityColor(
+                severityClass(
+                  SEVERITY_INT_TO_API[rule.effective_severity_int] ?? "info",
+                ),
+              ),
+            } as CSSProperties)
+          : undefined
+      }
       selectionMode="single"
       aria-label={`Severity for ${rule.rule_id}`}
       value={knownSeverity ? String(rule.effective_severity_int) : ""}
@@ -373,7 +397,14 @@ function RuleDetails({
           </Text>
           <Text>
             Default severity: {rule.default_severity || "Not reported"} ·
-            Effective severity: {rule.effective_severity}
+            Effective severity:{" "}
+            <span
+              style={{
+                color: severityColor(severityClass(rule.effective_severity)),
+              }}
+            >
+              {rule.effective_severity}
+            </span>
           </Text>
           <Text>
             {rule.enabled ? "Enabled" : "Disabled"} ·{" "}

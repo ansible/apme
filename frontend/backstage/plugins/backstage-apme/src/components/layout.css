@@ -427,6 +427,9 @@
 .apme-ui .apme-rule-severity {
   min-width: 125px;
 }
+.apme-ui .apme-rule-severity .bui-SelectValue {
+  color: var(--apme-rule-severity-color, inherit);
+}
 .apme-ui table.apme-rules-table {
   min-width: 1080px;
 }

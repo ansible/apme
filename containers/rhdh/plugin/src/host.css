@@ -58,11 +58,4 @@
   color: inherit;
   background: inherit;
   font: inherit;
-  color-scheme: light dark;
-}
-body[data-theme-mode="light"] .apme-local-theme-control select {
-  color-scheme: light;
-}
-body[data-theme-mode="dark"] .apme-local-theme-control select {
-  color-scheme: dark;
 }
