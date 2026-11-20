@@ -130,6 +130,8 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install workspace and build shared BUI development harness
         run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-ci,frontend-dev-build
+      - name: Reproducibly install the native frontend workspace
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e frontend-native-ci
       - name: Chromium shared workflow harness smoke (not host certification)
         run: uvx --with-requirements ci/tox-requirements.txt tox -e ui-workflow-browser
 

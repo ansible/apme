@@ -93,6 +93,10 @@ packages. `frontend/` retains its legacy native workspace/lockfile during the
 replacement. Native backward compatibility is waived for the BUI migration; the legacy
 workspace is not a compatibility target. This does not retire the native UI. Shared
 sources stay in `frontend/packages`; all new host code is under this directory.
+`frontend/packages/*` manifests therefore belong to **both** workspaces: any change
+to them (dependency bumps included) must regenerate **both** lockfiles — `npm
+install` at the repository root and in `frontend/`. PR CI enforces this through
+the `frontend-ci` and `frontend-native-ci` tox environments.
 
 ## Develop
 
