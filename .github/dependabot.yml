@@ -7,6 +7,28 @@ updates:
     cooldown:
       default-days: 30
 
+  # ci/tox-requirements.txt pins the uvx toolchain outside uv.lock. The tox
+  # pin must match pyproject.toml and uv.lock; the ci-tox-pins prek hook
+  # (tox -e lint) rejects drift, so bump all three together.
+  - package-ecosystem: "pip"
+    directory: "/ci"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 30
+
+  # Root workspaces manifest + lockfile (build tooling, RHDH plugin export).
+  # frontend/packages/* members are shared with the /frontend project: any
+  # change to those manifests must regenerate BOTH lockfiles (npm install in
+  # / and in frontend/). PR CI enforces this via the frontend-ci and
+  # frontend-native-ci tox envs.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 30
+
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:

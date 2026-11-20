@@ -69,6 +69,13 @@ repos:
         additional_dependencies: [pyyaml]
         pass_filenames: false
         always_run: true
+      - id: ci-tox-pins
+        name: ci-tox-pins (CI uvx toolchain consistency)
+        language: python
+        language_version: python3.12
+        entry: python scripts/check_ci_tox_pins.py
+        files: ^(ci/tox-requirements\.txt|pyproject\.toml|uv\.lock)$
+        pass_filenames: false
       - id: openapi-check
         name: openapi-check (Gateway OpenAPI v1)
         language: system
