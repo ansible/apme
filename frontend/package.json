@@ -19,7 +19,7 @@
     "@apme/ui-workflow": "workspace:*",
     "@backstage/ui": "0.18.0",
     "@patternfly/patternfly": "6.7.0",
-    "@patternfly/react-charts": "8.6.1",
+    "@patternfly/react-charts": "8.7.0",
     "@patternfly/react-core": "6.6.2",
     "@patternfly/react-icons": "6.6.1",
     "@patternfly/react-table": "6.6.2",
