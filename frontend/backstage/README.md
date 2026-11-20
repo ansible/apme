@@ -356,6 +356,14 @@ The root manifest scopes temporary security overrides to build tooling:
 - RHDH CLI uses Backstage `cli-module-auth` 0.1.5 and `cli-module-new` 0.1.8,
   whose upstream patch releases switch internal validation to Zod 4. This removes
   their vulnerable Zod 3 copies, using the lockfile's patched Zod 4.6.7.
+- Minimatch 9 consumers (`@ts-morph/common`, `@typescript-eslint/typescript-estree`,
+  `@rollup/plugin-commonjs` and `test-exclude`'s glob) resolve 11.0.1 through the
+  `minimatch@^9.0.4` override, matching the existing 10.x override keys
+  ([GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)).
+- `refractor`'s PrismJS resolves 1.30.0; react-syntax-highlighter pins `~1.27.0`
+  ([GHSA-x7hr-w5r2-h6wg](https://github.com/advisories/GHSA-x7hr-w5r2-h6wg)).
+- `sockjs` resolves uuid 11.1.1 in the dev-server chain
+  ([GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq)).
 
 See the [Undici advisory](https://github.com/advisories/GHSA-9fm3-97px-rjf6),
 [Zod advisory](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) and upstream
@@ -382,9 +390,16 @@ moderate entries. The report also flags glob/minimatch build-tool dependency
 chains. The earlier count is historical; use the audit commands for current data.
 The Router fix is in a newer major than the Router 6 host baseline; do not run
 `npm audit fix --force` or force Router 7 into these hosts. Remaining findings
-need upstream/host compatibility review. This npm audit covers the checkout's
-dependency tree, not the prebuilt RHDH image, OS packages or Node's embedded
-libraries; it does not certify the complete running image.
+need upstream/host compatibility review. Two npm findings stay open for the
+same reason: `@material-table/core` (via `@backstage/core-components`) pins
+uuid `^3.4.0` and its default-import usage is incompatible with a uuid 11
+override, and `elliptic` 6.6.1 (browserify-sign/create-ecdh through
+`node-stdlib-browser`, build tooling only) has no patched release. The npm audit
+tree additionally reports a glob 9–14.0.1 advisory in build tooling that GitHub
+has not alerted on; it is tracked with the frontend export rework. This npm
+audit covers the checkout's dependency tree, not the prebuilt RHDH image, OS
+packages or Node's embedded libraries; it does not certify the complete
+running image.
 
 RHDH Local exposes a **Color theme** selector in the expanded APME sidebar. Light,
 Dark and System use the host's persisted appearance preference; the existing

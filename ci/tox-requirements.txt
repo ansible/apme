@@ -2,4 +2,4 @@
 # uvx does not consume the repo uv.lock; keep pins here (not in workflow YAML).
 tox==4.67.1
 tox-uv==1.37.0
-virtualenv==21.14.12
+virtualenv==21.15.9

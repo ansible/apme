@@ -231,7 +231,7 @@ constraint-dependencies = [
     "pip>=26.2",
     "pygments>=2.20.0",
     "requests>=2.33.0",
-    "setuptools>=83.0.0,<84",
+    "setuptools>=84.1.0,<85",
     "virtualenv>=21.14.9",
 ]
 

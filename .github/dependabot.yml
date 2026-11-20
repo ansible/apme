@@ -7,6 +7,21 @@ updates:
     cooldown:
       default-days: 30
 
+  # ci/tox-requirements.txt pins the uvx toolchain outside uv.lock.
+  - package-ecosystem: "pip"
+    directory: "/ci"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 30
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 30
+
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
