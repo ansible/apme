@@ -101,6 +101,18 @@ See [SECURITY.md](/SECURITY.md) for comprehensive guidelines.
 
 ## Container Rebuild Rules
 
+For every dependency or toolchain update, including a batch that combines
+Dependabot PRs, inspect the relevant `containers/**/Dockerfile` files and image
+build scripts for matching pins, version ranges, and install commands before
+opening the PR. Compare those requirements with the final manifests and
+lockfiles. In particular, check `containers/base/Dockerfile` against
+`pyproject.toml` and `uv.lock` for Python updates: its separate build dependency
+install must allow the project's `setuptools` constraint.
+
+Run `tox -e build-base` when a change affects the shared Python image, and
+verify its PR builds pass on both amd64 and arm64. Verify any other affected
+images through their build paths as well.
+
 Rebuild required after modifying: `src/**/*.py`, `proto/**/*.proto`, `pyproject.toml`, `containers/**`
 
 **Workflow:** `tox -e down` → `tox -e build` → `tox -e up`
