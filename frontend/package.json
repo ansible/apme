@@ -64,7 +64,7 @@
     "react-hook-form": "^7.90.0",
     "type-fest": "^5.9.0",
     "typescript": "^7.0.2",
-    "vite": "^8.2.2",
+    "vite": "^8.3.5",
     "vitest": "5.0.5",
     "zustand": "^5.0.15"
   },
