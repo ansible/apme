@@ -1,1 +1,33 @@
-/* Local uses the host's BUI stylesheet and native data-theme-mode palette. */
+/* Local owns the host palette. BUI components and body-level overlays inherit it. */
+html[data-theme-mode="light"],
+html body[data-theme-mode="light"] {
+  /* light-dark() colors resolve from this, not the OS preference. */
+  color-scheme: light;
+  --bui-fg-info: #155fa9;
+  --bui-fg-success: #21683b;
+  --bui-fg-danger: #9f2427;
+  --bui-fg-warning: #735400;
+}
+
+html[data-theme-mode="dark"],
+html body[data-theme-mode="dark"] {
+  color-scheme: dark;
+  --bui-bg-app: #101419;
+  --bui-bg-neutral-1: #191f26;
+  --bui-bg-neutral-2: #212933;
+  --bui-bg-neutral-3: #2a3440;
+  --bui-bg-neutral-4: #34404e;
+  --bui-bg-neutral-1-hover: #252f3a;
+  --bui-bg-neutral-2-hover: #2a3440;
+  --bui-bg-neutral-3-hover: #34404e;
+  --bui-bg-neutral-4-hover: #3e4b5b;
+  --bui-border-1: #394553;
+  --bui-border-2: #657486;
+  --bui-fg-primary: #edf2f7;
+  --bui-fg-secondary: #b6c2ce;
+  --bui-fg-info: #9ccaff;
+  --bui-fg-success: #98d9a9;
+  --bui-fg-danger: #ffaaa5;
+  --bui-fg-warning: #f5ce6f;
+  --bui-ring: #85bcff;
+}

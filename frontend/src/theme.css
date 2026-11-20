@@ -1,6 +1,13 @@
 /* APME theme overrides — APME-specific variables and styles that complement PatternFly 6 */
 
 :root {
+  /*
+   * The SPA owns its palette, so it also owns the color-scheme that the shared
+   * workflow's light-dark() colors resolve against. The PatternFly dark theme
+   * root below overrides this; leaving it implicit let badges, filter pills and
+   * graph SVGs fall back to the light half of every pair in dark mode.
+   */
+  color-scheme: light;
   --apme-green: #5ba352;
   --apme-sev-critical: #D32F2F;
   --apme-sev-error: #E53935;
@@ -23,6 +30,8 @@
  */
 :root.pf-v6-theme-dark,
 .pf-v6-theme-dark {
+  /* Inherited by workflow content, graph SVGs and body-portaled overlays. */
+  color-scheme: dark;
   --pf-t--global--border--color--default: rgba(255, 255, 255, 0.2);
   --pf-t--global--border--color--hover: rgba(255, 255, 255, 0.26);
   --pf-t--global--border--color--clicked: rgba(255, 255, 255, 0.3);

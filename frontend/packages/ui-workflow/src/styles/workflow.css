@@ -545,6 +545,10 @@
   cursor: pointer;
 }
 
+.apme-filter-pills .bui-ToggleButton[data-selected]:not([data-focus-visible]) {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
 .apme-review-filter-accessory {
   margin-bottom: 12px;
 }

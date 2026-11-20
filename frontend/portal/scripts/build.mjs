@@ -60,6 +60,13 @@ try {
                 "@apme/ui-workflow": [
                     join(root, "frontend/packages/ui-workflow/dist/index.d.ts"),
                 ],
+                // TypeScript and esbuild resolve their own extensions.
+                "@apme/ui-workflow/colors": [
+                    join(
+                        root,
+                        "frontend/packages/ui-workflow/dist/shared/colors",
+                    ),
+                ],
                 "@apme/backstage-plugin": [
                     join(
                         root,
@@ -132,6 +139,11 @@ try {
         chunkNames: "frontend/chunks/[name]-[hash]",
         tsconfig: configPath,
     });
+    // Backend imports common severity helpers. Bundle their pure colors entry
+    // without introducing a runtime dependency on the frontend workflow package.
+    const backendExternal = external.filter(
+        (name) => name !== "@apme/ui-workflow",
+    );
     for (const entry of ["catalog", "scaffolder"]) {
         await build({
             entryPoints: [join(source, `src/${entry}/index.ts`)],
@@ -140,7 +152,7 @@ try {
             format: "cjs",
             platform: "node",
             target: "node24",
-            external,
+            external: backendExternal,
             tsconfig: configPath,
             plugins: [
                 {

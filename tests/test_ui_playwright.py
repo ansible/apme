@@ -106,10 +106,13 @@ def test_local_theme_selector_switches_variants(local_app: Page) -> None:
     """
     theme = local_app.get_by_label("Color theme")
     expect(theme).to_be_visible()
-    theme.select_option("light")
     root = local_app.locator("html")
-    assert not root.evaluate(
-        "element => element.classList.contains('pf-v6-theme-dark')",
-    )
-    theme.select_option("dark")
-    assert root.evaluate("element => element.classList.contains('pf-v6-theme-dark')")
+    # Each selected mode is checked against the opposing system preference: the
+    # host theme, not prefers-color-scheme, must supply the inherited scheme
+    # that light-dark() workflow colors resolve against.
+    for mode, system in (("light", "dark"), ("dark", "light")):
+        local_app.emulate_media(color_scheme=system)
+        theme.select_option(mode)
+        expect(root).to_have_attribute("data-theme-mode", mode)
+        expect(root).to_have_css("color-scheme", mode)
+    expect(local_app.locator(".apme-table-scroll")).to_have_css("background-color", "rgb(25, 31, 38)")

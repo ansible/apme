@@ -92,7 +92,10 @@ def workflow_app(
         Page: Page showing the fixture repository list.
     """
     theme: Literal["light", "dark"] = request.param
-    page.emulate_media(color_scheme=theme)
+    # Emulate the *opposing* system preference: the host-selected mode, not
+    # prefers-color-scheme, has to drive color-scheme and every light-dark()
+    # color the workflow renders.
+    page.emulate_media(color_scheme="dark" if theme == "light" else "light")
     project = {
         "id": _PROJECT_ID,
         "name": "Workflow smoke repository",
@@ -148,6 +151,14 @@ def workflow_app(
             route.fulfill(json={"items": [project], "total": 1})
         elif method == "GET" and path == _PROJECT_PATH:
             route.fulfill(json=project)
+        elif method == "GET" and path == f"{_PROJECT_PATH}/graph":
+            route.fulfill(
+                json={
+                    "version": 1,
+                    "nodes": [{"id": "task", "data": {"name": "Show message", "node_type": "task"}}],
+                    "edges": [],
+                },
+            )
         elif method == "GET" and path == "/api/v1/ai/models":
             route.fulfill(json=[{"id": "smoke-model", "name": "Smoke model", "provider": "fixture"}])
         elif method == "POST" and path == f"{_PROJECT_PATH}/operation":
@@ -211,22 +222,46 @@ def workflow_app(
     page.evaluate("mode => document.documentElement.setAttribute('data-theme-mode', mode)", theme)
     expect(page.get_by_role("grid", name="APME repositories")).to_be_visible()
     expect(page.locator("html")).to_have_attribute("data-theme-mode", theme)
-    # Verify loaded BUI tokens actually resolve for this mode, beyond setting
-    # an attribute on otherwise unstyled markup.
-    background = page.locator("html").evaluate(
-        """element => {
-          const swatch = document.createElement('span');
-          swatch.style.backgroundColor = 'var(--bui-bg-app)';
-          element.appendChild(swatch);
-          const color = getComputedStyle(swatch).backgroundColor;
-          swatch.remove();
-          return color;
-        }""",
-    )
-    assert background == {"light": "rgb(245, 245, 245)", "dark": "rgb(51, 51, 51)"}[theme]
+    # The host palette must declare the scheme light-dark() resolves against,
+    # otherwise the OS preference leaks into badges, pills and graph strokes.
+    expect(page.locator("html")).to_have_css("color-scheme", theme)
     yield page
     assert unexpected == [], f"Unmocked Gateway requests: {unexpected}"
     assert page_errors == [], f"Browser runtime errors: {page_errors}"
+
+
+def test_data_surfaces_and_graph_use_the_current_palette(workflow_app: Page) -> None:
+    """Verify rendered colors on the table, portaled dialog, and graph.
+
+    Args:
+        workflow_app: Harness with fixture data in the selected theme.
+    """
+    page = workflow_app
+    mode = page.locator("html").get_attribute("data-theme-mode")
+    dark = mode == "dark"
+    surface = "rgb(25, 31, 38)" if dark else "rgb(255, 255, 255)"
+    heading = "rgb(33, 41, 51)" if dark else "rgb(247, 247, 247)"
+    grid = page.get_by_role("grid", name="APME repositories")
+    expect(grid.get_by_role("columnheader").first).to_have_css("background-color", heading)
+    expect(grid.get_by_role("gridcell").first).to_have_css("background-color", surface)
+
+    page.get_by_role("button", name="Add repository", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Add repository")
+    expect(dialog.locator(".bui-DialogContent")).to_have_css("background-color", surface)
+    # Overlays are portaled to <body>, so they must inherit the same scheme.
+    expect(dialog).to_have_css("color-scheme", mode)
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+
+    page.get_by_role("button", name="Workflow smoke repository", exact=True).click()
+    page.get_by_role("tab", name="Graph", exact=True).click()
+    canvas = page.locator(".graph-container")
+    expect(canvas).to_have_css("background-color", surface)
+    blue = "rgb(156, 202, 255)" if dark else "rgb(21, 95, 169)"
+    expect(canvas.locator(".graph-node")).to_have_css("stroke", blue)
+    # The transitional native host also uses this renderer without BUI tokens.
+    canvas.evaluate("element => element.style.setProperty('--bui-bg-neutral-1', 'initial')")
+    expect(canvas).to_have_css("background-color", "rgb(13, 17, 23)" if dark else "rgb(255, 255, 255)")
 
 
 def test_shared_workflow_controls_and_results(workflow_app: Page) -> None:
@@ -298,6 +333,20 @@ def test_shared_workflow_controls_and_results(workflow_app: Page) -> None:
     assert query == {"project": [_PROJECT_ID], "tab": ["history"], "scan": [_SCAN_ID]}
     expect(page.get_by_role("tab", name="History", exact=True)).to_have_attribute("aria-selected", "true")
     expect(page.get_by_text("Use an FQCN", exact=True)).to_be_visible()
+    high_filter = page.get_by_role("group", name="Filter by severity").get_by_role("button", name="High (1)")
+    dark = page.locator("html").get_attribute("data-theme-mode") == "dark"
+    orange = "rgb(255, 186, 134)" if dark else "rgb(150, 62, 0)"
+    green = "rgb(152, 217, 169)" if dark else "rgb(33, 104, 59)"
+    expect(high_filter).to_have_css("color", orange)
+    # Findings badges in the run detail resolve the same light-dark() pair.
+    finding_row = page.locator(".apme-assess-finding-row").first
+    severity_badge = finding_row.locator(".bui-Badge").first
+    expect(severity_badge).to_have_text("High")
+    expect(severity_badge).to_have_css("color", orange)
+    expect(finding_row.locator(".bui-Badge").nth(1)).to_have_text("Rule-based fix")
+    expect(finding_row.locator(".bui-Badge").nth(1)).to_have_css("color", green)
+    expect(high_filter).to_have_attribute("aria-pressed", "true")
+    expect(high_filter).to_have_css("box-shadow", f"{orange} 0px 0px 0px 1px inset")
     yaml_view = page.locator(".apme-side-by-side.apme-yaml-hl").first
     expect(yaml_view).to_be_visible()
     # The custom renderer must resolve colors without any PatternFly stylesheet

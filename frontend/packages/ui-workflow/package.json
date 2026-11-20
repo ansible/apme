@@ -17,6 +17,10 @@
       "default": "./dist/index.js"
     },
     "./styles/workflow.css": "./dist/styles/workflow.css",
+    "./colors": {
+      "types": "./dist/shared/colors.d.ts",
+      "default": "./dist/shared/colors.js"
+    },
     "./headless": {
       "types": "./dist/headless.d.ts",
       "default": "./dist/headless.js"

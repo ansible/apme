@@ -22,6 +22,7 @@ pytest.importorskip("pytest_playwright", reason="pytest-playwright not installed
 if TYPE_CHECKING:
     from playwright.sync_api import Page
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
 from playwright.sync_api import expect  # noqa: E402
 
 pytestmark = pytest.mark.ui
@@ -39,6 +40,18 @@ def dashboard(page: Page) -> Page:
     Returns:
         Page positioned on the dashboard.
     """
+    return _open_dashboard(page)
+
+
+def _open_dashboard(page: Page) -> Page:
+    """Navigate to the dashboard and expand collapsed sidebar groups.
+
+    Args:
+        page: Playwright page fixture.
+
+    Returns:
+        Page positioned on the dashboard.
+    """
     page.goto(_BASE, wait_until="networkidle")
     page.wait_for_selector("[data-testid='page-navigation']", timeout=10_000)
     nav = page.locator("[data-testid='page-navigation']")
@@ -46,6 +59,23 @@ def dashboard(page: Page) -> Page:
     while collapsed.count() > 0:
         collapsed.first.click()
     return page
+
+
+def _select_theme(page: Page, mode: str) -> None:
+    """Force the SPA theme through its masthead switcher.
+
+    The SPA defaults to the system theme, so a page loaded with the opposing
+    color preference starts on the other mode and a single click selects
+    ``mode``.
+
+    Args:
+        page: Page positioned on the SPA.
+        mode: Theme to select (``light`` or ``dark``).
+    """
+    switcher = page.locator("[data-testid='settings-icon'], [data-testid='theme-icon']").first
+    expect(switcher).to_be_visible()
+    switcher.click()
+    expect(page.locator("html.pf-v6-theme-dark")).to_have_count(1 if mode == "dark" else 0)
 
 
 # ── Navigation & Layout ───────────────────────────────────────────────
@@ -115,6 +145,95 @@ def test_theme_toggle(dashboard: Page) -> None:
     theme_btn.click()
     after_toggle = html.evaluate("el => el.classList.contains('pf-v6-theme-dark')")
     assert initial_is_dark != after_toggle
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("mode", "system"),
+    [("light", "dark"), ("dark", "light")],
+)
+def test_theme_selection_drives_inherited_color_scheme(page: Page, mode: str, system: str) -> None:
+    """The selected theme, not the OS preference, sets the inherited scheme.
+
+    Shared workflow colors are ``light-dark()`` pairs, which resolve against the
+    element's ``color-scheme``. Only the graph used to declare a scheme, so
+    badges and filter pills stayed on the light palette in dark mode.
+
+    Args:
+        page: Playwright page fixture.
+        mode: Theme selected in the masthead switcher.
+        system: Opposing system color preference.
+    """
+    page.emulate_media(color_scheme=system)
+    spa = _open_dashboard(page)
+    _select_theme(spa, mode)
+    expect(spa.locator("html")).to_have_css("color-scheme", mode)
+
+
+_DARK_HALF_OF_LIGHT_DARK = r"""element => {
+  // The browser serializes the authored pair, so hex arguments can come back as
+  // rgb() (or any other color form). Resolve the dark argument with the same
+  // engine instead of parsing colors here, so any serialization works.
+  const declared = element.style.color.trim();
+  if (!declared.startsWith('light-dark(') || !declared.endsWith(')')) return '';
+  const body = declared.slice('light-dark('.length, -1);
+  const parts = [];
+  let depth = 0;
+  let current = '';
+  for (const character of body) {
+    if (character === '(') depth += 1;
+    if (character === ')') depth -= 1;
+    if (character === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += character;
+  }
+  parts.push(current.trim());
+  if (parts.length !== 2) return '';
+  const probe = document.createElement('span');
+  probe.style.color = parts[1];
+  if (!probe.style.color) return '';
+  document.body.append(probe);
+  const resolved = getComputedStyle(probe).color;
+  probe.remove();
+  return resolved;
+}"""
+
+
+def test_findings_badge_uses_dark_palette(page: Page) -> None:
+    """A findings badge resolves the dark half of its light-dark() pair.
+
+    Skips when the running SPA has no activity with open findings.
+
+    Args:
+        page: Playwright page fixture.
+    """
+    # Keep the OS preference opposite to the theme the SPA selects.
+    page.emulate_media(color_scheme="light")
+    spa = _open_dashboard(page)
+    _select_theme(spa, "dark")
+    expect(spa.locator("html")).to_have_css("color-scheme", "dark")
+
+    spa.locator("[data-testid='activity']").click()
+    spa.wait_for_url(f"{_BASE}/activity", timeout=5_000)
+    rows = spa.locator("table[role='grid'] tbody tr")
+    if rows.count() == 0:
+        pytest.skip("No activity available for a findings badge check")
+    rows.first.click()
+    finding_rows = spa.locator(".apme-assess-finding-row")
+    try:
+        finding_rows.first.wait_for(timeout=15_000)
+        has_findings = True
+    except PlaywrightTimeoutError:
+        has_findings = False
+    if not has_findings:
+        pytest.skip("The newest run has no open findings")
+    badge = finding_rows.first.locator(".bui-Badge").first
+    expect(badge).to_be_visible()
+    expected = badge.evaluate(_DARK_HALF_OF_LIGHT_DARK)
+    assert expected, "Findings badge must use a light-dark() color pair"
+    expect(badge).to_have_css("color", expected)
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────

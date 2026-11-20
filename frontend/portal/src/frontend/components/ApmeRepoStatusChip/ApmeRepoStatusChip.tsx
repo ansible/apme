@@ -16,8 +16,14 @@
 
 import { useEffect, useState } from "react";
 import { useApi } from "@backstage/core-plugin-api";
-import { Chip, CircularProgress, makeStyles } from "@material-ui/core";
+import {
+  Chip,
+  CircularProgress,
+  makeStyles,
+  useTheme,
+} from "@material-ui/core";
 import { useNavigate } from "react-router-dom";
+import { colorTokens } from "@apme/ui-workflow/colors";
 import { Project } from "../../../common/types";
 import {
   projectHasActiveOperation,
@@ -35,20 +41,18 @@ const ACTIVE_POLL_MS = 3000;
 /** Idle catalog refresh — avoid hammering operation/state (404 when no op). */
 const IDLE_POLL_MS = 30000;
 
-const useStyles = makeStyles((theme) => ({
-  clean: {
-    backgroundColor: theme.palette.success.main,
-    color: theme.palette.common.white,
-  },
-  scanning: {
-    backgroundColor: theme.palette.info.main,
-    color: theme.palette.common.white,
-  },
-  notScanned: {
-    backgroundColor: theme.palette.grey[400],
-    color: theme.palette.common.white,
-  },
-}));
+const useStyles = makeStyles((theme) => {
+  const mode = theme.palette.type === "dark" ? "dark" : "light";
+  const chip = (color: "green" | "blue" | "neutral") => {
+    const { pillBackground, pillText } = colorTokens(color, mode);
+    return { backgroundColor: pillBackground, color: pillText };
+  };
+  return {
+    clean: chip("green"),
+    scanning: chip("blue"),
+    notScanned: chip("neutral"),
+  };
+});
 
 export interface ApmeRepoStatusChipProps {
   repoUrl: string;
@@ -63,6 +67,7 @@ export const ApmeRepoStatusChip = ({
   projectDetailPath,
 }: ApmeRepoStatusChipProps) => {
   const classes = useStyles();
+  const mode = useTheme().palette.type === "dark" ? "dark" : "light";
   const apmeApi = useApi(apmeApiRef);
   const navigate = useNavigate();
   const enabled = useApmeEnabled();
@@ -192,7 +197,7 @@ export const ApmeRepoStatusChip = ({
     <Chip
       size="small"
       label={label}
-      style={chipStyleForSeverity(worst.level)}
+      style={chipStyleForSeverity(worst.level, mode)}
       onClick={handleClick}
       clickable
     />

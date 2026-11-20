@@ -18,6 +18,7 @@ import {
   Text,
 } from "@backstage/ui";
 import { listProjects } from "@apme/client";
+import { healthScoreColor } from "@apme/ui-workflow/colors";
 import { apmeHostApiRef } from "../api/apmeApi";
 import {
   ApmeProjectTabs,
@@ -421,9 +422,17 @@ export function ApmeWorkbench({
                         <Cell>{project.branch}</Cell>
                         <Cell>{project.total_violations}</Cell>
                         <Cell>
-                          {typeof project.health_score === "number"
-                            ? `${Math.round(project.health_score)}%`
-                            : "Not recorded"}
+                          {typeof project.health_score === "number" ? (
+                            <span
+                              style={{
+                                color: healthScoreColor(project.health_score),
+                              }}
+                            >
+                              {Math.round(project.health_score)}%
+                            </span>
+                          ) : (
+                            "Not recorded"
+                          )}
                         </Cell>
                         <Cell>{project.scan_count}</Cell>
                         <Cell>

@@ -1,3 +1,4 @@
+import { fixColor, nodeColor, severityColor } from '../shared/colors';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Badge } from '@backstage/ui';
 import { RuleId } from '../shared/RuleId';
@@ -18,14 +19,12 @@ import {
   SEVERITY_ORDER,
   severityClass,
   severityDisplayLabel,
-  severityLabelColor,
   severityOrder,
 } from '../shared/severity';
 import {
   descendantProposalIds,
   filterByRuleKeepingNodeContext,
   nodeTypeLabel,
-  nodeTypeLabelColor,
   normalizeFindingNodeType,
   orderPresentNodeTypes,
   presentRuleIds,
@@ -483,28 +482,13 @@ export function ProposalReviewPanel({
               <RuleId ruleId={p.rule_id} onRuleClick={toggleRuleFilter} />
               <Badge
                 size="small"
-                style={{
-                  color: isAiGate
-                    ? 'var(--bui-fg-info)'
-                    : 'var(--bui-fg-success)',
-                }}
+                style={{ color: fixColor(isAiGate ? 'ai' : 'auto') }}
               >
                 {isAiGate ? 'AI fix' : 'Rule-based fix'}
               </Badge>
               <Badge
                 size="small"
-                style={{
-                  color: {
-                    red: 'var(--bui-fg-danger)',
-                    orange: 'var(--bui-fg-warning)',
-                    yellow: 'var(--bui-fg-warning)',
-                    blue: 'var(--bui-fg-info)',
-                    grey: 'var(--bui-fg-secondary)',
-                    green: 'var(--bui-fg-success)',
-                    teal: 'var(--bui-fg-info)',
-                    purple: 'var(--bui-fg-info)',
-                  }[nodeTypeLabelColor(normalizeFindingNodeType(p.node_type))],
-                }}
+                style={{ color: nodeColor(normalizeFindingNodeType(p.node_type)) }}
               >
                 {nodeTypeLabel(normalizeFindingNodeType(p.node_type))}
               </Badge>
@@ -535,21 +519,15 @@ export function ProposalReviewPanel({
                           {(ruleId || severity) && (
                             <Badge
                               size="small"
-                              style={{
-                                color: {
-                                  red: 'var(--bui-fg-danger)',
-                                  orange: 'var(--bui-fg-warning)',
-                                  yellow: 'var(--bui-fg-warning)',
-                                  blue: 'var(--bui-fg-info)',
-                                  grey: 'var(--bui-fg-secondary)',
-                                }[severityLabelColor(sev, ruleId)],
-                              }}
+                              style={{ color: severityColor(severityClass(sev, ruleId)) }}
                             >
                               {severityDisplayLabel(sev, ruleId)}
                             </Badge>
                           )}
                           {!isAiGate && (
-                            <Badge size="small">Rule-based fix</Badge>
+                            <Badge size="small" style={{ color: fixColor('auto') }}>
+                              Rule-based fix
+                            </Badge>
                           )}
                           <span className="apme-assess-finding-msg">
                             {message}
@@ -713,7 +691,7 @@ export function ProposalReviewPanel({
           id: sev,
           label: SEVERITY_LABELS[sev] ?? sev,
           count: severityCounts.get(sev) ?? 0,
-          color: severityLabelColor(sev),
+          color: severityColor(severityClass(sev)),
           selected: sevFilters.has(sev),
           onToggle: () => setSevFilters((prev) => toggleInFilterSet(prev, sev)),
         })),
@@ -725,7 +703,7 @@ export function ProposalReviewPanel({
           id: nt,
           label: nodeTypeLabel(nt),
           count: nodeTypeCounts.get(nt) ?? 0,
-          color: nodeTypeLabelColor(nt),
+          color: nodeColor(nt),
           selected: nodeTypeFilters.has(nt),
           onToggle: () =>
             setNodeTypeFilters((prev) => toggleInFilterSet(prev, nt)),

@@ -41,6 +41,10 @@ export default defineConfig({
         replacement: at("../packages/ui-workflow/src/headless.ts"),
       },
       {
+        find: "@apme/ui-workflow/colors",
+        replacement: at("../packages/ui-workflow/src/shared/colors.ts"),
+      },
+      {
         find: "@apme/ui-workflow",
         replacement: at("../packages/ui-workflow/src/index.ts"),
       },

@@ -54,7 +54,7 @@ describe("getSeverityColorTokens", () => {
   it("uses lifted inline tints in dark mode", () => {
     const dark = getSeverityColorTokens("dark");
     expect(dark.critical.inlineText).not.toBe(dark.critical.pillBackground);
-    expect(dark.error.inlineText).toBe("#fe5149");
+    expect(dark.error.inlineText).not.toBe(dark.critical.inlineText);
   });
 });
 
@@ -72,22 +72,32 @@ describe("getFixTypeColorTokens", () => {
 describe("getDependencySourceTokens", () => {
   it("includes learned and dependency source keys", () => {
     const light = getDependencySourceTokens("light");
-    expect(light.learned.text).toBe("#3e8635");
-    expect(getDependencySourceTokens("dark").learned.text).toBe("#7cc576");
+    expect(light.learned.text).toBe(
+      getFixTypeColorTokens("light").auto.inlineText,
+    );
+    expect(getDependencySourceTokens("dark").learned.text).toBe(
+      getFixTypeColorTokens("dark").auto.inlineText,
+    );
   });
 });
 
 describe("getDependencyViolationTokens", () => {
   it("provides theme-aware violation status colors", () => {
-    expect(getDependencyViolationTokens("light").countPillText).toBe("#c9190b");
-    expect(getDependencyViolationTokens("dark").okCheckColor).toBe("#3fb950");
+    expect(getDependencyViolationTokens("light").countPillText).toBe(
+      getSeverityColorTokens("light").critical.inlineText,
+    );
+    expect(getDependencyViolationTokens("dark").okCheckColor).toBe(
+      getFixTypeColorTokens("dark").auto.inlineText,
+    );
   });
 });
 
 describe("getCodePreviewTokens", () => {
-  it("uses severity error bar color for highlight border", () => {
+  it("uses the shared red for violation highlight borders", () => {
     const light = getCodePreviewTokens("light");
-    expect(light.highlightBorder).toBe("#c9190b");
+    expect(light.highlightBorder).toBe(
+      getSeverityColorTokens("light").critical.barFill,
+    );
     expect(getCodePreviewTokens("dark").background).toBe("#212121");
   });
 });
@@ -181,21 +191,26 @@ describe("normalizeSeverity", () => {
   it("maps ADR-043 labels without collapsing error into high", () => {
     expect(normalizeSeverity("error")).toBe("error");
     expect(normalizeSeverity("high")).toBe("high");
+    expect(normalizeSeverity("very_low")).toBe("info");
     expect(normalizeSeverity("unknown-level")).toBe("medium");
   });
 });
 
 describe("severity presentation helpers", () => {
-  it("chipStyleForSeverity maps pill colors from SEVERITY_STYLES", () => {
-    expect(chipStyleForSeverity("critical")).toEqual({
-      backgroundColor: "#a30000",
-      color: "#ffffff",
-    });
+  it("chipStyleForSeverity uses the same pill colors as other severity displays", () => {
+    for (const mode of ["light", "dark"] as const) {
+      const tokens = getSeverityColorTokens(mode).critical;
+      expect(chipStyleForSeverity("critical", mode)).toEqual({
+        backgroundColor: tokens.pillBackground,
+        color: tokens.pillText,
+      });
+    }
   });
 
   it("inlineTextColorForSeverity is theme-aware", () => {
-    expect(inlineTextColorForSeverity("high", "light")).toBe("#c46100");
-    expect(inlineTextColorForSeverity("high", "dark")).toBe("#ff8c00");
+    expect(inlineTextColorForSeverity("high", "light")).not.toBe(
+      inlineTextColorForSeverity("high", "dark"),
+    );
   });
 
   it("projectWorstSeverity delegates to resolveViolationCounts", () => {

@@ -10,6 +10,7 @@ import {
   apmeHostApiRef,
 } from "../plugins/backstage-apme/src/api/apmeApi";
 import "@backstage/ui/css/styles.css";
+import "../../../containers/rhdh/plugin/src/theme.css";
 
 const ApmePageContent = lazy(() =>
   import("../plugins/backstage-apme/src/components/ApmePage").then((m) => ({
