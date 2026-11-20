@@ -21,6 +21,37 @@ env:
 # Keep the PostgreSQL 16 index digest identical across all service jobs.
 
 jobs:
+  container-base-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      - name: Build the shared base image
+        env:
+          PLATFORM: linux/${{ matrix.arch }}
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e build-base -- --platform "$PLATFORM"
+
+  container-base:
+    runs-on: ubuntu-24.04
+    needs: container-base-matrix
+    if: always()
+    steps:
+      - name: Verify both base image builds passed
+        env:
+          RESULT: ${{ needs.container-base-matrix.result }}
+        run: test "$RESULT" = success
+
   test:
     runs-on: ubuntu-24.04
     services:
