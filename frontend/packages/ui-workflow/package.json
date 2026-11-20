@@ -58,6 +58,6 @@
     "prismjs": "^1.30.0",
     "d3": "^7.9.0",
     "dagre": "^0.8.5",
-    "@remixicon/react": ">=4.6.0 <4.10.0"
+    "@remixicon/react": "^4.9.0"
   }
 }
