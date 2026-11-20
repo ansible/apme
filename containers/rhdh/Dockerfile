@@ -12,7 +12,7 @@ COPY frontend/packages/ui-workflow/package.json frontend/packages/ui-workflow/
 COPY frontend/backstage/plugins/backstage-apme/package.json frontend/backstage/plugins/backstage-apme/
 COPY frontend/backstage/plugins/backstage-apme-backend/package.json frontend/backstage/plugins/backstage-apme-backend/
 COPY containers/rhdh/plugin/package.json containers/rhdh/plugin/
-RUN npm ci
+RUN --mount=type=cache,target=/tmp/npm-cache npm ci --cache /tmp/npm-cache
 COPY frontend/packages frontend/packages
 COPY frontend/backstage frontend/backstage
 COPY frontend/public/apme.svg frontend/public/apme.svg
