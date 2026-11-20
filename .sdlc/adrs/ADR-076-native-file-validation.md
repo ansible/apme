@@ -66,6 +66,10 @@ can perform using an existing contract.
 
 ## Implementation Notes
 
+Native uses the same uploaded file snapshot for M040. It parses Python
+inventory plugins with the standard-library AST parser and reports the
+removed `disable_lookups` keyword without loading or executing plugins.
+
 REQ-023 defines a Molecule 24.9.0+ minimum compatibility target, with pinned
 legacy (24.9.0) and native/shared-state (26.11.0) profiles.
 The built-in driver schemas supplement the core schemas. Molecule scenario

@@ -37,6 +37,59 @@ pip install apme-engine
 
 ## Quick Start
 
+### Check a registered project through the Gateway
+
+Use the Gateway's REST scan endpoint when CI needs to check a project
+registered with a running APME deployment. The request starts a check of
+the project's configured repository and branch. It does not upload the
+CI checkout.
+
+Run this Bash example with `curl` and `jq` available. Set
+`APME_GATEWAY_URL` to the Gateway origin and `APME_PROJECT_ID` to the
+registered project ID.
+
+```bash
+project_url="${APME_GATEWAY_URL%/}/api/v1/projects/${APME_PROJECT_ID}"
+operation_url="$project_url/operation"
+response=$(curl --fail --silent --show-error --max-time 30 \
+  --request POST "$project_url/scans") || exit 2
+operation_id=$(jq -er '.operation_id' <<< "$response") || exit 2
+scan_id=$(jq -er '.scan_id' <<< "$response") || exit 2
+
+deadline=$((SECONDS + 600))
+while (( SECONDS < deadline )); do
+  snapshot=$(curl --fail --silent --show-error --max-time 10 "$operation_url") || exit 2
+  if ! jq -e --arg id "$operation_id" '.operation_id == $id' <<< "$snapshot" >/dev/null; then
+    printf 'The project now has a different operation. Retrieve scan %s from /api/v1/activity/%s.\n' "$scan_id" "$scan_id" >&2
+    exit 2
+  fi
+  status=$(jq -er '.status' <<< "$snapshot") || exit 2
+  case "$status" in
+    completed)
+      count=$(jq -er '.result.total_violations | numbers' <<< "$snapshot") || exit 2
+      jq -c '{operation_id, scan_id, total_violations: .result.total_violations}' <<< "$snapshot"
+      if [[ "$count" == 0 ]]; then exit 0; fi
+      exit 1
+      ;;
+    failed|expired|cancelled|pr_submitted)
+      printf 'Gateway operation %s ended with status %s.\n' "$operation_id" "$status" >&2
+      exit 2
+      ;;
+  esac
+  sleep 2
+done
+echo 'Timed out waiting for the Gateway check.' >&2
+exit 2
+```
+
+The POST returns HTTP 202, an `operation_id`, a `scan_id`, and a
+`Location` header for polling the operation. HTTP 409 means the
+project already has an active operation. This example exits with 0 for
+a clean check, 1 for findings, or 2 for an operation or client error.
+For progress, subscribe to `GET /api/v1/projects/{project_id}/operation/events`
+and verify the operation ID from the first event. Retrieve persisted
+results from `GET /api/v1/activity/{scan_id}` using the snapshot's `scan_id`.
+
 ### GitHub Actions
 
 Copy one of these workflows to `.github/workflows/` in your Ansible repo:

@@ -143,12 +143,20 @@ apme health-check --timeout 5             # custom timeout (seconds)
 
 ```bash
 apme suppress add --rule-id L046 --mode rule_only .                # suppress all instances of a rule
-apme suppress add --rule-id L046 --original-yaml 'name: example' . # suppress a specific occurrence (full mode)
+apme suppress add --rule-id L046 --original-yaml $'- name: Example\n  ansible.builtin.command: whoami' .
 apme suppress list .                                               # show active suppressions
 apme suppress remove FINGERPRINT_PREFIX .                          # remove a suppression
 ```
 
 Suppressions are stored in `.apme/suppressions.yml` within your project.
+For full mode, pass the finding's complete original task YAML.
+In full mode, identical normalized YAML for the same rule shares a
+fingerprint across files. Moving a task therefore preserves its suppression.
+Dependency audits of installed Python packages do not have a source YAML
+file. In Backstage, acknowledging a dependency finding without source YAML
+applies to all findings for that rule in the project. Package and advisory
+specific suppression is tracked separately in
+[REQ-020 TASK-004](../../.sdlc/specs/REQ-020-unified-supply-chain-security/tasks/TASK-004-vex-advisory-suppressions.md).
 
 ### `apme sbom` — software bill of materials
 

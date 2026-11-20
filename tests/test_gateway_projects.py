@@ -99,6 +99,28 @@ async def _seed_project(
 # ── Project CRUD ──────────────────────────────────────────────────────
 
 
+async def test_trigger_project_scan(client: AsyncClient) -> None:
+    """A CI check returns IDs for polling and shares the active operation guard.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    await _seed_project(branch="stable")
+    url = "/api/v1/projects/proj-1/scans"
+    with patch("apme_gateway.api.operation_router._drive_operation", autospec=True) as drive:
+        response = await client.post(url)
+        assert response.status_code == 202
+        assert response.headers["Location"] == "/api/v1/projects/proj-1/operation"
+        snapshot = (await client.get(response.headers["Location"])).json()
+        assert response.json() == {key: snapshot[key] for key in ("operation_id", "scan_id")}
+        assert snapshot["scan_type"] == "check"
+        assert (await client.post(url)).status_code == 409
+        assert (await client.post("/api/v1/projects/missing/scans")).status_code == 404
+        drive.assert_called_once()
+        assert drive.call_args.kwargs["branch"] == "stable"
+        assert drive.call_args.kwargs["remediate"] is False
+
+
 async def test_create_project(client: AsyncClient) -> None:
     """POST /projects creates a project and returns 201.
 

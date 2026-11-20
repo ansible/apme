@@ -1,8 +1,8 @@
 """Run pip-audit against a session venv and map findings to ViolationDicts.
 
-Uses ``pip-audit --json --strict -l --path <site-packages>`` to audit
-installed packages against OSV.dev, then converts each vulnerability
-to an APME ``ViolationDict`` with rule ID ``R200``.
+Uses pip-audit to check installed packages, then converts each vulnerability
+to an APME ``ViolationDict`` with rule ID ``R200``. pip-audit uses PyPI by
+default and accepts ``PIP_AUDIT_VULNERABILITY_SERVICE=osv`` in its environment.
 """
 
 from __future__ import annotations

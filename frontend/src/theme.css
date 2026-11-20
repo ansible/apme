@@ -1116,7 +1116,10 @@
 
 .apme-review-inventory-box {
   flex: 0 1 auto;
-  width: 7rem;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: min(7rem, 100%);
+  max-width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--pf-t--global--border--color--default);
   border-radius: 6px;
@@ -1131,12 +1134,19 @@
   margin-bottom: 2px;
 }
 
-.apme-review-inventory-box__nums {
+.apme-review-inventory-box__metrics {
   display: flex;
-  flex-direction: row;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
-  gap: 6px;
+  gap: 4px 10px;
+}
+
+.apme-review-inventory-box__metric {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .apme-review-inventory-box__primary,
@@ -1151,11 +1161,7 @@
   opacity: 0.85;
 }
 
-.apme-review-inventory-box__captions {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  gap: 6px;
+.apme-review-inventory-box__caption {
   margin-top: 1px;
   font-size: 10px;
   opacity: 0.65;

@@ -1574,6 +1574,25 @@
         "title": "ProjectRanking",
         "type": "object"
       },
+      "ProjectScanAccepted": {
+        "description": "Identifiers for an asynchronously accepted project check.\n\nAttributes:\n    scan_id: Identifier used to retrieve persisted scan results.",
+        "properties": {
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "scan_id"
+        ],
+        "title": "ProjectScanAccepted",
+        "type": "object"
+      },
       "ProjectSummary": {
         "description": "Summary representation of a project for list views.\n\nAttributes:\n    id: Unique identifier.\n    name: Display label.\n    repo_url: SCM clone URL.\n    branch: Target branch.\n    created_at: ISO-8601 creation timestamp.\n    health_score: Computed 0-100 score.\n    total_violations: Count from latest check (scan row).\n    violation_trend: Direction indicator.\n    scan_count: Number of completed runs (``scan_count`` / scans table).\n    last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).\n    scm_provider: Explicit SCM provider type (ADR-050), or None for auto-detect.\n    has_requirements_token: Whether a Git requirements override is configured.\n    has_scm_token: Whether a project-level SCM token is configured (ADR-050).\n    last_scanned_commit: Git SHA of the commit used in the most recent scan.\n    has_new_commits: True when the remote branch HEAD is ahead of last_scanned_commit.\n    active_operation: Summary of any in-flight operation (ADR-052), or null.",
         "properties": {
@@ -4056,7 +4075,7 @@
         "summary": "Get Operation State"
       },
       "post": {
-        "description": "Initiate a new check or remediate operation for a project.\n\nRejects with 409 if the project already has an active operation, or if\na remediate would wipe an interactive draft working set without\n``abandon_working_set=true`` (ADR-062 Phase 2).\n\nArgs:\n    project_id: Target project UUID.\n    body: Action and options payload.\n\nReturns:\n    The new operation identifier.\n\nRaises:\n    HTTPException: 404 if project not found; 409 if operation active or\n        ``working_set_in_progress`` without abandon opt-in.",
+        "description": "Initiate a new check or remediate operation for a project.\n\nRejects with 409 if the project already has an active operation, or if\na remediate would wipe an interactive draft working set without\n``abandon_working_set=true`` (ADR-062 Phase 2).\n\nArgs:\n    project_id: Target project UUID.\n    body: Action and options payload.\n\nReturns:\n    The new operation identifier.",
         "operationId": "initiate_operation_api_v1_projects__project_id__operation_post",
         "parameters": [
           {
@@ -4493,6 +4512,60 @@
           }
         },
         "summary": "Project Sbom Endpoint"
+      }
+    },
+    "/api/v1/projects/{project_id}/scans": {
+      "post": {
+        "description": "Start an asynchronous check of the project's configured repository and branch.\n\nArgs:\n    project_id: Target project UUID.\n    response: HTTP response that receives the status URL.\n\nReturns:\n    Operation and scan identifiers. Poll the Location header for status.",
+        "operationId": "trigger_project_scan_api_v1_projects__project_id__scans_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectScanAccepted"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Location": {
+                "description": "Operation status URL",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "409": {
+            "description": "Project already has an active operation"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Project Scan"
       }
     },
     "/api/v1/projects/{project_id}/trend": {

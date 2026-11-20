@@ -102,4 +102,5 @@
 {"rule_id":"L116","filepath":"apme_engine/molecule/analysis.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"L117","filepath":"apme_engine/molecule/analysis.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"L118","filepath":"apme_engine/molecule/analysis.py","commit_id":"0000000000000000000000000000000000000000"}
-{"rule_id":"L119","filepath":"apme_engine/molecule/analysis.py","commit_id":"0000000000000000000000000000000000000000"}
+{"rule_id":"L119","filepath":"apme_engine/molecule/analysis.py","commit_id":"0000000000000000000000000000000000000000"},
+{"rule_id":"M040","filepath":"apme_engine/validators/native/rules/M040.py","commit_id":"0000000000000000000000000000000000000000"}

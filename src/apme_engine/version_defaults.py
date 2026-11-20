@@ -53,6 +53,7 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     "M028": SpecifierSet(">=2.23"),  # first_found auto-splitting deprecated
     "M029": SpecifierSet(">=2.23"),  # inventory script missing _meta
     "M030": SpecifierSet(">=2.23"),  # broken conditional expressions
+    "M040": SpecifierSet(">=2.23"),  # disable_lookups Python _compose keyword removed
     "M047": SpecifierSet(">=2.23"),  # disable_lookups inventory arg removed
 }
 

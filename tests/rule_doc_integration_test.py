@@ -15,6 +15,8 @@ from apme_engine.graph.scanner import (
 from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.molecule import MOLECULE_RULES, validate_molecule
 from apme_engine.opa_client import opa_eval_unavailable_reason, run_opa_test
+from apme_engine.validators.native.rules.M040 import RULE_ID as INVENTORY_RULE_ID
+from apme_engine.validators.native.rules.M040 import validate_inventory_plugins
 from apme_engine.validators.opa import OpaValidator
 from tests.rule_doc_harness import run_scan_playbook_yaml
 from tests.rule_doc_parser import discover_rule_docs, parse_rule_doc
@@ -86,14 +88,15 @@ def _native_file_rules_dir() -> Path:
     return Path(native_pkg.__file__).parent / "rules"
 
 
-def _collect_molecule_violations(yaml_content: str) -> list[dict[str, object]]:
+def _collect_native_file_violations(yaml_content: str, rule_id: str) -> list[dict[str, object]]:
     """Assess an explicit uploaded snapshot without wrapping it as a playbook.
 
     Args:
         yaml_content: YAML mapping of snapshot-relative paths to literal file contents.
+        rule_id: File rule under test.
 
     Returns:
-        Native Molecule file findings.
+        Native file findings.
     """
     files = yaml.safe_load(yaml_content)
     assert isinstance(files, dict) and files, "File-rule examples must provide a non-empty snapshot mapping"
@@ -101,6 +104,8 @@ def _collect_molecule_violations(yaml_content: str) -> list[dict[str, object]]:
         "File-rule snapshots must map paths to literal file-content strings"
     )
     snapshot = {path: content.encode("utf-8") for path, content in files.items()}
+    if rule_id == INVENTORY_RULE_ID:
+        return cast(list[dict[str, object]], validate_inventory_plugins(snapshot))
     assert any(Path(path).name in {"molecule.yml", "molecule.yaml"} for path in snapshot), (
         "Molecule examples must supply a scenario config"
     )
@@ -235,11 +240,11 @@ def _rule_doc_params() -> tuple[list[tuple[str, dict[str, object]]], list[str]]:
     pairs = discover_rule_docs(_native_rules_dir(), _opa_bundle_dir())
     # File validators do not expose GraphRules. Use their registered metadata
     # so every registered Molecule rule gets executable documentation coverage.
-    for rule in MOLECULE_RULES:
-        path = _native_file_rules_dir() / f"{rule.rule_id}.md"
+    for rule_id in (*[rule.rule_id for rule in MOLECULE_RULES], INVENTORY_RULE_ID):
+        path = _native_file_rules_dir() / f"{rule_id}.md"
         doc = parse_rule_doc(path)
         assert doc is not None, f"Missing or invalid native file-rule documentation: {path}"
-        assert doc.get("rule_id") == rule.rule_id and doc.get("validator") == "native"
+        assert doc.get("rule_id") == rule_id and doc.get("validator") == "native"
         examples = cast(list[dict[str, object]], doc["examples"])
         assert {example["expect_violation"] for example in examples} == {True, False}, (
             f"{path} must provide executable violation and pass examples"
@@ -284,7 +289,7 @@ def test_rule_doc_examples(md_path: str, doc: dict[str, object], opa_validator: 
         expect_violation = bool(ex["expect_violation"])
         yaml_content = str(ex["yaml"])
         if Path(md_path).parent == _native_file_rules_dir():
-            violations = _collect_molecule_violations(yaml_content)
+            violations = _collect_native_file_violations(yaml_content, rule_id)
         else:
             violations = _collect_violations(yaml_content, opa_validator)
         matching = _violation_ids_for_rule(violations, rule_id, validator)
@@ -305,7 +310,7 @@ def test_rule_doc_parser_smoke() -> None:
     assert l026[0].get("examples"), "Expected examples in L026 doc"
 
 
-def test_molecule_rule_docs_are_collected() -> None:
-    """Every native Molecule rule must enter the parametrized example test."""
+def test_native_file_rule_docs_are_collected() -> None:
+    """Every native file rule must enter the parametrized example test."""
     actual = {doc["rule_id"] for path, doc in _param_tuples if Path(path).parent == _native_file_rules_dir()}
-    assert actual == {rule.rule_id for rule in MOLECULE_RULES}
+    assert actual == {INVENTORY_RULE_ID, *(rule.rule_id for rule in MOLECULE_RULES)}

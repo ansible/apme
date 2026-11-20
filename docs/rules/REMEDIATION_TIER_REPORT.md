@@ -7,11 +7,11 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 ## Summary
 
-| Tier | Count | % of 167 |
+| Tier | Count | % of 168 |
 |------|-------|--------|
 | Tier 1 — auto (has transform) | 25 | 15% |
-| Tier 2 — AI (task/block, no fixer) | 71 | 43% |
-| Tier 3 — manual | 71 | 43% |
+| Tier 2 — AI (task/block, no fixer) | 71 | 42% |
+| Tier 3 — manual | 72 | 43% |
 
 ### Promotion potential
 
@@ -30,7 +30,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | collection scope | 15 |
 | role scope | 11 |
 | play scope | 7 |
-| inventory scope | 3 |
+| inventory scope | 4 |
 
 ## Tier 1 — Auto (25 rules)
 
@@ -145,7 +145,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | R115 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | SEC:* | critical | task | Task/block scope — AI can propose fix (Tier 2) |
 
-## Tier 3 — Manual (71 rules)
+## Tier 3 — Manual (72 rules)
 
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
@@ -209,6 +209,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M011 | OPA | high | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M025 | OPA | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | M029 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| M040 | Native | high | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | M047 | Native | medium | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | M048 | Ansible | low | task | — | Resolver target or module equivalence requires human review |
 | R108 | Native | medium | play | — | Scope 'play' — play/role/collection not AI-proposable |

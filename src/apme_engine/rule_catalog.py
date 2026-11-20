@@ -189,6 +189,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
             )
             for rule in MOLECULE_RULES
         )
+        defs.extend(rule for rule in _collect_from_frontmatter(_FILE_RULES_DIR, "native") if rule.rule_id == "M040")
         logger.info("Collected %d native rules", len(defs))
         return defs
     except Exception:

@@ -30,6 +30,7 @@ from apme_engine.graph.scanner import (
 from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.log_bridge import attach_collector
 from apme_engine.molecule import validate_molecule
+from apme_engine.validators.native.rules.M040 import validate_inventory_plugins
 
 logger = logging.getLogger("apme.native")
 
@@ -110,6 +111,7 @@ def _run_native(request: validate_pb2.ValidateRequest) -> _GraphRunResult:
     file_messages = cast(list[common_pb2.File], list(request.files))
     files = {file.path: bytes(file.content) for file in file_messages}
     file_findings = validate_molecule(files)
+    file_findings.extend(validate_inventory_plugins(files))
     if request.content_graph_data:
         dirty = frozenset(request.dirty_node_ids) if request.dirty_node_ids else None
         result = _run_graph(request.content_graph_data, dirty, list(request.graph_rule_opt_in))

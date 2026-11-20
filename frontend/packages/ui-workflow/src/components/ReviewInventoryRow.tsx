@@ -36,17 +36,23 @@ export function ReviewInventoryRow({
           className={`apme-review-inventory-box apme-review-inventory-box--${box.tone}`}
         >
           <Box className="apme-review-inventory-box__label">{box.label}</Box>
-          <Box className="apme-review-inventory-box__nums">
-            <span className="apme-review-inventory-box__primary">
-              {box.primary}
-            </span>
-            <span className="apme-review-inventory-box__secondary">
-              {box.secondary}
-            </span>
-          </Box>
-          <Box className="apme-review-inventory-box__captions">
-            <span>{box.primaryCaption ?? 'findings'}</span>
-            <span>{box.secondaryCaption ?? 'locations'}</span>
+          <Box className="apme-review-inventory-box__metrics">
+            <Box className="apme-review-inventory-box__metric">
+              <span className="apme-review-inventory-box__primary">
+                {box.primary}
+              </span>
+              <span className="apme-review-inventory-box__caption">
+                {box.primaryCaption ?? 'findings'}
+              </span>
+            </Box>
+            <Box className="apme-review-inventory-box__metric">
+              <span className="apme-review-inventory-box__secondary">
+                {box.secondary}
+              </span>
+              <span className="apme-review-inventory-box__caption">
+                {box.secondaryCaption ?? 'locations'}
+              </span>
+            </Box>
           </Box>
         </Box>
       ))}

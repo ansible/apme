@@ -8,6 +8,10 @@
 
 ## Summary
 
+M040 is implemented as a built-in Native file rule using the uploaded snapshot
+under [ADR-076](../../adrs/ADR-076-native-file-validation.md). The service and
+remaining rules described below are still in draft.
+
 Add a new Python AST validator service to detect deprecated method calls, attribute access, and constructor arguments in Ansible plugin code. This enables detection of deprecations that cannot be found via simple regex/import scanning.
 
 ## Background
@@ -71,7 +75,7 @@ Each rule below defines an executable predicate (no type inference). `file_scope
 | M037 | `shell_plugins/` or `plugins/shell/` | `visit_Call`: `isinstance(node.func, ast.Attribute) and node.func.attr == "wrap_for_exec"` | `self.wrap_for_exec(cmd)` in shell plugin | `self.wrap_for_exec(cmd)` in action plugin |
 | M038 | shell scope | `visit_Call`: `node.func.attr == "checksum"` and receiver is `self` | `self.checksum(path)` in shell plugin | `obj.checksum(path)` in unrelated module |
 | M039 | shell scope (powershell file) | `visit_Call`: `node.func.attr == "_encode_script"` | `self._encode_script(script)` in `powershell.py` | Same call in non-shell file |
-| M040 | `inventory_plugins/` or `plugins/inventory/` | `visit_Call`: any `keyword.arg == "disable_lookups"` | `Constructable(..., disable_lookups=True)` | `templar.template(disable_lookups=True)` (Templar API, out of scope for M040) |
+| M040 | `inventory_plugins/` or `plugins/inventory/` | Match attribute calls named `_compose` with the `disable_lookups` keyword | `self._compose(template, variables, disable_lookups=True)` | `templar.template(disable_lookups=True)` |
 | M041 | any plugin file importing `PluginLoader` | `visit_Call`: callee name is `PluginLoader` and any `kw.arg == "aliases"` | `PluginLoader("cache", aliases=["json"])` | `SomeClass(aliases=["json"])` |
 | M042 | same as M041 | `visit_Attribute`: `node.attr == "aliases"` and receiver variable assigned from `PluginLoader(...)` in same function | `loader.aliases` after `loader = PluginLoader(...)` | `config.aliases` on unrelated object |
 | M043 | any file | `visit_Attribute`: `node.attr == "_available_variables"` and `enclosing_class == "Templar"` | `self._available_variables` inside `class Templar` | `self._available_variables` in `class Helper` |
@@ -205,7 +209,8 @@ class DeprecationVisitor(ast.NodeVisitor):
 - [ ] M035 detects `v2_on_any` method definition
 - [ ] M036 detects v1 callback method patterns
 - [ ] M037-M039 detect deprecated shell method calls
-- [ ] M040-M042 detect PluginLoader deprecations
+- [x] M040 detects removed keywords in Python inventory plugins
+- [ ] M041-M042 detect PluginLoader deprecations
 - [ ] M043-M046 detect Templar internal access
 - [ ] Scoped matching: callback rules ignore non-callback files; shell rules ignore non-shell files; Templar rules require enclosing Templar class
 - [ ] Container builds and runs in pod
