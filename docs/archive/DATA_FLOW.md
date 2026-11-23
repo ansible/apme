@@ -228,7 +228,7 @@ Each validator returns `ValidateResponse` containing:
 - Protobuf `Violation` messages
 - `ValidatorDiagnostics` with per-rule timing, violation counts, and validator-specific metadata
 
-Engine converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message carried on `FixCompletedEvent` (and the `SessionEvent` stream) from `FixSession` — the unary `Scan` / `ScanResponse` RPCs were removed (ADR-039).
+Engine converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message. The aggregate is captured on the session's first full scan pass and carried on both `SessionResult.diagnostics` (direct FixSession clients, issue #512) and the `FixCompletedEvent` reporting path — one source object for both consumers — from `FixSession` — the unary `Scan` / `ScanResponse` RPCs were removed (ADR-039).
 
 ### Diagnostics flow
 

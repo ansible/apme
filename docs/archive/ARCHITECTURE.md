@@ -345,9 +345,9 @@ CLI displays with -v / -vv
 | `-v` | Engine time, validator summaries (tree format), top 10 slowest rules |
 | `-vv` | Full per-rule breakdown for every validator, metadata, engine phase timing |
 
-`SessionEvent` / `SessionResult` do not carry `ScanDiagnostics`; the aggregated
-message is emitted on the `FixCompletedEvent` reporting path. CLI `-v` / `-vv`
-surfaces pipeline `ProgressUpdate` logs from the session stream.
+`SessionResult.diagnostics` exposes the aggregate to direct FixSession clients,
+and `FixCompletedEvent.diagnostics` carries it on the reporting path. CLI `-v`
+/ `-vv` surfaces pipeline `ProgressUpdate` logs from the session stream.
 
 ## Health checks
 

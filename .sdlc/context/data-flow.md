@@ -216,7 +216,7 @@ Each validator returns `ValidateResponse` containing:
 - Protobuf `Violation` messages
 - `ValidatorDiagnostics` with per-rule timing, violation counts, and validator-specific metadata
 
-Engine converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message. `SessionEvent` / `SessionResult` do not carry diagnostics; the aggregated message is emitted on the `FixCompletedEvent` reporting path (and recorded as OTel metrics). CLI `-v` / `-vv` surfaces pipeline `ProgressUpdate` logs from the session stream, not a protobuf diagnostics field on `SessionEvent`.
+Engine converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message. The aggregate is exposed on `SessionResult.diagnostics` for direct FixSession clients and on the `FixCompletedEvent` reporting path (and recorded as OTel metrics). CLI `-v` / `-vv` surfaces pipeline `ProgressUpdate` logs from the session stream, not a protobuf diagnostics field on `SessionEvent`.
 
 ---
 
