@@ -2688,7 +2688,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             rel_files.extend(file for file in formatted_files if file.path not in supplied_paths)
             (
                 violations,
-                _,
+                session_diag,
                 _,
                 validator_logs,
                 _hierarchy_payload,
@@ -2712,6 +2712,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 rule_configs_complete=scan_rule_configs_complete,
                 skip_validators=frozenset(skip_validators),
             )
+
+            # First full-project pass owns the aggregate diagnostics surfaced on
+            # SessionResult / FixCompletedEvent (issue #512); later convergence
+            # passes only re-scan mutated files.
+            if session.scan_diagnostics is None and session_diag is not None:
+                session.scan_diagnostics = session_diag
 
             for batch in validator_logs:
                 session.progress_logs.extend(batch)
@@ -4551,14 +4557,19 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         report = session.report or FixReport()
 
-        yield SessionEvent(
+        session_event = SessionEvent(
             result=SessionResult(
                 patches=patches,
                 report=report,
                 remaining_violations=remaining_violations,
                 fixed_violations=list(report.fixed_violations),
+                # Aggregate scan diagnostics for direct clients (issue #512);
+                # same source the reporting path emits via
+                # FixCompletedEvent.diagnostics. None leaves the field unset.
+                diagnostics=session.scan_diagnostics,
             ),
         )
+        yield session_event
 
     async def _session_build_result(
         self,
@@ -4694,6 +4705,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             patches=patches or [],  # type: ignore[arg-type]
             manifest=manifest,
             content_graph_json=graph_json,
+            diagnostics=session.scan_diagnostics,  # issue #512: same source as SessionResult
         )
 
     async def _session_replay_state(

@@ -47,8 +47,9 @@ The `metadata` map carries validator-specific key-value pairs (e.g.,
 
 ### ScanDiagnostics
 
-Aggregated diagnostics for an entire scan, emitted on the
-`FixCompletedEvent` reporting path (not on `SessionResult`):
+Aggregated diagnostics for an entire scan, exposed on
+`SessionResult.diagnostics` for direct FixSession clients and on
+`FixCompletedEvent.diagnostics` for the reporting path:
 
 ```protobuf
 message ScanDiagnostics {

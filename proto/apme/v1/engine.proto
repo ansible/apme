@@ -273,6 +273,10 @@ message SessionResult {
   FixReport report = 2;
   repeated Violation remaining_violations = 3;
   repeated Violation fixed_violations = 4;
+  // Aggregate diagnostics from the session's scan passes (issue #512):
+  // lets direct FixSession clients read timing/counters without the
+  // reporting sink. Same source object as FixCompletedEvent.diagnostics.
+  ScanDiagnostics diagnostics = 5;
 }
 
 message ExpirationWarning {

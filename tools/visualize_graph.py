@@ -113,9 +113,9 @@ HTML_TEMPLATE = """\
     <button onclick="zoomOut()">&minus;</button>
     <div class="sep"></div>
     <button id="tog-play" onclick="toggleGroup('play')" style="color:#f0883e">Plays</button>
-    <button id="tog-role" onclick="toggleGroup('role')" style="color:#d2a8ff">Roles</button>
+    <button id="tog-role" onclick="toggleGroup('role')" style="color:#d2a8ff" class="tog-on">Roles</button>
     <button id="tog-block" onclick="toggleGroup('block')" style="color:#d29922">Blocks</button>
-    <button id="tog-inc" onclick="toggleIncludes()" style="color:#d2a8ff">Includes</button>
+    <button id="tog-inc" onclick="toggleIncludes()" style="color:#d2a8ff" class="tog-on">Includes</button>
   </div>
   <div id="legend" class="overlay">
     <h3>Nodes</h3>
@@ -132,6 +132,8 @@ HTML_TEMPLATE = """\
     <div class="li"><svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#f0883e" stroke-width="1.8"/></svg>dependency</div>
     <div class="li"><svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#f778ba" stroke-width="1.2" stroke-dasharray="8 3"/></svg>data_flow</div>
     <div class="li"><svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="2 4"/></svg>notify</div>
+    <div class="li"><svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#58a6ff" stroke-width="1.2" stroke-dasharray="6 3"/></svg>import</div>
+    <div class="li"><svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke="#d2a8ff" stroke-width="1.2" stroke-dasharray="4 4"/></svg>include</div>
     <h3 style="margin-top:8px">Groups <span style="font-weight:normal;color:#8b949e">(toggle)</span></h3>
     <div class="li"><div class="sw" style="background:#f0883e;opacity:0.3;border:1px solid #f0883e"></div>Play</div>
     <div class="li"><div class="sw" style="background:#d2a8ff;opacity:0.3;border:1px solid #d2a8ff"></div>Role</div>
@@ -280,12 +282,23 @@ function drawEdge(group, srcId, tgtId, cls) {{
 }}
 
 // ── Flow edges (from pre-computed execution_edges) ───────────────
-execEdges.forEach(e => drawEdge(flowGroup, e.source, e.target, "flow"));
+const includeImportPairs = new Set(edgeData
+  .filter(e => e.type === "include" || e.type === "import")
+  .map(e => JSON.stringify([e.source, e.target])));
+execEdges.forEach(e => {{
+  // The cross-cutting pass draws these relationships with their dashed style.
+  // Keep the execution edges for layout, but do not paint a solid path beneath them.
+  if (includeImportPairs.has(JSON.stringify([e.source, e.target]))) return;
+  drawEdge(flowGroup, e.source, e.target, "flow");
+}});
 
 // ── Cross-cutting edges (dependency, notify, etc.) ───────────────
 const xEdgeGroup = container.append("g");
+// Include/import edges are drawn by default: they tie an include_role or
+// import_tasks task to the role/task file it pulls in, making nested
+// includes discoverable in the initial view (#841).
 edgeData.forEach(e => {{
-  if (e.type === "contains" || e.type === "include" || e.type === "import") return;
+  if (e.type === "contains") return;
   drawEdge(xEdgeGroup, e.source, e.target, e.type);
 }});
 
@@ -351,9 +364,13 @@ fitAll();
 
 // ── Group bounding-box computation ───────────────────────────────
 const groupColors = {{ play: "#f0883e", role: "#d2a8ff", block: "#d29922" }};
-const groupState = {{ play: false, role: false, block: false }};
+// Roles and Includes are enabled by default so nested included roles are
+// visible in the initial view; Plays and Blocks stay opt-in (#841).
+const groupState = {{ play: false, role: true, block: false }};
 
+const descendantsCache = new Map();
 function descendants(nodeId) {{
+  if (descendantsCache.has(nodeId)) return descendantsCache.get(nodeId);
   const result = [];
   const stack = [nodeId];
   const visited = new Set();
@@ -364,6 +381,7 @@ function descendants(nodeId) {{
     const ch = containsChildren[id];
     if (ch) ch.forEach(c => {{ result.push(c.target); stack.push(c.target); }});
   }}
+  descendantsCache.set(nodeId, result);
   return result;
 }}
 
@@ -408,9 +426,8 @@ function toggleGroup(type) {{
 }}
 
 // ── Include/Import bounding-box toggle ───────────────────────────
-let incVisible = false;
-function toggleIncludes() {{
-  incVisible = !incVisible;
+let incVisible = true;
+function renderIncludes() {{
   document.getElementById("tog-inc").classList.toggle("tog-on", incVisible);
   groupLayer.selectAll(".grp-include").remove();
   if (!incVisible) return;
@@ -432,6 +449,14 @@ function toggleIncludes() {{
       .text(e.type + ": " + srcName);
   }});
 }}
+function toggleIncludes() {{
+  incVisible = !incVisible;
+  renderIncludes();
+}}
+
+// Initial render of default-enabled overlays (Roles, Includes).
+renderGroups("role");
+renderIncludes();
 </script>
 </body>
 </html>

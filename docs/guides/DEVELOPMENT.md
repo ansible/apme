@@ -514,7 +514,7 @@ The Ansible validator uses session-scoped venvs provided by the Engine (read-onl
 
 ## Diagnostics
 
-Every validator collects per-rule timing data and returns it in `ValidateResponse.diagnostics`. The Engine aggregates engine timing + all validator diagnostics into `ScanDiagnostics` on the `FixCompletedEvent` reporting path during `FixSession`. `SessionEvent` / `SessionResult` do not carry diagnostics fields.
+Every validator collects per-rule timing data and returns it in `ValidateResponse.diagnostics`. The Engine aggregates engine timing + all validator diagnostics into `ScanDiagnostics`, captured on the session's first full scan pass. During `FixSession` the same aggregate is exposed on `SessionResult.diagnostics` for direct clients (issue #512) and on the `FixCompletedEvent` reporting path.
 
 ### CLI verbosity flags
 
