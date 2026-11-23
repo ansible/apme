@@ -212,8 +212,8 @@ class TestDepAuditServicer:
         request = ValidateRequest(request_id="test-1", venv_path="")
         ctx = MagicMock()
         resp = await servicer.Validate(request, ctx)
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
-        assert resp.request_id == "test-1"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 0
+        assert resp.request_id == "test-1"
 
     async def test_validate_with_findings(self) -> None:
         """Returns violations from pip-audit subprocess."""
@@ -240,10 +240,10 @@ class TestDepAuditServicer:
         with patch("apme_engine.daemon.dep_audit_server._run_audit", return_value=violations):
             resp = await servicer.Validate(request, ctx)
 
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == "R200"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == "R200"
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
-        assert resp.diagnostics.validator_name == "dep_audit"  # type: ignore[attr-defined]
+        assert resp.diagnostics.validator_name == "dep_audit"
 
     async def test_health_available(self) -> None:
         """Health returns ok when pip-audit is available."""

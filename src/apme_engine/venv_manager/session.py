@@ -27,8 +27,10 @@ Storage layout::
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -40,15 +42,19 @@ import sys
 import tempfile
 import textwrap
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import asdict, dataclass, field
 from functools import partial
 from itertools import batched
 from pathlib import Path
+from typing import NamedTuple
 
 import httpx
 import yaml
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 
+from apme_engine.cache import BoundedCache
 from apme_engine.config_env import get_env_int
 from apme_engine.venv_manager.venv_collections import (
     _SAFE_VERSION_RE,
@@ -64,7 +70,7 @@ from apme_engine.venv_manager.venv_collections import (
 from apme_engine.venv_manager.venv_collections import (
     _requirements_hash as _requirements_hash,
 )
-from galaxy_proxy.naming import fqcn_to_python
+from galaxy_proxy.naming import fqcn_to_python, wheel_filename
 
 logger = logging.getLogger("apme.venv")
 
@@ -219,7 +225,9 @@ def _run_subprocess_timed(
         cmd: Command argv.
         timeout: Wall-clock bound in seconds.
         check: If True, raise ``CalledProcessError`` on non-zero exit.
-        env: Child process environment, or None to inherit it.
+        env: Explicit subprocess environment (defaults to inheriting
+            ``os.environ``). Per-session Galaxy configs travel here so
+            concurrent sessions never observe each other via global state.
 
     Returns:
         CompletedProcess with stdout/stderr captured.
@@ -262,6 +270,7 @@ def _run_pip_install(
     exclude_file: Path | None = None,
     no_build: bool = False,
     proxy_only: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a single pip/uv install command and return the result.
 
@@ -278,6 +287,10 @@ def _run_pip_install(
             used as a last-resort fallback when ``exclude_file`` is not
             available (non-uv installs).
         proxy_only: Use only the Galaxy Proxy index and temporary caches for Git installs.
+        env: Explicit subprocess environment for per-session Galaxy
+            isolation (defaults to process inheritance). When ``proxy_only``
+            scrubs ``PIP_``/``UV_`` overrides, it scrubs this environment
+            rather than the process environment.
 
     Returns:
         CompletedProcess with stdout/stderr captured.
@@ -332,9 +345,9 @@ def _run_pip_install(
     cmd.extend(pip_specs)
     try:
         if proxy_only:
-            env = {key: value for key, value in os.environ.items() if not key.startswith(("PIP_", "UV_"))}
-            return _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S, env=env)
-        return _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S)
+            base_env = os.environ if env is None else env
+            env = {key: value for key, value in base_env.items() if not key.startswith(("PIP_", "UV_"))}
+        return _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S, env=env)
     except subprocess.TimeoutExpired as exc:
         logger.warning(
             "pip/uv install timed out after %ds, failing fast (no exclude/no-build retry)",
@@ -385,29 +398,73 @@ def _extract_unbuildable_packages(output: str) -> list[str]:
     return result
 
 
+class _PrepareOutcome(NamedTuple):
+    """Result of asking the proxy to resolve collection specs.
+
+    Attributes:
+        scope_id: Opaque PEP 503 scope ID for request-scoped settings, else ``None``.
+        failed_specs: Requested specs the proxy could not resolve or download.
+        prepared: Wheel filenames the proxy prepared for the requested specs.
+        shared: Whether the proxy served the request from its process-wide
+            (shared) cache instead of a request-scoped handoff.
+        generation: Source generation the shared wheels were prepared under,
+            used to fence the later ``/wheels/`` fetch, else ``None``.
+    """
+
+    scope_id: str | None
+    failed_specs: list[str]
+    prepared: list[str]
+    shared: bool
+    generation: int | None = None
+
+
+def _prepared_wheels(payload: object) -> list[str]:
+    """Extract prepared wheel filenames from a prepare response body.
+
+    Args:
+        payload: Parsed prepare response.
+
+    Returns:
+        Wheel basenames that end in ``.whl`` and carry no path separator.
+    """
+    prepared = payload.get("prepared", []) if isinstance(payload, dict) else []
+    if not isinstance(prepared, list):
+        return []
+    return [name for name in prepared if isinstance(name, str) and name.endswith(".whl") and "/" not in name]
+
+
 def _prepare_collections_via_proxy(
     proxy_url: str,
     collection_specs: list[str],
+    galaxy_server_configs: list[dict[str, object]] | None = None,
     *,
     provided: Mapping[str, str] | None = None,
     timeout: float = _PROXY_PREPARE_TIMEOUT_S,
-) -> None:
+) -> _PrepareOutcome:
     """Ask the proxy to resolve pins/latest versions using its Galaxy CLI.
 
     Args:
         proxy_url: Base URL of the Galaxy Proxy.
         collection_specs: Collection FQCNs with optional version constraints.
+        galaxy_server_configs: Optional scan-scoped server settings forwarded
+            to the authenticated proxy request.
         provided: Git collection identities and versions supplied by this scan.
         timeout: Remaining time budget for the prepare request.
 
     Raises:
         RuntimeError: If the proxy cannot prepare the requested collections.
+
+    Returns:
+        Scope ID for session-specific settings plus the requested specs the
+        proxy reported as unprepared (both empty/``None`` when nothing failed).
     """
     token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
     headers = {_PROXY_ADMIN_TOKEN_HEADER: token} if token else {}
     payload: dict[str, object] = {"specs": collection_specs}
     if provided:
         payload["provided"] = dict(provided)
+    if galaxy_server_configs is not None:
+        payload["servers"] = galaxy_server_configs
     try:
         response = httpx.post(
             proxy_url.rstrip("/") + "/admin/prepare-collections",
@@ -424,8 +481,411 @@ def _prepare_collections_via_proxy(
     except ValueError as exc:
         raise RuntimeError("Galaxy proxy returned an invalid prepare response") from exc
     failed = payload.get("failed_specs", []) if isinstance(payload, dict) else []
-    if failed:
-        logger.warning("Galaxy proxy could not prepare collection specs: %s", failed)
+    failed_specs = [spec for spec in failed if isinstance(spec, str)] if isinstance(failed, list) else []
+    if failed_specs:
+        logger.warning("Galaxy proxy could not prepare collection specs: %s", failed_specs)
+    scope_id = payload.get("scope_id") if isinstance(payload, dict) else None
+    valid_scope = scope_id if isinstance(scope_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id) else None
+    generation = payload.get("generation") if isinstance(payload, dict) else None
+    return _PrepareOutcome(
+        scope_id=valid_scope,
+        failed_specs=failed_specs,
+        prepared=_prepared_wheels(payload),
+        shared=isinstance(payload, dict) and payload.get("shared") is True,
+        generation=generation if isinstance(generation, int) and not isinstance(generation, bool) else None,
+    )
+
+
+def _shared_fallback_wheel_filename(spec: str) -> str | None:
+    """Wheel filename the proxy publishes for a shared exact-pin fallback.
+
+    A shared preparation that cannot prepare an exact pin still publishes a
+    fallback link for it: the project page lists the wheel filename and the
+    ``/wheels/`` route downloads and converts that exact version on demand.
+    This mirrors the proxy's fallback registry (exact ``ns.name==version``
+    pins with a valid version only), so the Engine can bind those pins to
+    the generation-fenced wheel route instead of dropping them.
+
+    Args:
+        spec: Requested collection spec the proxy reported as unprepared.
+
+    Returns:
+        Wheel filename the proxy publishes for the pin, or ``None`` when the
+        spec is not an exact pin (no fenced fallback artifact exists).
+    """
+    fqcn, separator, requested = spec.partition(":")
+    requested = requested.removeprefix("==")
+    if not separator or not re.fullmatch(r"[0-9][0-9A-Za-z._+-]*", requested) or "." not in fqcn:
+        return None
+    namespace, collection = fqcn.split(".", 1)
+    return wheel_filename(namespace, collection, requested)
+
+
+def _unprepared_requested_specs(failed_specs: list[str], requested: list[str]) -> list[str]:
+    """Match proxy ``failed_specs`` entries back to the requested specs.
+
+    The proxy echoes the requested spec strings verbatim (``ns.name`` or
+    ``ns.name:<constraint>``), so this is an exact comparison after trimming
+    and case-folding; a looser match would exclude collections that installed
+    fine.
+
+    Args:
+        failed_specs: Spec strings the proxy reported as unprepared.
+        requested: Spec strings passed to the prepare request.
+
+    Returns:
+        Requested specs that must not be installed, in request order.
+    """
+    blocked = {spec.strip().lower() for spec in failed_specs}
+    return [spec for spec in requested if spec.strip().lower() in blocked]
+
+
+def _prepared_version(filename: str, prefix: str) -> Version | None:
+    """Return the version a prepared wheel filename declares.
+
+    Args:
+        filename: Wheel basename such as ``ansible_collection_ns_coll-1.2.3-py3-none-any.whl``.
+        prefix: Distribution prefix the filename must start with.
+
+    Returns:
+        The parsed version, or ``None`` when the filename is not a wheel of
+        that distribution or its version is unparseable.
+    """
+    rest = filename[len(prefix) :]
+    version = rest.split("-", 1)[0]
+    try:
+        return Version(version)
+    except InvalidVersion:
+        return None
+
+
+def _spec_constraint(spec: str) -> tuple[str, SpecifierSet]:
+    """Split a collection spec into its distribution name and constraint.
+
+    The constraint is read from the requested spec rather than from the
+    ``pip_spec``, because a ``pip_spec`` is not always a requirement: once a
+    handoff has been bound, the pair carries a wheel URL, and a retry after a
+    stale fence is prepared from exactly those pairs. Reading a URL yields no
+    constraint, which would let the binder choose any prepared version of the
+    collection instead of the one that was requested.
+
+    Args:
+        spec: Collection FQCN with an optional constraint
+            (``ansible.posix:>=1,<3``, ``community.general:14.0.1``).
+
+    Returns:
+        ``(distribution_name, specifier_set)``; the set is empty when the spec
+        carries no constraint or one that cannot be parsed.
+    """
+    namespace, _, collection = spec.split(":", 1)[0].strip().partition(".")
+    dist = f"ansible-collection-{namespace}-{collection}"
+    try:
+        # ``_spec_to_pip`` owns the spec-to-requirement rules (a bare pin
+        # becomes ``==1.2.3``, ``*`` becomes no constraint), so a retry is
+        # bound by exactly the constraint the first attempt used.
+        pip_spec = _spec_to_pip(spec)
+        return dist, SpecifierSet(pip_spec[len(dist) :].strip())
+    except (ValueError, InvalidSpecifier):
+        return dist, SpecifierSet()
+
+
+def _bind_prepared_pip_specs(
+    installable: list[tuple[str, str]],
+    prepared: list[str],
+    base_url: str,
+    generation: int | None = None,
+) -> list[tuple[str, str]]:
+    """Point each prepared collection requirement at its wheel URL.
+
+    The proxy index is added as an *extra* index while the default index stays
+    configured, so pip/uv (``unsafe-best-match``) is free to prefer a
+    same-named distribution published on the default index over the wheel this
+    request prepared — even at an equal version, where the resolver's tie-break
+    is unspecified. Installing the prepared wheel by URL binds the requirement
+    to that exact artifact; wheels it depends on still resolve from the
+    configured indexes, which keeps dependency installation working.
+
+    The requirement's own constraint still has to be honoured when several
+    prepared wheels exist for one collection: a previous install can leave
+    another version in the cache, so ``ansible.posix:1.5.4`` may see both 1.5.3
+    and 1.5.4. Candidates outside the constraint are dropped, and the highest
+    remaining one is bound — the same choice the resolver would make among
+    artifacts this request prepared. A requirement with no prepared candidate
+    is left as-is (its content did not come from this scope).
+
+    The constraint always comes from ``spec``, never from ``pip_spec``: a retry
+    after a stale fence is prepared from pairs whose ``pip_spec`` is already a
+    wheel URL, and a URL carries no version, so taking it from there would bind
+    whatever version the refreshed handoff happens to hold.
+
+    Every requirement in the batch that names the same distribution narrows
+    that choice, because the URL pin removes the resolver's freedom to step
+    back: with ``ansible.posix:>=1,<3`` and ``ansible.posix<2`` in one batch,
+    binding 2.0.0 would fail the install where the index would have picked
+    1.5.4. The constraints are intersected, and a distribution whose prepared
+    wheels do not satisfy the intersection is left to the index rather than
+    pinned to an artifact the batch rejects. Constraints contributed by
+    dependencies are not known before resolution, so they stay with the
+    resolver, exactly as they do for an index-resolved install.
+
+    Args:
+        installable: ``(spec, pip_spec)`` pairs to install.
+        prepared: Wheel basenames the proxy prepared for this request.
+        base_url: Proxy URL prefix that serves those wheels (the scoped handoff
+            or the shared ``/wheels/`` directory).
+        generation: Source generation the shared wheels were prepared under;
+            appended as a query parameter so a later source change cannot swap
+            the artifact behind the same filename.
+
+    Returns:
+        ``(spec, pip_spec)`` pairs with prepared collections bound to their
+        wheel URL.
+    """
+    fence = f"?generation={generation}" if generation is not None else ""
+    batch: dict[str, SpecifierSet] = {}
+    for spec, _pip_spec in installable:
+        dist_name, spec_set = _spec_constraint(spec)
+        batch[dist_name] = batch[dist_name] & spec_set if dist_name in batch else spec_set
+    bound: list[tuple[str, str]] = []
+    for spec, pip_spec in installable:
+        fqcn = spec.split(":", 1)[0].strip()
+        namespace, _, collection = fqcn.partition(".")
+        prefix = f"ansible_collection_{namespace}_{collection}-"
+        wanted = batch[f"ansible-collection-{namespace}-{collection}"]
+        candidates: list[tuple[Version, str]] = []
+        for name in prepared:
+            if not name.startswith(prefix):
+                continue
+            version = _prepared_version(name, prefix)
+            if version is None or version not in wanted:
+                continue
+            candidates.append((version, name))
+        if candidates:
+            _, chosen = max(candidates)
+            bound.append((spec, base_url + chosen + fence))
+        else:
+            bound.append((spec, pip_spec))
+    return bound
+
+
+def _release_session_scope(proxy_url: str, scope_id: str) -> None:
+    """Release a request-scoped wheel handoff after installation finishes.
+
+    Args:
+        proxy_url: Base URL of the Galaxy Proxy.
+        scope_id: Opaque scope returned by the prepare request.
+    """
+    token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
+    headers = {_PROXY_ADMIN_TOKEN_HEADER: token} if token else {}
+    try:
+        response = httpx.delete(
+            proxy_url.rstrip("/") + f"/admin/session-scopes/{scope_id}",
+            headers=headers,
+            timeout=10.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        # The proxy TTL remains a bounded fallback if release cannot be
+        # delivered. Do not mask the collection-install result with cleanup.
+        logger.warning("Could not release scoped Galaxy wheel handoff: %s", type(exc).__name__)
+
+
+def _is_stale_wheel_fence(*streams: str) -> bool:
+    """Detect an install failure caused by a stale prepared-wheel generation.
+
+    A shared handoff names wheels by filename, so the fetch is fenced with the
+    generation they were prepared under. When the collection source changes in
+    between, the proxy rejects that fetch with ``409 Conflict`` and the install
+    fails without touching the session venv: the prepared wheels belong to a
+    source the proxy no longer serves.
+
+    Args:
+        *streams: Output streams of the failed install command. All of them are
+            searched, because the status code and the URL carrying
+            ``generation=`` can be reported on different ones.
+
+    Returns:
+        True when the proxy rejected a fenced wheel fetch.
+    """
+    output = "\n".join(streams)
+    if "generation=" not in output:
+        return False
+    return "409" in output or "Conflict" in output
+
+
+def _prepare_proxy_install(
+    proxy_url: str,
+    installable: list[tuple[str, str]],
+    galaxy_server_configs: list[dict[str, object]] | None,
+    failed: list[str],
+    *,
+    must_hand_off: bool = False,
+) -> tuple[list[tuple[str, str]], str, str | None] | None:
+    """Prepare collection wheels through the proxy and bind them to their URLs.
+
+    Preparation resolves exact pins because the project page lists prepared
+    wheels and does not enumerate remote Galaxy versions. A config update can
+    race this request and return 409, so retry once after that conflict.
+
+    Args:
+        proxy_url: Base URL of the Galaxy Proxy.
+        installable: ``(spec, pip_spec)`` pairs to install.
+        galaxy_server_configs: Optional scan-scoped server settings forwarded
+            to the authenticated proxy request.
+        failed: Failure accumulator. Specs that must not be installed are
+            appended here so the caller reports them.
+        must_hand_off: When ``True`` the caller has already served this batch
+            from a handoff that turned out stale, so every installed spec must
+            come from freshly bound wheels. A proxy that cannot prepare them,
+            a response that provides neither a scope nor a shared handoff,
+            or a spec without a prepared wheel is reported as failed instead
+            of falling back to the default index — a same-named distribution
+            there would make the retry look successful without any prepared
+            artifact. The initial unscoped call keeps the legacy fallback.
+
+    Returns:
+        ``(installable, index_url, scope_id)`` with prepared collections bound
+        to their wheel URL, or ``None`` when there is nothing left to install
+        and every requested spec is already recorded as failed. A shared
+        preparation keeps unprepared exact pins installable: they bind to the
+        proxy's on-demand fallback wheel (fenced with the preparation's
+        generation) instead of being reported as failed.
+    """
+    simple_url = proxy_url.rstrip("/") + "/simple/"
+    installable_specs = [spec for spec, _ in installable]
+    session_scope_id: str | None = None
+    unprepared: list[str] = []
+    prepared_wheels: list[str] = []
+    shared_prepare = False
+    generation: int | None = None
+    for attempt in range(2):
+        try:
+            outcome = _prepare_collections_via_proxy(proxy_url, installable_specs, galaxy_server_configs)
+            session_scope_id = outcome.scope_id
+            unprepared = outcome.failed_specs
+            prepared_wheels = outcome.prepared
+            shared_prepare = outcome.shared
+            generation = outcome.generation
+            break
+        except RuntimeError as exc:
+            cause = exc.__cause__
+            conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
+            if conflict and attempt == 0:
+                logger.info("Galaxy configuration changed during collection preparation; retrying once")
+                continue
+            if galaxy_server_configs is not None or must_hand_off:
+                logger.warning("Collection preparation failed before the install: %s", exc)
+                failed.extend(installable_specs)
+                return None
+            logger.warning("Collection preparation failed; continuing with install: %s", exc)
+            break
+
+    if galaxy_server_configs is not None and session_scope_id is None and not shared_prepare:
+        # A request-scoped Galaxy source must never install from the shared
+        # index: its wheels were downloaded with other credentials. The proxy
+        # only omits a scope when it explicitly reports reusing its shared
+        # cache for settings identical to the ready configuration.
+        failed.extend(installable_specs)
+        return None
+    if session_scope_id is None and not shared_prepare:
+        if must_hand_off:
+            # A stale-fence retry requires a fresh, fenced handoff. Plain
+            # requirements would resolve from whatever the shared index
+            # serves now, making the retry look successful without a
+            # prepared artifact — the fence it is retrying would be bypassed.
+            logger.warning("Galaxy preparation returned no wheel handoff after the source changed")
+            failed.extend(installable_specs)
+            return None
+        return installable, simple_url, None
+
+    if session_scope_id is not None:
+        simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
+    # A scoped index is an *extra* index: pip and uv keep the default one
+    # enabled, so a spec the proxy could not prepare would still resolve
+    # elsewhere, install "successfully", and be recorded against this
+    # scope. Drop those specs from the install command entirely and report
+    # them as failed instead. A shared preparation keeps a fallback for
+    # exact pins: the proxy publishes a wheel link whose fetch retries the
+    # Hub on demand, so those pins are bound to the generation-fenced
+    # wheel route (as extra prepared wheels) instead of being dropped — a
+    # temporary preparation failure must not abort the scan when the exact
+    # fetch would succeed. Non-exact specs have no fenced fallback artifact
+    # and keep the failure filter.
+    unprepared_specs = _unprepared_requested_specs(unprepared, installable_specs)
+    blocked: list[str] = []
+    fallbacks: list[str] = []
+    for spec in unprepared_specs:
+        if session_scope_id is None and (filename := _shared_fallback_wheel_filename(spec)) is not None:
+            fallbacks.append(filename)
+        else:
+            blocked.append(spec)
+    if fallbacks:
+        logger.info(
+            "Retrying %d unprepared exact pin(s) through the proxy wheel fallback: %s",
+            len(fallbacks),
+            ", ".join(sorted(fallbacks)),
+        )
+        prepared_wheels = [*prepared_wheels, *fallbacks]
+    if blocked:
+        logger.warning(
+            "Not installing %d collection spec(s) the Galaxy source could not prepare: %s",
+            len(blocked),
+            ", ".join(sorted(blocked)),
+        )
+        failed.extend(blocked)
+        installable = [(spec, pip_spec) for spec, pip_spec in installable if spec not in blocked]
+        if not installable:
+            # Nothing will consume the prepared scope, so release it now
+            # instead of leaving it to the proxy TTL.
+            if session_scope_id is not None:
+                _release_session_scope(proxy_url, session_scope_id)
+            return None
+    base_url = ""
+    fence: int | None = None
+    if prepared_wheels:
+        # Bind prepared collections to their wheel; see
+        # ``_bind_prepared_pip_specs`` for why a version pin is not enough.
+        # Both paths need it: the shared cache serves its wheels from
+        # ``/wheels/``, and a same-named distribution on the default index
+        # would otherwise be an acceptable candidate there too.
+        if session_scope_id is not None:
+            base_url = proxy_url.rstrip("/") + f"/session-wheels/{session_scope_id}/"
+            fence = None
+        else:
+            # The shared handoff names wheels only by filename. Fence the
+            # fetch with the generation they were prepared under, so a
+            # source change in between fails the install instead of
+            # installing the same filename from the new source.
+            base_url = proxy_url.rstrip("/") + "/wheels/"
+            fence = generation
+        installable = _bind_prepared_pip_specs(installable, prepared_wheels, base_url, fence)
+    if must_hand_off:
+        bound: list[tuple[str, str]] = []
+        unbound: list[str] = []
+        # A matching base_url prefix alone cannot accept a URL from this
+        # handoff: a shared wheel URL carries the generation it was prepared
+        # under, and the retry must serve the current one — a stale URL would
+        # install the same filename from the abandoned source. Scoped URLs
+        # name the scope itself, so the prefix is their fresh handoff.
+        fence_suffix = f"?generation={fence}" if fence is not None else ""
+        for spec, pip_spec in installable:
+            if base_url and pip_spec.startswith(base_url) and pip_spec.endswith(fence_suffix):
+                bound.append((spec, pip_spec))
+            else:
+                unbound.append(spec)
+        if unbound:
+            logger.warning(
+                "Not installing %d collection spec(s) without a fresh wheel after the source changed: %s",
+                len(unbound),
+                ", ".join(sorted(unbound)),
+            )
+            failed.extend(unbound)
+            if not bound:
+                if session_scope_id is not None:
+                    _release_session_scope(proxy_url, session_scope_id)
+                return None
+            installable = bound
+    return installable, simple_url, session_scope_id
 
 
 def _install_collections_via_proxy(
@@ -433,6 +893,8 @@ def _install_collections_via_proxy(
     collection_specs: list[str],
     proxy_url: str,
     use_uv: bool,
+    env: dict[str, str] | None = None,
+    galaxy_server_configs: list[dict[str, object]] | None = None,
     *,
     wheel_paths: Mapping[str, Path] | None = None,
     wheel_dependencies: tuple[str, ...] = (),
@@ -457,6 +919,10 @@ def _install_collections_via_proxy(
         collection_specs: Collection specifiers to install.
         proxy_url: Base URL of the galaxy proxy.
         use_uv: Whether to use uv for installation.
+        env: Explicit subprocess environment for per-session Galaxy
+            isolation (defaults to process inheritance).
+        galaxy_server_configs: Optional scan-scoped server settings passed to
+            the authenticated proxy preparation request.
         wheel_paths: Local wheels keyed by the collection FQCN they supply.
         wheel_dependencies: Galaxy specs declared by local wheels.
         provided: Galaxy versions supplied by the local wheels.
@@ -464,112 +930,388 @@ def _install_collections_via_proxy(
 
     Returns:
         List of collection specs that failed to install (empty on full success).
+        A spec whose version constraint is not valid PEP 440 is reported here
+        without stopping the other collections: one typo must not leave the
+        session venv empty (which would silently mis-resolve every later
+        collection reference of the scan).
 
     Note:
         A stalled pip/uv install propagates ``PipInstallTimeout`` from the
         install helpers — failing fast instead of walking the fallback chain.
+
+        For a request-scoped Galaxy source, specs the proxy reported in
+        ``failed_specs`` are excluded from the install command and returned as
+        failures. The scoped index is added as an extra index, so leaving them
+        in would let pip/uv satisfy them from another index and report success
+        for content that never came from this scope. Successfully prepared
+        collections are installed from their scoped wheel URL, so their
+        resolution cannot silently fall back to a same-named default-index
+        distribution; their own dependencies still resolve normally.
+
+        A preparation response that reuses the proxy's shared cache carries no
+        scope; that is a success, not a failed preparation, and the install
+        proceeds against the shared index.
+
+        The shared handoff is fenced with the generation its wheels were
+        prepared under. A source change in between makes the proxy reject that
+        fetch; the preparation is then repeated once against the current
+        source, because nothing was installed and the collections themselves
+        are still available. Reporting them as failed would abort the scan.
+        When the fence trips during the per-collection fallback instead,
+        specs already installed individually carry wheels from the abandoned
+        generation, so the refreshed plan covers every requested spec —
+        including ones the abandoned plan rejected, whose rejections are
+        discarded with it — and the re-run reinstalls them all from one
+        generation; a venv must not report success while its collections
+        come from mixed generations. A fence that trips during an
+        individual spec's native-dependency retry routes through the same
+        refresh instead of recording a final failure for that spec.
     """
     wheels = wheel_paths or {}
-    index_path = "/simple-local/" if wheels else "/simple/"
-    simple_url = proxy_url.rstrip("/") + index_path
-    pip_specs = [
-        str(wheels[fqcn]) if (fqcn := _spec_bare_fqcn(spec)) in wheels else _spec_to_pip(spec)
-        for spec in collection_specs
-    ]
-    remote_specs = list(
-        dict.fromkeys(spec for spec in (*collection_specs, *wheel_dependencies) if _spec_bare_fqcn(spec) not in wheels)
-    )
+    if wheels:
+        index_path = "/simple-local/"
+        simple_url = proxy_url.rstrip("/") + index_path
+        pip_specs = [
+            str(wheels[fqcn]) if (fqcn := _spec_bare_fqcn(spec)) in wheels else _spec_to_pip(spec)
+            for spec in collection_specs
+        ]
+        remote_specs = list(
+            dict.fromkeys(
+                spec for spec in (*collection_specs, *wheel_dependencies) if _spec_bare_fqcn(spec) not in wheels
+            )
+        )
 
-    # Preparation resolves exact pins because the project page lists prepared
-    # wheels and does not enumerate remote Galaxy versions. A config update can
-    # race this request and return 409, so retry once after that conflict.
-    prepare_deadline = time.monotonic() + _PROXY_PREPARE_TIMEOUT_S
-    for batch in batched(remote_specs, 100):
-        for attempt in range(2):
-            remaining = prepare_deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            try:
-                _prepare_collections_via_proxy(proxy_url, list(batch), provided=provided, timeout=remaining)
-                break
-            except RuntimeError as exc:
-                cause = exc.__cause__
-                conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
-                if conflict and attempt == 0:
-                    logger.info("Galaxy configuration changed during collection preparation; retrying once")
+        # Preparation resolves exact pins because the project page lists prepared
+        # wheels and does not enumerate remote Galaxy versions. A config update can
+        # race this request and return 409, so retry once after that conflict.
+        # The request's Galaxy source is forwarded so remote requirements of a
+        # Git-backed install resolve against that source, not the proxy's shared
+        # one: when the scan carries its own Hub settings, the preparation
+        # returns a session scope and every remote requirement (requested specs
+        # and declared dependencies alike) is bound to its scoped wheel URL —
+        # the local Git wheels and the core pin keep resolving through the
+        # proxy index. Requirements the scoped source could not prepare are
+        # reported as failed instead of resolving elsewhere. Without scoped
+        # settings the preparation only warms the shared cache and the
+        # install resolves through it as before.
+        scoped_failed: list[str] = []
+        bound_remote: dict[str, str] = {}
+        git_scope_ids: list[str] = []
+        prepare_deadline = time.monotonic() + _PROXY_PREPARE_TIMEOUT_S
+
+        def _bind_batch_to_handoff(batch: list[str], outcome: _PrepareOutcome, base: str, fence: int | None) -> None:
+            """Record one batch's bindings against a preparation handoff.
+
+            Requirements the handoff could not prepare, constraints that are
+            not valid PEP 440, and requirements without a prepared wheel are
+            reported as scoped failures instead of resolving against another
+            source.
+
+            Args:
+                batch: Remote requirement specs of one preparation batch.
+                outcome: The preparation handoff to bind against.
+                base: Wheel URL base of the handoff (scoped or fenced).
+                fence: Generation the shared handoff's fetches are fenced
+                    with, or ``None`` for a scoped handoff.
+            """
+            unprepared = _unprepared_requested_specs(outcome.failed_specs, list(batch))
+            if unprepared:
+                scoped_failed.extend(unprepared)
+            batch_installable: list[tuple[str, str]] = []
+            for spec in batch:
+                if spec in unprepared:
                     continue
-                logger.warning("Collection preparation failed; continuing with install: %s", exc)
-                break
-        if time.monotonic() >= prepare_deadline:
-            logger.warning("Collection preparation reached its time limit; continuing with install")
+                try:
+                    batch_installable.append((spec, _spec_to_pip(spec)))
+                except ValueError:
+                    # A dependency constraint that is not valid PEP 440
+                    # cannot be bound to a wheel URL.
+                    scoped_failed.append(spec)
+            for spec, pip_spec in _bind_prepared_pip_specs(batch_installable, outcome.prepared, base, fence):
+                if pip_spec.startswith(base):
+                    bound_remote[spec] = pip_spec
+                else:
+                    # No prepared wheel for this requirement: it must not
+                    # resolve against another source.
+                    scoped_failed.append(spec)
+
+        try:
+            for batch in batched(remote_specs, 100):
+                for attempt in range(2):
+                    remaining = prepare_deadline - time.monotonic()
+                    if remaining <= 0:
+                        if galaxy_server_configs is not None:
+                            # A scoped batch that never finished preparing
+                            # must not fall through to the shared index.
+                            scoped_failed.extend(batch)
+                        break
+                    try:
+                        outcome = _prepare_collections_via_proxy(
+                            proxy_url, list(batch), galaxy_server_configs, provided=provided, timeout=remaining
+                        )
+                    except RuntimeError as exc:
+                        cause = exc.__cause__
+                        conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
+                        if conflict and attempt == 0:
+                            logger.info("Galaxy configuration changed during collection preparation; retrying once")
+                            continue
+                        if galaxy_server_configs is not None:
+                            # A scoped source must not fall back to the shared
+                            # index: its wheels were downloaded with other
+                            # credentials.
+                            logger.warning("Collection preparation failed before the Git-wheel install: %s", exc)
+                            scoped_failed.extend(batch)
+                        else:
+                            logger.warning("Collection preparation failed; continuing with install: %s", exc)
+                        break
+                    if outcome.scope_id is not None:
+                        git_scope_ids.append(outcome.scope_id)
+                        _bind_batch_to_handoff(
+                            list(batch),
+                            outcome,
+                            proxy_url.rstrip("/") + f"/session-wheels/{outcome.scope_id}/",
+                            None,
+                        )
+                    elif galaxy_server_configs is not None and outcome.shared:
+                        # The request's settings match the ready source, so
+                        # the proxy reused its shared cache instead of opening
+                        # a scope. The handoff is still the artifact set this
+                        # install must use: bind the batch to the
+                        # generation-fenced /wheels/ route so a source change
+                        # cannot swap what uv resolves, or fail the batch when
+                        # the handoff carries no generation to fence.
+                        if outcome.generation is None:
+                            scoped_failed.extend(batch)
+                        else:
+                            _bind_batch_to_handoff(
+                                list(batch), outcome, proxy_url.rstrip("/") + "/wheels/", outcome.generation
+                            )
+                    break
+            if galaxy_server_configs is not None:
+                missing_wheel_deps = [
+                    spec
+                    for spec in wheel_dependencies
+                    if spec not in bound_remote and _spec_bare_fqcn(spec) not in wheels
+                ]
+                if missing_wheel_deps:
+                    # A local Git wheel declares these dependencies, so they
+                    # are absent from pip's command line yet still resolved
+                    # by uv through the shared index — a mixed install the
+                    # scan's source-violating wheels cannot be reported from.
+                    # Stop the install instead: the requested specs and the
+                    # unprepared dependencies are reported as failures.
+                    logger.warning(
+                        "Not running the Git-wheel install: %d dependency spec(s) lack an approved artifact: %s",
+                        len(missing_wheel_deps),
+                        ", ".join(sorted(set(missing_wheel_deps))),
+                    )
+                    return sorted(set(collection_specs) | set(scoped_failed))
+            if scoped_failed or bound_remote:
+                pip_specs = [
+                    bound_remote[spec]
+                    if spec in bound_remote
+                    else str(wheels[fqcn])
+                    if (fqcn := _spec_bare_fqcn(spec)) in wheels
+                    else _spec_to_pip(spec)
+                    for spec in collection_specs
+                    if spec not in scoped_failed
+                ] + [
+                    bound_remote[spec]
+                    for spec in wheel_dependencies
+                    if spec in bound_remote and spec not in collection_specs
+                ]
+                if scoped_failed:
+                    logger.warning(
+                        "Not installing %d remote collection spec(s) the scoped Galaxy source could not prepare: %s",
+                        len(scoped_failed),
+                        ", ".join(sorted(set(scoped_failed))),
+                    )
+
+            if ansible_version:
+                pip_specs.append(f"ansible-core=={ansible_version}")
+            result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, proxy_only=True, env=env)
+            if result.returncode == 0:
+                return sorted(set(scoped_failed))
+            # Per-collection retries could replace the selected Git wheels with Hub versions.
+            logger.warning(
+                "Collection install with Git wheels failed: %s", _redact_url_credentials(result.stderr or result.stdout)
+            )
+            return collection_specs
+        finally:
+            for scope_id in git_scope_ids:
+                _release_session_scope(proxy_url, scope_id)
+
+    simple_url = proxy_url.rstrip("/") + "/simple/"
+    installable: list[tuple[str, str]] = []
+    invalid: list[str] = []
+    for spec in collection_specs:
+        try:
+            installable.append((spec, _spec_to_pip(spec)))
+        except ValueError as exc:
+            logger.warning("Skipping collection spec %r: %s", spec, exc)
+            invalid.append(spec)
+    if not installable:
+        return invalid
+    requested = list(installable)
+
+    # Preparation failures belong to the plan that produced them: a retry
+    # replaces the plan, so its rejections must not accumulate on top of the
+    # abandoned attempt's (nor be reported twice). Invalid specs above are
+    # independent of any plan and stay reported.
+    refreshes_left = 1
+    scope_ids: list[str] = []
+    try:
+        for attempt in range(2):
+            plan_failures: list[str] = []
+            plan = _prepare_proxy_install(
+                proxy_url,
+                requested,
+                galaxy_server_configs,
+                plan_failures,
+                must_hand_off=attempt > 0,
+            )
+            if plan is None:
+                return invalid + plan_failures
+            installable, simple_url, session_scope_id = plan
+            if session_scope_id is not None:
+                scope_ids.append(session_scope_id)
+            pip_specs = [pip_spec for _, pip_spec in installable]
+
+            result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)
+            if result.returncode == 0:
+                return invalid + plan_failures
+            bulk_output = result.stderr or result.stdout
+            if (
+                refreshes_left
+                and session_scope_id is None
+                and _is_stale_wheel_fence(result.stderr or "", result.stdout or "")
+            ):
+                # The collection source changed between preparation and the
+                # wheel fetch, so the proxy fenced off the prepared artifacts.
+                # Nothing was installed; prepare again against the current
+                # source instead of reporting the collections as unavailable.
+                refreshes_left -= 1
+                logger.info("Galaxy source changed after collection preparation; preparing again")
+                continue
             break
 
-    if wheels:
-        if ansible_version:
-            pip_specs.append(f"ansible-core=={ansible_version}")
-        result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, proxy_only=True)
-        if result.returncode == 0:
-            return []
-        # Per-collection retries could replace the selected Git wheels with Hub versions.
+        if _is_build_failure(bulk_output):
+            unbuildable = _extract_unbuildable_packages(bulk_output)
+            result = _retry_without_native(
+                pip_python,
+                pip_specs,
+                simple_url,
+                use_uv,
+                unbuildable,
+                bulk_output,
+                env,
+            )
+            if result.returncode == 0:
+                return invalid + plan_failures
+            bulk_output = result.stderr or result.stdout
+
         logger.warning(
-            "Collection install with Git wheels failed: %s", _redact_url_credentials(result.stderr or result.stdout)
-        )
-        return collection_specs
-
-    result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv)
-    if result.returncode == 0:
-        return []
-
-    bulk_output = result.stderr or result.stdout
-    if _is_build_failure(bulk_output):
-        unbuildable = _extract_unbuildable_packages(bulk_output)
-        result = _retry_without_native(
-            pip_python,
-            pip_specs,
-            simple_url,
-            use_uv,
-            unbuildable,
+            "Bulk collection install failed, falling back to individual installs: %s",
             bulk_output,
         )
-        if result.returncode == 0:
-            return []
-        bulk_output = result.stderr or result.stdout
 
-    logger.warning(
-        "Bulk collection install failed, falling back to individual installs: %s",
-        bulk_output,
-    )
+        pending = list(installable)
 
-    failed: list[str] = []
-    for spec in collection_specs:
-        pip_spec = _spec_to_pip(spec)
-        individual = _run_pip_install(pip_python, [pip_spec], simple_url, use_uv)
-        if individual.returncode != 0:
-            ind_output = individual.stderr or individual.stdout
-            if _is_build_failure(ind_output):
-                unbuildable = _extract_unbuildable_packages(ind_output)
-                retry = _retry_without_native(
-                    pip_python,
-                    [pip_spec],
-                    simple_url,
-                    use_uv,
-                    unbuildable,
+        def _refresh_after_stale_fence() -> bool:
+            """Replace the abandoned plan after a stale-wheel fence.
+
+            Re-prepares every requested spec — including ones the abandoned
+            plan rejected — with a mandatory fresh handoff, and resets the
+            failure list, because the abandoned plan's rejections belong to
+            that plan and must not survive its replacement.
+
+            Returns:
+                Whether the individual loop should continue with the
+                refreshed plan.
+            """
+            nonlocal installable, simple_url, pending, plan_failures, refreshes_left
+            refreshes_left -= 1
+            logger.info(
+                "Galaxy source changed during individual installs; preparing all %d specs again",
+                len(requested),
+            )
+            plan_failures = []
+            refreshed = _prepare_proxy_install(
+                proxy_url,
+                requested,
+                galaxy_server_configs,
+                plan_failures,
+                must_hand_off=True,
+            )
+            if refreshed is None:
+                return False
+            installable = list(refreshed[0])
+            simple_url = refreshed[1]
+            pending = list(refreshed[0])
+            if refreshed[2] is not None:
+                scope_ids.append(refreshed[2])
+            return True
+
+        while pending:
+            spec, pip_spec = pending[0]
+            individual = _run_pip_install(pip_python, [pip_spec], simple_url, use_uv, env=env)
+            if individual.returncode != 0:
+                ind_output = individual.stderr or individual.stdout
+                if (
+                    refreshes_left
+                    and session_scope_id is None
+                    and _is_stale_wheel_fence(individual.stderr or "", individual.stdout or "")
+                ):
+                    # The source changed while the fallback was running. Specs
+                    # already installed individually carry wheels from the
+                    # abandoned generation; a venv must not mix generations,
+                    # so the refreshed plan covers every requested spec and
+                    # the re-run reinstalls the earlier ones from the current
+                    # source instead of leaving them on the stale one.
+                    if not _refresh_after_stale_fence():
+                        break
+                    continue
+                if _is_build_failure(ind_output):
+                    unbuildable = _extract_unbuildable_packages(ind_output)
+                    retry = _retry_without_native(
+                        pip_python,
+                        [pip_spec],
+                        simple_url,
+                        use_uv,
+                        unbuildable,
+                        ind_output,
+                        env,
+                    )
+                    if retry.returncode == 0:
+                        logger.info("Collection installed successfully (excluded native deps): %s", spec)
+                        pending.pop(0)
+                        continue
+                    ind_output = retry.stderr or retry.stdout
+                    if (
+                        refreshes_left
+                        and session_scope_id is None
+                        and _is_stale_wheel_fence(retry.stderr or "", retry.stdout or "")
+                    ):
+                        # The retry's own wheel fetch can hit the fence after
+                        # the source changed: route it through the same
+                        # refresh instead of recording a final failure.
+                        if not _refresh_after_stale_fence():
+                            break
+                        continue
+                logger.warning(
+                    "Collection install failed for %s: %s",
+                    spec,
                     ind_output,
                 )
-                if retry.returncode == 0:
-                    logger.info("Collection installed successfully (excluded native deps): %s", spec)
-                    continue
-                ind_output = retry.stderr or retry.stdout
-            logger.warning(
-                "Collection install failed for %s: %s",
-                spec,
-                ind_output,
-            )
-            failed.append(spec)
-        else:
-            logger.info("Collection installed successfully: %s", spec)
+                plan_failures.append(spec)
+            else:
+                logger.info("Collection installed successfully: %s", spec)
+            pending.pop(0)
 
-    return failed
+        return invalid + plan_failures
+    finally:
+        for scope_id in scope_ids:
+            _release_session_scope(proxy_url, scope_id)
 
 
 _MAX_EXCLUDE_RETRIES = 5
@@ -582,6 +1324,7 @@ def _retry_without_native(
     use_uv: bool,
     unbuildable: list[str],
     original_output: str,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Retry an install after excluding unbuildable native packages.
 
@@ -597,6 +1340,7 @@ def _retry_without_native(
         use_uv: Whether to use uv for installation.
         unbuildable: Package names that failed to build from source.
         original_output: The original error output (for logging context).
+        env: Explicit subprocess environment for per-session isolation.
 
     Returns:
         CompletedProcess from the last retry attempt.
@@ -608,7 +1352,7 @@ def _retry_without_native(
             fallback,
             original_output,
         )
-        return _run_pip_install(pip_python, pip_specs, simple_url, use_uv, no_build=True)
+        return _run_pip_install(pip_python, pip_specs, simple_url, use_uv, no_build=True, env=env)
 
     all_excluded: set[str] = set(unbuildable)
     excludes_dir = Path(tempfile.mkdtemp(prefix="apme-excludes-"))
@@ -630,6 +1374,7 @@ def _retry_without_native(
                 simple_url,
                 use_uv,
                 exclude_file=excludes_file,
+                env=env,
             )
             if result.returncode == 0:
                 return result
@@ -719,6 +1464,8 @@ def create_base_venv(
 def install_collections_incremental(
     venv_dir: Path,
     collection_specs: list[str],
+    env: dict[str, str] | None = None,
+    galaxy_server_configs: list[dict[str, object]] | None = None,
     *,
     local_wheels: Mapping[str, LocalCollectionWheel] | None = None,
     ansible_version: str | None = None,
@@ -736,6 +1483,10 @@ def install_collections_incremental(
     Args:
         venv_dir: Root of the virtualenv (must already exist with ansible-core).
         collection_specs: Collection specifiers to install.
+        env: Explicit subprocess environment carrying the session Galaxy
+            config (per-call, no global mutation).
+        galaxy_server_configs: Optional session Galaxy servers for proxy
+            collection preparation.
         local_wheels: Local artifacts for collection identities in the request.
         ansible_version: Exact version of Ansible Core to preserve during a mixed install.
 
@@ -757,8 +1508,10 @@ def install_collections_incremental(
 
     pip_python = get_venv_python(venv_dir)
     use_uv = _uv_available()
+    pip_python = get_venv_python(venv_dir)
+    use_uv = _uv_available()
     if not local_wheels:
-        return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
+        return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv, env, galaxy_server_configs)
     if not use_uv:
         raise RuntimeError("Git collection installation requires uv")
 
@@ -781,6 +1534,8 @@ def install_collections_incremental(
             collection_specs,
             proxy,
             use_uv,
+            env,
+            galaxy_server_configs,
             wheel_paths=paths,
             wheel_dependencies=dependencies,
             provided={fqcn: wheel.galaxy_version for fqcn, wheel in local_wheels.items()},
@@ -1099,6 +1854,347 @@ def _normalize_version(raw: str) -> str:
     return ".".join(parts[:2]) + ".0" if len(parts) < 3 else raw.strip()
 
 
+class VenvGenerationLock:
+    """Async readers-writer lock for one venv generation.
+
+    The fcntl ``.lock`` serialises on-disk mutation, but it is released
+    before validator fan-out reads the venv. This in-process RW lock
+    covers that window: installs take the write (exclusive) side while
+    validator fan-out holds the read (shared) side for its whole
+    duration, so an incremental install cannot mutate a venv an
+    in-flight scan is executing against.
+
+    Writer-preference: a writer announces itself in ``_writer_waiting``
+    before blocking; new readers arriving while a writer waits (or holds)
+    park on the condition instead of barging, so a steady stream of
+    readers cannot starve an install. Every reader rendezvous through the
+    shared condition — a second concurrent reader therefore blocks on an
+    active or pending writer just like the first one does (the old
+    ``readers == 1`` shortcut let the second reader slip past a writer
+    holding the exclusive side).
+
+    Acquisition is fail-fast: ``acquire_read`` / ``acquire_write`` take an
+    optional ``timeout`` (default 60s) and raise ``TimeoutError`` instead
+    of parking a scan forever behind a wedged peer.
+    """
+
+    def __init__(self) -> None:
+        """Initialise an unlocked generation lock."""
+        self._mu = asyncio.Lock()
+        self._cond = asyncio.Condition(self._mu)
+        self._readers = 0
+        self._readers_waiting = 0
+        self._writer_active = False
+        self._writer_waiting = 0
+
+    def in_use_count(self) -> int:
+        """Return the number of holders plus queued waiters.
+
+        Counts shared holders (``_readers``), readers still inside
+        ``acquire_read`` (``_readers_waiting``, parked or about to take the
+        shared side), the exclusive holder (``_writer_active``), and queued
+        writers (``_writer_waiting``). A notified reader must stay counted:
+        ``release_write`` clears ``_writer_active`` before the woken readers
+        run, so counting only holders would report the lock idle in that
+        window, let the cache evict it, and allow a fresh lock for the same
+        generation to admit an install alongside the parked reader. Summing
+        waiters waits for every holder and waiter to leave. Best-effort
+        snapshot for cache eviction only (callers must stay on the
+        event-loop thread, where the counters cannot change mid-read); never
+        a sync primitive.
+
+        Returns:
+            Holders + waiters (0 means provably idle).
+        """
+        return self._readers + self._readers_waiting + (1 if self._writer_active else 0) + self._writer_waiting
+
+    def is_idle(self) -> bool:
+        """Return True when no holder or waiter references this lock.
+
+        Returns:
+            True when ``in_use_count()`` is zero.
+        """
+        return self.in_use_count() == 0
+
+    async def acquire_read(self, timeout: float | None = 60.0) -> None:
+        """Acquire shared read access for validator fan-out.
+
+        Args:
+            timeout: Max seconds to wait for the exclusive side to clear
+                (``None`` waits forever).
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        async with self._cond:
+            # Monotonic deadline: every wait consumes the same budget, so
+            # the documented timeout holds under notify_all churn instead
+            # of resetting on each wake.
+            deadline = None if timeout is None else time.monotonic() + timeout
+            # Counted from entry until the shared side is held: a reader whose
+            # wait is notified by ``release_write`` has not resumed yet, and
+            # must still keep the lock alive for cache eviction.
+            self._readers_waiting += 1
+            try:
+                while self._writer_active or self._writer_waiting > 0:
+                    remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                    await asyncio.wait_for(self._cond.wait(), remaining)
+                self._readers += 1
+            finally:
+                self._readers_waiting -= 1
+
+    async def release_read(self) -> None:
+        """Release shared read access."""
+        async with self._cond:
+            self._readers = max(0, self._readers - 1)
+            if self._readers == 0:
+                self._cond.notify_all()
+
+    async def acquire_write(self, timeout: float | None = 60.0) -> None:
+        """Acquire exclusive write access for installs.
+
+        Args:
+            timeout: Max seconds to wait for readers to drain
+                (``None`` waits forever).
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        async with self._cond:
+            self._writer_waiting += 1
+            acquired = False
+            try:
+                # Monotonic deadline (same budget across wakes as the read
+                # side) so repeated notifications cannot extend the wait
+                # past the documented timeout.
+                deadline = None if timeout is None else time.monotonic() + timeout
+                while self._writer_active or self._readers > 0:
+                    remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                    await asyncio.wait_for(self._cond.wait(), remaining)
+                self._writer_active = True
+                acquired = True
+            finally:
+                self._writer_waiting -= 1
+                if not acquired:
+                    # Abandoned wait (timeout/cancel): wake readers parked
+                    # on writer-preference so they re-check the cleared
+                    # announcement instead of hanging on a gone writer.
+                    self._cond.notify_all()
+            self._cond.notify_all()
+
+    async def release_write(self) -> None:
+        """Release exclusive write access."""
+        async with self._cond:
+            self._writer_active = False
+            self._cond.notify_all()
+
+    @contextlib.asynccontextmanager
+    async def read(self, timeout: float | None = 60.0) -> AsyncIterator[None]:
+        """Hold shared read access for the enclosed fan-out.
+
+        Args:
+            timeout: Max seconds to wait for the exclusive side to clear
+                (``None`` waits forever).
+
+        Yields:
+            None: Control to the fan-out body.
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        await self.acquire_read(timeout)
+        try:
+            yield
+        finally:
+            await self.release_read()
+
+    @contextlib.asynccontextmanager
+    async def write(self, timeout: float | None = 60.0) -> AsyncIterator[None]:
+        """Hold exclusive write access for the enclosed install.
+
+        Args:
+            timeout: Max seconds to wait for readers to drain
+                (``None`` waits forever).
+
+        Yields:
+            None: Control to the install body.
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        await self.acquire_write(timeout)
+        try:
+            yield
+        finally:
+            await self.release_write()
+
+
+async def wait_out_worker[T](worker: asyncio.Future[T]) -> T:
+    """Await a shielded worker, waiting it out when cancelled.
+
+    ``asyncio.shield`` detaches the worker from outer cancellation, but a
+    plain ``await shield(...)`` still exits at once when the awaiting
+    coroutine is cancelled — releasing any guard the caller holds while
+    the worker thread keeps mutating shared state (split exclusion).
+    This helper re-waits (still shielded) so the caller keeps its guard
+    until the worker finishes, then re-raises the cancellation.
+
+    Args:
+        worker: Executor future doing guarded mutation.
+
+    Returns:
+        The worker result when it completes without cancellation.
+
+    Raises:
+        asyncio.CancelledError: When the awaiting coroutine was
+            cancelled (after the worker finished). A worker failure
+            during the wait-out is swallowed: the scan is cancelling
+            anyway and slot release is arranged separately.
+    """
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # Loop until the worker finishes: a second cancel during the
+        # re-wait must not release the caller's guard early (double-cancel
+        # would otherwise split exclusion while the worker thread still
+        # mutates shared state). ``asyncio.wait`` never cancels the worker
+        # itself, so worker failures surface only as completion here and
+        # stay swallowed — the scan is cancelling anyway.
+        while not worker.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait({worker})
+        raise
+
+
+#: Bound on cached per-generation RW locks. The key space is
+#: ``(session_id, core_version)`` — small per deployment, but client
+#: session ids are untrusted input, so a bounded cap stops unbounded growth
+#: from session-id churn. Least-recently-used IDLE entries are evicted
+#: first; a lock that is still held or waited on is never evicted (the map
+#: temporarily grows over cap instead of splitting mutual exclusion).
+_MAX_GENERATION_LOCKS = 512
+
+_GENERATION_LOCKS: BoundedCache[tuple[str, str], VenvGenerationLock] = BoundedCache(
+    maxsize=_MAX_GENERATION_LOCKS,
+    is_idle=lambda lock: lock.is_idle(),
+)
+
+
+def _generation_key(session_id: str, ansible_version: str) -> tuple[str, str]:
+    """Normalise the per-generation lock key.
+
+    Args:
+        session_id: Raw session identifier.
+        ansible_version: Raw ansible-core version constraint.
+
+    Returns:
+        Tuple of (sanitised session id, normalised version). Invalid
+        inputs fall back to the raw strings so locking never raises.
+    """
+    try:
+        sid = _sanitize_session_id(session_id)
+    except ValueError:
+        sid = session_id
+    try:
+        ver = _normalize_version(ansible_version)
+    except ValueError:
+        ver = ansible_version
+    return (sid, ver)
+
+
+def get_generation_lock(session_id: str, ansible_version: str) -> VenvGenerationLock:
+    """Return the shared RW lock for a venv generation.
+
+    The backing map is LRU-capped via :class:`BoundedCache`: hits refresh
+    recency, and inserts evict the oldest IDLE entry only (all-busy maps
+    grow temporarily over cap instead of splitting mutual exclusion).
+
+    Args:
+        session_id: Session identifier.
+        ansible_version: Ansible-core version constraint.
+
+    Returns:
+        Shared ``VenvGenerationLock`` for ``(session_id, version)``.
+    """
+    key = _generation_key(session_id, ansible_version)
+    lock = _GENERATION_LOCKS.get(key)
+    if lock is None:
+        lock = VenvGenerationLock()
+        _GENERATION_LOCKS[key] = lock
+    return lock
+
+
+def venv_read_guard(
+    session_id: str,
+    ansible_version: str,
+    timeout: float | None = 60.0,
+) -> contextlib._AsyncGeneratorContextManager[None]:
+    """Hold shared read access for validator fan-out.
+
+    Args:
+        session_id: Session identifier.
+        ansible_version: Ansible-core version constraint.
+        timeout: Max seconds to wait for the exclusive side to clear
+            (``None`` waits forever).
+
+    Returns:
+        Async context manager holding the generation read lock.
+
+    Raises:
+        TimeoutError: If the lock is not acquired within ``timeout``.
+    """  # noqa: DOC502 -- TimeoutError surfaces from the generation lock on expiry
+    return get_generation_lock(session_id, ansible_version).read(timeout)
+
+
+def venv_write_guard(
+    session_id: str,
+    ansible_version: str,
+    timeout: float | None = 60.0,
+) -> contextlib._AsyncGeneratorContextManager[None]:
+    """Hold exclusive write access for venv installs.
+
+    Args:
+        session_id: Session identifier.
+        ansible_version: Ansible-core version constraint.
+        timeout: Max seconds to wait for readers to drain
+            (``None`` waits forever).
+
+    Returns:
+        Async context manager holding the generation write lock.
+
+    Raises:
+        TimeoutError: If the lock is not acquired within ``timeout``.
+    """  # noqa: DOC502 -- TimeoutError surfaces from the generation lock on expiry
+    return get_generation_lock(session_id, ansible_version).write(timeout)
+
+
+def clear_generation_locks() -> None:
+    """Drop all cached generation locks (test helper)."""
+    _GENERATION_LOCKS.clear()
+
+
+def _galaxy_source_hash(galaxy_server_configs: list[dict[str, object]] | None) -> str:
+    """Return a stable fingerprint of the Galaxy source configuration.
+
+    The same ``session_id`` and collection spec can be requested against a
+    different Galaxy source (``acme.widget:2.0.0`` from server A one moment,
+    server B the next). A venv built from A must not warm-hit for B, so the
+    source is recorded with the venv metadata and compared on every warm
+    admission. Only the digest is persisted — the configuration itself may
+    carry credentials.
+
+    Args:
+        galaxy_server_configs: Effective Galaxy server settings for the scan.
+
+    Returns:
+        Hex SHA-256 of the canonical configuration, or ``""`` when unset.
+    """
+    if not galaxy_server_configs:
+        return ""
+    canonical = json.dumps(galaxy_server_configs, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @dataclass
 class VenvSession:
     """Metadata for a session-scoped venv (one per core version within a session).
@@ -1113,6 +2209,10 @@ class VenvSession:
             mismatch means missing collections still need install or a prior
             install round failed. Stale unrequested specs are retained
             append-only and are not removed during acquire.
+        galaxy_source_hash: Fingerprint of the Galaxy source configuration that
+            built the venv (see :func:`_galaxy_source_hash`). A mismatch is a
+            warm-admission miss: the installed collections were resolved
+            against a different source.
         created_at: Unix timestamp of venv creation.
         last_used_at: Unix timestamp of last acquire / touch.
     """
@@ -1123,6 +2223,7 @@ class VenvSession:
     installed_collections: list[str] = field(default_factory=list)
     failed_collections: list[str] = field(default_factory=list)
     requirements_hash: str = ""
+    galaxy_source_hash: str = ""
     created_at: float = 0.0
     last_used_at: float = 0.0
 
@@ -1214,6 +2315,7 @@ class VenvSessionManager:
         session_id: str,
         ansible_version: str,
         collection_specs: list[str] | None = None,
+        galaxy_server_configs: list[dict[str, object]] | None = None,
     ) -> VenvSession | None:
         """Return the session venv on a warm hit without building anything.
 
@@ -1229,6 +2331,8 @@ class VenvSessionManager:
             session_id: Client-provided session identifier.
             ansible_version: e.g. ``"2.17.0"`` or ``"2.17"``.
             collection_specs: Collection specifiers to ensure are installed.
+            galaxy_server_configs: Effective Galaxy server settings for this
+                request; a venv built from a different source is not warm.
 
         Returns:
             The reused session on a warm hit, else ``None``.
@@ -1237,6 +2341,7 @@ class VenvSessionManager:
         specs = collection_specs or []
         pip_version = _normalize_version(ansible_version)
         desired_hash = _requirements_hash(specs)
+        desired_source_hash = _galaxy_source_hash(galaxy_server_configs)
 
         session_dir = self._root / session_id
         if not session_dir.is_dir():
@@ -1253,6 +2358,16 @@ class VenvSessionManager:
                 try:
                     existing = self._read_version_meta(meta_path)
                     if existing is None or not venv_dir.is_dir():
+                        return None
+                    if existing.galaxy_source_hash != desired_source_hash:
+                        # Same session and specs, different Galaxy source: the
+                        # installed collections were resolved elsewhere, so
+                        # this is a build, not a warm hit.
+                        logger.debug(
+                            "Venv: peek_warm miss (session=%s core=%s): Galaxy source changed",
+                            session_id,
+                            pip_version,
+                        )
                         return None
                     installed = set(existing.installed_collections)
                     if any(not _installed_satisfies_spec(installed, s) for s in specs):
@@ -1277,6 +2392,8 @@ class VenvSessionManager:
         session_id: str,
         ansible_version: str,
         collection_specs: list[str] | None = None,
+        galaxy_env: dict[str, str] | None = None,
+        galaxy_server_configs: list[dict[str, object]] | None = None,
         *,
         local_wheels: Mapping[str, LocalCollectionWheel] | None = None,
     ) -> VenvSession:
@@ -1285,7 +2402,9 @@ class VenvSessionManager:
         If a venv for ``(session_id, ansible_version)`` exists and already
         contains all requested collections, it is reused instantly (warm
         hit). Otherwise only the *delta* (new collections) is installed
-        (PE-32). Collections no longer requested are deliberately *retained*:
+        (PE-32). A changed Galaxy source is never a warm hit: collections
+        resolved against a different server are reinstalled, because the
+        same spec can name different content per source. Collections no longer requested are deliberately *retained*:
         the fcntl lock is released before validator fan-out reads the venv,
         so uninstalling stale specs during acquire could remove a collection
         an in-flight scan is executing against (ENOENT / false
@@ -1309,6 +2428,12 @@ class VenvSessionManager:
             session_id: Client-provided session identifier.
             ansible_version: e.g. ``"2.17.0"`` or ``"2.17"``.
             collection_specs: Collection specifiers to ensure are installed.
+            galaxy_env: Explicit subprocess environment carrying the
+                session-scoped Galaxy config (``ANSIBLE_CONFIG``). Passed
+                per-call to install subprocesses so concurrent sessions
+                never observe each other via global ``os.environ``.
+            galaxy_server_configs: Session-scoped Galaxy settings forwarded to
+                the authenticated proxy preparation request.
             local_wheels: Local artifacts for collections in a snapshot-keyed session.
 
         Returns:
@@ -1326,12 +2451,41 @@ class VenvSessionManager:
         session_id = _sanitize_session_id(session_id)
         specs = collection_specs or []
         pip_version = _normalize_version(ansible_version)
-        install = (
-            partial(install_collections_incremental, local_wheels=local_wheels, ansible_version=pip_version)
-            if local_wheels
-            else install_collections_incremental
-        )
+
+        def install_requested_collections(target_venv: Path, requested_specs: list[str]) -> list[str]:
+            """Install the requested collections with this call's scoping.
+
+            A snapshot-keyed session (Git collection wheels) pins the exact
+            core version alongside its local artifacts; a session-scoped
+            Galaxy source forwards its settings to the proxy preparation.
+
+            Args:
+                target_venv: Venv receiving the requested collections.
+                requested_specs: Collection specs to install.
+
+            Returns:
+                Collection specs that failed to install.
+            """
+            if local_wheels:
+                return install_collections_incremental(
+                    target_venv,
+                    requested_specs,
+                    galaxy_env,
+                    galaxy_server_configs,
+                    local_wheels=local_wheels,
+                    ansible_version=pip_version,
+                )
+            if galaxy_server_configs is None:
+                return install_collections_incremental(target_venv, requested_specs, galaxy_env)
+            return install_collections_incremental(
+                target_venv,
+                requested_specs,
+                galaxy_env,
+                galaxy_server_configs,
+            )
+
         desired_hash = _requirements_hash(specs)
+        desired_source_hash = _galaxy_source_hash(galaxy_server_configs)
 
         session_dir = self._root / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -1343,6 +2497,7 @@ class VenvSessionManager:
         logger.info("Venv: acquiring session=%s core=%s", session_id, pip_version)
         t0 = time.monotonic()
         outcome = "create"
+
         try:
             with open(lock_path, "w") as lock_fd:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -1353,10 +2508,26 @@ class VenvSessionManager:
                     if existing is not None and venv_dir.is_dir():
                         installed = set(existing.installed_collections)
                         requested = set(specs)
-                        missing = {s for s in requested if not _installed_satisfies_spec(installed, s)}
+                        source_matches = existing.galaxy_source_hash == desired_source_hash
+                        if source_matches:
+                            missing = {s for s in requested if not _installed_satisfies_spec(installed, s)}
+                        else:
+                            # The venv was built from a different Galaxy
+                            # source, so presence alone does not prove the
+                            # requested spec resolves to the same content.
+                            # Reinstall every requested spec instead of
+                            # trusting the warm admission.
+                            missing = set(requested)
+                            if installed:
+                                logger.info(
+                                    "Venv: Galaxy source changed; re-resolving %d collection(s) (session=%s core=%s)",
+                                    len(missing),
+                                    session_id,
+                                    pip_version,
+                                )
                         stale = installed - requested
 
-                        if not missing:
+                        if source_matches and not missing:
                             return self._complete_warm_hit(
                                 meta_path=meta_path,
                                 existing=existing,
@@ -1378,7 +2549,7 @@ class VenvSessionManager:
                         failed: list[str] = []
                         if missing:
                             logger.debug("Venv: installing %d missing collections", len(missing))
-                            failed = install(venv_dir, sorted(missing))
+                            failed = install_requested_collections(venv_dir, sorted(missing))
                             # Every still-requested past failure was retried
                             # above, so this round's failures are the full set.
                             existing.failed_collections = sorted(failed)
@@ -1396,6 +2567,7 @@ class VenvSessionManager:
                         # hash update.
                         if not failed:
                             existing.requirements_hash = desired_hash
+                            existing.galaxy_source_hash = desired_source_hash
                         else:
                             logger.warning(
                                 "Venv: reconcile partial (%d failed); keeping requirements_hash for retry next acquire",
@@ -1443,7 +2615,7 @@ class VenvSessionManager:
                         failed = []
                         if specs:
                             logger.debug("Venv: installing %d collections", len(specs))
-                            failed = install(venv_dir, specs)
+                            failed = install_requested_collections(venv_dir, specs)
                     except Exception:
                         # Never leave a cap-counted orphan: a failed cold
                         # build removes its version dir before re-raising so
@@ -1461,6 +2633,7 @@ class VenvSessionManager:
                         installed_collections=succeeded_specs,
                         failed_collections=sorted(failed),
                         requirements_hash=desired_hash if not failed else "",
+                        galaxy_source_hash="" if failed else desired_source_hash,
                         created_at=now,
                         last_used_at=now,
                     )
@@ -1730,6 +2903,7 @@ class VenvSessionManager:
                 installed_collections=data.get("installed_collections", []),
                 failed_collections=data.get("failed_collections", []),
                 requirements_hash=data.get("requirements_hash", ""),
+                galaxy_source_hash=data.get("galaxy_source_hash", ""),
                 created_at=data.get("created_at", 0.0),
                 last_used_at=data.get("last_used_at", 0.0),
             )

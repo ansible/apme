@@ -473,6 +473,7 @@ class TestDownloadCollections:
         servers = [GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok")]
 
         captured_env: dict[str, str] = {}
+        captured_cfg: dict[str, str] = {}
 
         mock_process = AsyncMock()
         mock_process.returncode = 0
@@ -483,6 +484,10 @@ class TestDownloadCollections:
             env = kwargs.get("env")
             if isinstance(env, dict):
                 captured_env.update(env)
+                cfg_path = env.get("ANSIBLE_CONFIG")
+                if cfg_path:
+                    captured_cfg["name"] = Path(cfg_path).name
+                    captured_cfg["text"] = Path(cfg_path).read_text(encoding="utf-8")
             return mock_process
 
         with (
@@ -500,7 +505,49 @@ class TestDownloadCollections:
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_URL") == "https://hub.example.com"
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_TOKEN") == "tok"
         assert captured_env.get("ANSIBLE_GALAXY_IGNORE") == "false"
-        assert "ANSIBLE_CONFIG" not in captured_env
+        # Scoped servers carry env-var config only; the isolated cfg file keeps
+        # ansible from discovering a config that could supply credentials.
+        assert captured_cfg["name"] == "ansible.cfg"
+        assert "token" not in captured_cfg["text"].lower()
+        assert "galaxy_server." not in captured_cfg["text"].lower()
+
+    @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+    async def test_scoped_server_does_not_inherit_process_credentials(self, tmp_path: Path) -> None:
+        """Omitted scoped credentials cannot arrive from the pod environment.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        download_dir = tmp_path / "dl"
+        servers = [GalaxyServerConfig(name="hub", url="https://request-supplied.example.com")]
+
+        captured_env: dict[str, str] = {}
+
+        mock_process = AsyncMock()
+        mock_process.returncode = 0
+        mock_process.communicate = AsyncMock(return_value=(b"OK", b""))
+
+        async def capture_exec(*_args: object, **kwargs: object) -> AsyncMock:
+            download_dir.mkdir(parents=True, exist_ok=True)
+            env = kwargs.get("env")
+            if isinstance(env, dict):
+                captured_env.update(env)
+            return mock_process
+
+        with (
+            patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec", side_effect=capture_exec),
+            patch.dict(
+                os.environ,
+                {
+                    "ANSIBLE_GALAXY_SERVER_HUB_TOKEN": "pod-secret",
+                    "ANSIBLE_GALAXY_SERVER_HUB_AUTH_URL": "https://pod-sso.example.com",
+                },
+            ),
+        ):
+            await download_collections(["a.b"], download_dir, servers=servers)
+
+        assert "ANSIBLE_GALAXY_SERVER_HUB_TOKEN" not in captured_env
+        assert "ANSIBLE_GALAXY_SERVER_HUB_AUTH_URL" not in captured_env
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_uses_temp_ansible_cfg_for_non_env_safe_server_names(self, tmp_path: Path) -> None:
@@ -666,6 +713,17 @@ class TestInjectGalaxyEnv:
         assert env["ANSIBLE_GALAXY_SERVER_CERTIFIED_AUTH_URL"] == "https://sso.example.com"
         assert env["ANSIBLE_GALAXY_SERVER_COMMUNITY_URL"] == "https://galaxy.ansible.com"
         assert "ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN" not in env
+
+    def test_omitted_credentials_clear_inherited_values(self) -> None:
+        """A scoped server without a token/auth_url drops the inherited value."""
+        env: dict[str, str] = {
+            "ANSIBLE_GALAXY_SERVER_HUB_TOKEN": "pod-secret",
+            "ANSIBLE_GALAXY_SERVER_HUB_AUTH_URL": "https://pod-sso.example.com",
+        }
+        _inject_galaxy_env(env, [GalaxyServerConfig(name="hub", url="https://request.example.com")])
+
+        assert "ANSIBLE_GALAXY_SERVER_HUB_TOKEN" not in env
+        assert "ANSIBLE_GALAXY_SERVER_HUB_AUTH_URL" not in env
 
     def test_empty_name_raises(self) -> None:
         """Empty server name raises ValueError."""

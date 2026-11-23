@@ -25,7 +25,7 @@ async def test_m040_reports_keyword_position_without_a_graph() -> None:
         ),
         MagicMock(),
     )
-    findings = response.violations  # type: ignore[attr-defined]
+    findings = response.violations
     assert [finding.rule_id for finding in findings] == ["M040", "M040"]
     assert all(finding.path == "$[2][4]" for finding in findings)
     assert all(finding.original_yaml.strip() == "disable_lookups=False," for finding in findings)

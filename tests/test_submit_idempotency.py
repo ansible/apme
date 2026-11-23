@@ -1,0 +1,2704 @@
+"""Approve-submit idempotency tests (N19)."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from apme_gateway.api.submit_idempotency import clear_submit_idempotency_store
+from apme_gateway.app import create_app
+from apme_gateway.db import get_session
+from apme_gateway.db import queries as q
+from apme_gateway.db.models import PatchedFile, Project, Scan, Session
+from apme_gateway.operation_registry import get_operation_registry
+from apme_gateway.operation_types import OperationResult, OperationStatus, Proposal
+
+pytestmark = pytest.mark.usefixtures("gateway_db")
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+async def _clear_idempotency() -> AsyncIterator[None]:
+    """Clear the submit idempotency cache around each test.
+
+    Yields:
+        None: Test runs between setup and teardown.
+    """
+    clear_submit_idempotency_store()
+    yield
+    clear_submit_idempotency_store()
+
+
+@pytest.fixture  # type: ignore[untyped-decorator]
+async def client() -> AsyncIterator[AsyncClient]:
+    """Build an async test client for the gateway app.
+
+    Yields:
+        AsyncClient: Client bound to the ASGI app.
+    """
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+def _op_url(project_id: str, suffix: str) -> str:
+    """Build an operation endpoint URL.
+
+    Args:
+        project_id: Target project UUID.
+        suffix: Endpoint suffix starting with ``/``.
+
+    Returns:
+        Full operation endpoint path.
+    """
+    return f"/api/v1/projects/{project_id}/operation{suffix}"
+
+
+async def _setup_completed_operation(
+    *,
+    project_id: str = "proj-submit-1",
+    scan_id: str = "scan-submit-1",
+    operation_id: str = "op-submit-1",
+) -> None:
+    """Seed a project, scan, and completed live operation with patches.
+
+    Args:
+        project_id: Project UUID.
+        scan_id: Scan UUID.
+        operation_id: Registry operation id.
+    """
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="submit-proj",
+                repo_url="https://github.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        db.add(Session(session_id="sess-submit", project_path="/proj", first_seen="t0", last_seen="t1"))
+        db.add(
+            Scan(
+                scan_id=scan_id,
+                session_id="sess-submit",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:00Z",
+                scan_type="remediate",
+                total_violations=2,
+                fixed_count=2,
+            )
+        )
+        db.add(PatchedFile(scan_id=scan_id, path="a.yml", content=b"fixed\n"))
+        await db.commit()
+
+    registry = get_operation_registry()
+    state = registry.create(
+        operation_id=operation_id,
+        project_id=project_id,
+        scan_id=scan_id,
+        scan_type="remediate",
+    )
+    registry.transition(operation_id, OperationStatus.COMPLETED)
+    state.result = OperationResult(total_violations=2, remediated_count=2, patches=[{"path": "a.yml"}])
+
+
+async def _setup_awaiting_approval(
+    *,
+    project_id: str = "proj-approve-1",
+    scan_id: str = "scan-approve-1",
+    operation_id: str = "op-approve-1",
+) -> None:
+    """Register an awaiting-approval operation with one proposal.
+
+    Args:
+        project_id: Project UUID.
+        scan_id: Scan UUID.
+        operation_id: Registry operation id.
+    """
+    registry = get_operation_registry()
+    state = registry.create(
+        operation_id=operation_id,
+        project_id=project_id,
+        scan_id=scan_id,
+        scan_type="remediate",
+    )
+    await registry.set_proposals(operation_id, [Proposal(id="t1-1", rule_id="L001", file="a.yml")])
+    assert state.status == OperationStatus.AWAITING_APPROVAL
+
+
+async def test_approve_returns_submit_token(client: AsyncClient) -> None:
+    """Approve returns an additive submit_token alongside status.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_awaiting_approval()
+    with patch("apme_gateway.proposals.draft.commit_gate_decisions", new_callable=AsyncMock) as mock_commit:
+        mock_commit.return_value = None
+        resp = await client.post(_op_url("proj-approve-1", "/approve"), json={"approved_ids": ["t1-1"]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "approved"
+    assert "submit_token" in body
+    assert isinstance(body["submit_token"], str)
+    assert len(body["submit_token"]) == 32
+
+
+async def test_double_approve_replays_same_token(client: AsyncClient) -> None:
+    """Duplicate approve replays the issued token instead of 409/500 (#17).
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_awaiting_approval()
+    with patch("apme_gateway.proposals.draft.commit_gate_decisions", new_callable=AsyncMock) as mock_commit:
+        mock_commit.return_value = None
+        first = await client.post(_op_url("proj-approve-1", "/approve"), json={"approved_ids": ["t1-1"]})
+    assert first.status_code == 200
+    token = first.json()["submit_token"]
+    second = await client.post(_op_url("proj-approve-1", "/approve"), json={"approved_ids": ["t1-1"]})
+    assert second.status_code == 200
+    assert second.json()["submit_token"] == token
+
+
+async def test_double_submit_with_token_replays(client: AsyncClient) -> None:
+    """Double-submit with the same token returns the stored result, not 409.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_completed_operation()
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        return "sha-1"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/1", branch_name="apme/remediate-x", provider="github"
+        )
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first = await client.post(
+            _op_url("proj-submit-1", "/submit"),
+            json={"submit_token": "a1b2c3d4e5f60718293a4b5c6d7e8f90"},  # notsecret
+        )
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+
+        second = await client.post(
+            _op_url("proj-submit-1", "/submit"),
+            json={"submit_token": "a1b2c3d4e5f60718293a4b5c6d7e8f90"},  # notsecret
+        )
+        assert second.status_code == 200
+        assert second.json() == first_body
+
+    # Token binding is persisted on the scan row for restart replay.
+    async with get_session() as db:
+        scan = await db.get(Scan, "scan-submit-1")
+    assert scan is not None
+    assert scan.submit_token == "a1b2c3d4e5f60718293a4b5c6d7e8f90"  # notsecret
+
+
+async def test_double_submit_with_idempotency_key_header(client: AsyncClient) -> None:
+    """Idempotency-Key header behaves like the body submit_token.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_completed_operation(
+        project_id="proj-submit-2",
+        scan_id="scan-submit-2",
+        operation_id="op-submit-2",
+    )
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        return "sha-2"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/2", branch_name="apme/remediate-x", provider="github"
+        )
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first = await client.post(
+            _op_url("proj-submit-2", "/submit"),
+            json={},
+            headers={"Idempotency-Key": "b2c3d4e5f60718293a4b5c6d7e8f90a1"},  # notsecret
+        )
+        assert first.status_code == 200, first.text
+        second = await client.post(
+            _op_url("proj-submit-2", "/submit"),
+            json={},
+            headers={"Idempotency-Key": "b2c3d4e5f60718293a4b5c6d7e8f90a1"},  # notsecret
+        )
+        assert second.status_code == 200
+        assert second.json() == first.json()
+
+
+async def test_double_submit_without_token_is_409(client: AsyncClient) -> None:
+    """Double-submit without a token keeps the existing 409 on pr_url.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_completed_operation(
+        project_id="proj-submit-3",
+        scan_id="scan-submit-3",
+        operation_id="op-submit-3",
+    )
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        return "sha-3"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/3", branch_name="apme/remediate-x", provider="github"
+        )
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first = await client.post(_op_url("proj-submit-3", "/submit"), json={})
+        assert first.status_code == 200, first.text
+        second = await client.post(_op_url("proj-submit-3", "/submit"), json={})
+        assert second.status_code == 409
+        assert isinstance(second.json()["detail"], str)
+
+
+async def test_weak_token_is_400(client: AsyncClient) -> None:
+    """Guessable tokens (e.g. tok-abc-123) are rejected with 400.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_completed_operation(
+        project_id="proj-submit-weak",
+        scan_id="scan-submit-weak",
+        operation_id="op-submit-weak",
+    )
+    resp = await client.post(
+        _op_url("proj-submit-weak", "/submit"),
+        json={"submit_token": "tok-abc-123"},
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["code"] == "invalid_idempotency_token"
+
+
+async def test_lost_submit_claim_conflicts_for_another_token(client: AsyncClient) -> None:
+    """A compare-and-set loss never proceeds to external SCM operations.
+
+    Args:
+        client: Test HTTP client.
+    """
+    project_id = "proj-submit-claim-conflict"
+    scan_id = "scan-submit-claim-conflict"
+    prior_token = "b" * 32
+    request_token = "a" * 32
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-claim-conflict",
+    )
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        scan.submit_token = prior_token
+        scan.branch_name = "apme/prior-submit"
+        await db.commit()
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": request_token},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "Verify SCM state" in response.json()["detail"]["message"]
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+
+
+async def test_submit_claim_failure_stops_before_scm(client: AsyncClient) -> None:
+    """An uncertain claim cannot proceed to external SCM operations.
+
+    Args:
+        client: Test HTTP client.
+    """
+    project_id = "proj-submit-claim-error"
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id="scan-submit-claim-error",
+        operation_id="op-submit-claim-error",
+    )
+
+    with (
+        patch("sqlalchemy.update", side_effect=RuntimeError("claim storage unavailable")),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": "a" * 32},
+        )
+
+    assert response.status_code == 503, response.text
+    assert "no SCM call was made" in response.json()["detail"]
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+    state = get_operation_registry().get_by_project(project_id)
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "Submit claim outcome is uncertain"
+
+
+@pytest.mark.parametrize("failure_stage", ["branch_lookup", "create_branch"])  # type: ignore[untyped-decorator]
+async def test_claim_released_only_before_scm_mutation(client: AsyncClient, failure_stage: str) -> None:
+    """Release claims on read failures and retain them after mutation starts.
+
+    Args:
+        client: Async test client.
+        failure_stage: SCM operation that fails.
+
+    Returns:
+        None: Assert-only test.
+    """
+    project_id = f"proj-submit-release-claim-{failure_stage}"
+    scan_id = f"scan-submit-release-claim-{failure_stage}"
+    token = "6d7e8f90a1b2c3d4e5f60718293a4b5c"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id=f"op-submit-release-claim-{failure_stage}",
+    )
+
+    branch_head = AsyncMock(
+        return_value=None,
+        side_effect=RuntimeError("SCM branch lookup failed") if failure_stage == "branch_lookup" else None,
+    )
+    create_branch = AsyncMock(
+        return_value="parent-sha",
+        side_effect=RuntimeError("SCM branch creation failed") if failure_stage == "create_branch" else None,
+    )
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=branch_head),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token},
+        )
+
+    assert response.status_code == 502, response.text
+    branch_head.assert_awaited_once()
+    push_files.assert_not_awaited()
+    create_pr.assert_not_awaited()
+    if failure_stage == "branch_lookup":
+        create_branch.assert_not_awaited()
+    else:
+        create_branch.assert_awaited_once()
+
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        assert scan.submit_token == (None if failure_stage == "branch_lookup" else token)
+
+
+async def test_duplicate_project_token_claim_conflicts_before_scm(client: AsyncClient) -> None:
+    """A DB uniqueness collision from a racing Gateway is a safe 409.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    project_id = "proj-submit-duplicate-claim"
+    token = "c" * 32
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id="scan-submit-duplicate-claim-current",
+        operation_id="op-submit-duplicate-claim",
+    )
+    async with get_session() as db:
+        db.add(
+            Scan(
+                scan_id="scan-submit-duplicate-claim-prior",
+                session_id="sess-submit",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:01Z",
+                scan_type="remediate",
+                submit_token=token,
+            )
+        )
+        await db.commit()
+
+    with (
+        patch("apme_gateway.api.operation_router.q.get_scan_by_submit_token", new=AsyncMock(return_value=None)),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={
+                "activity_id": "scan-submit-duplicate-claim-current",
+                "submit_token": token,
+            },
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+
+
+async def test_replay_with_different_branch_is_409(client: AsyncClient) -> None:
+    """Same token with a different branch_name returns 409 conflict.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_completed_operation(
+        project_id="proj-submit-4",
+        scan_id="scan-submit-4",
+        operation_id="op-submit-4",
+    )
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        return "sha-4"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/4", branch_name="apme/remediate-x", provider="github"
+        )
+
+    token = "c3d4e5f60718293a4b5c6d7e8f90a1b2"  # notsecret
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first = await client.post(
+            _op_url("proj-submit-4", "/submit"),
+            json={"submit_token": token, "branch_name": "apme/branch-a"},
+        )
+        assert first.status_code == 200, first.text
+        second = await client.post(
+            _op_url("proj-submit-4", "/submit"),
+            json={"submit_token": token, "branch_name": "apme/branch-b"},
+        )
+        assert second.status_code == 409
+        assert second.json()["detail"]["code"] == "idempotency_conflict"
+
+
+async def test_restart_replay_resolves_provider(client: AsyncClient) -> None:
+    """Restart replay (DB token, cold cache) uses project provider, not hardcoded.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    project_id = "proj-submit-gitlab"
+    scan_id = "scan-submit-gitlab"
+    token = "d4e5f60718293a4b5c6d7e8f90a1b2c3"  # notsecret
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="submit-gitlab",
+                repo_url="https://gitlab.example.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="gitlab",
+            )
+        )
+        db.add(Session(session_id="sess-gitlab", project_path="/proj", first_seen="t0", last_seen="t1"))
+        db.add(
+            Scan(
+                scan_id=scan_id,
+                session_id="sess-gitlab",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+                pr_url="https://gitlab.example.com/org/repo/-/merge_requests/1",
+                branch_name="apme/remediate-gitlab",
+                commit_sha="sha-gitlab",
+                submit_token=token,
+                scm_provider="gitlab",
+            )
+        )
+        db.add(PatchedFile(scan_id=scan_id, path="main.yml", content=b"- hosts: all\n"))
+        await db.commit()
+
+    resp = await client.post(
+        f"/api/v1/projects/{project_id}/operation/submit",
+        json={"submit_token": token, "activity_id": scan_id},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["provider"] == "gitlab"
+    assert body["pr_url"] is not None
+
+
+async def test_idempotency_ttl_expiry_evicts() -> None:
+    """Backdated entries (>24h) miss and are evicted from the store."""
+    import time
+
+    from apme_gateway.api.schemas import SubmitResponse
+    from apme_gateway.api.submit_idempotency import (
+        _SUBMIT_IDEMPOTENCY_STORE,
+        _SUBMIT_IDEMPOTENCY_TTL_S,
+        SubmitBinding,
+        SubmitIdempotencyKey,
+        _get_idempotency_entry,
+        _put_idempotency_entry,
+    )
+
+    project_id = "proj-ttl"
+    token = "e5f60718293a4b5c6d7e8f90a1b2c3d4"  # notsecret
+    key = SubmitIdempotencyKey(project_id=project_id, token=token)
+    _put_idempotency_entry(
+        key,
+        SubmitResponse(branch_name="apme/remediate-ttl", commit_sha="sha", pr_url=None, provider="github"),
+        SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-ttl"),
+    )
+    assert _get_idempotency_entry(key) is not None
+    # Backdate past TTL then fetch: miss + eviction.
+    _SUBMIT_IDEMPOTENCY_STORE[(project_id, token)].created_at = time.monotonic() - _SUBMIT_IDEMPOTENCY_TTL_S - 1.0
+    assert _get_idempotency_entry(key) is None
+    assert (project_id, token) not in _SUBMIT_IDEMPOTENCY_STORE
+
+
+async def test_idempotency_lru_evicts_oldest() -> None:
+    """Inserting past the cap evicts the oldest entries first (relative, #25)."""
+    from apme_gateway.api.schemas import SubmitResponse
+    from apme_gateway.api.submit_idempotency import (
+        _SUBMIT_IDEMPOTENCY_MAX,
+        _SUBMIT_IDEMPOTENCY_STORE,
+        SubmitBinding,
+        SubmitIdempotencyKey,
+        _get_idempotency_entry,
+        _put_idempotency_entry,
+    )
+
+    cap = _SUBMIT_IDEMPOTENCY_MAX
+    for i in range(cap + 1):
+        tok = f"{i:032x}"
+        _put_idempotency_entry(
+            SubmitIdempotencyKey(project_id="proj-lru", token=tok),
+            SubmitResponse(branch_name=f"apme/b-{i}", commit_sha="sha", pr_url=None, provider="github"),
+            SubmitBinding(branch_name=None, activity_id=None, scan_id=f"scan-{i}"),
+        )
+    assert len(_SUBMIT_IDEMPOTENCY_STORE) == cap
+    assert _get_idempotency_entry(SubmitIdempotencyKey(project_id="proj-lru", token=f"{0:032x}")) is None
+    assert _get_idempotency_entry(SubmitIdempotencyKey(project_id="proj-lru", token=f"{cap:032x}")) is not None
+
+
+async def test_atomic_retry_replays_across_fresh_scan_id() -> None:
+    """Same (project, token) with a fresh scan_id replays instead of 409."""
+    import pytest as _pytest
+    from fastapi import HTTPException as _HTTPException
+
+    from apme_gateway.api.schemas import SubmitResponse
+    from apme_gateway.api.submit_idempotency import (
+        SubmitBinding,
+        SubmitIdempotencyKey,
+        _check_idempotency_binding,
+        _put_idempotency_entry,
+    )
+
+    project_id = "proj-atomic-replay"
+    token = "f60718293a4b5c6d7e8f90a1b2c3d4e5"  # notsecret
+    _put_idempotency_entry(
+        SubmitIdempotencyKey(project_id=project_id, token=token),
+        SubmitResponse(
+            branch_name="apme/remediate-x",
+            commit_sha="sha-1",
+            pr_url="https://github.com/org/repo/pull/9",
+            provider="github",
+        ),
+        SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-old"),
+    )
+    from apme_gateway.api.submit_idempotency import _SUBMIT_IDEMPOTENCY_STORE as _store
+
+    entry = _store[(project_id, token)]
+    # Fresh atomic scan_id with matching branch/activity replays (no raise).
+    _check_idempotency_binding(entry, SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-fresh"))
+    # A different explicit branch still conflicts.
+    with _pytest.raises(_HTTPException) as exc_info:
+        _check_idempotency_binding(
+            entry, SubmitBinding(branch_name="apme/other", activity_id=None, scan_id="scan-fresh")
+        )
+    assert exc_info.value.status_code == 409
+
+
+async def test_expiry_then_db_replay(client: AsyncClient) -> None:
+    """Expired cache entry still replays via the persisted submit_token.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import time
+
+    from apme_gateway.api.submit_idempotency import (
+        _SUBMIT_IDEMPOTENCY_STORE,
+        _SUBMIT_IDEMPOTENCY_TTL_S,
+    )
+
+    await _setup_completed_operation(
+        project_id="proj-submit-expire",
+        scan_id="scan-submit-expire",
+        operation_id="op-submit-expire",
+    )
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        return "sha-exp"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/9", branch_name="apme/remediate-x", provider="github"
+        )
+
+    token = "0718293a4b5c6d7e8f90a1b2c3d4e5f6"  # notsecret
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first = await client.post(
+            _op_url("proj-submit-expire", "/submit"),
+            json={"submit_token": token},
+        )
+        assert first.status_code == 200, first.text
+        # Expire the in-memory entry (restart-like); DB row keeps the token.
+        _SUBMIT_IDEMPOTENCY_STORE[("proj-submit-expire", token)].created_at = (
+            time.monotonic() - _SUBMIT_IDEMPOTENCY_TTL_S - 1.0
+        )
+        second = await client.post(
+            _op_url("proj-submit-expire", "/submit"),
+            json={"submit_token": token},
+        )
+        assert second.status_code == 200, second.text
+        assert second.json() == first.json()
+
+
+async def test_branch_only_submit_replays_after_cache_loss(client: AsyncClient) -> None:
+    """Branch-only (pr_url None) retries replay via DB token, not re-push.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    from apme_gateway.api.submit_idempotency import clear_submit_idempotency_store
+
+    await _setup_completed_operation(
+        project_id="proj-submit-branchonly",
+        scan_id="scan-submit-branchonly",
+        operation_id="op-submit-branchonly",
+    )
+    push_calls = 0
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        nonlocal push_calls
+        push_calls += 1
+        return "sha-branchonly"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    token = "18293a4b5c6d7e8f90a1b2c3d4e5f607"  # notsecret
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first = await client.post(
+            _op_url("proj-submit-branchonly", "/submit"),
+            json={"submit_token": token, "create_pr": False},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["pr_url"] is None
+        assert push_calls == 1
+        # Simulate restart: drop the cache; the DB row keeps token+branch.
+        clear_submit_idempotency_store()
+        second = await client.post(
+            _op_url("proj-submit-branchonly", "/submit"),
+            json={"submit_token": token, "create_pr": False},
+        )
+        assert second.status_code == 200, second.text
+        assert second.json() == first.json()
+        assert push_calls == 1
+
+
+async def test_durable_replay_rejects_a_different_explicit_activity(client: AsyncClient) -> None:
+    """A durable token result cannot stand in for another activity.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    project_id = "proj-submit-durable-activity"
+    session_id = "sess-submit-durable-activity"
+    stored_scan = "scan-submit-durable-stored"
+    requested_scan = "scan-submit-durable-requested"
+    token = "293a4b5c6d7e8f90a1b2c3d4e5f60718"  # notsecret
+
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="submit-durable-activity",
+                repo_url="https://github.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        db.add(Session(session_id=session_id, project_path="/proj", first_seen="t0", last_seen="t1"))
+        db.add(
+            Scan(
+                scan_id=stored_scan,
+                session_id=session_id,
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+                branch_name="apme/stored",
+                commit_sha="sha-stored",
+                pr_url="https://github.com/org/repo/pull/41",
+                submit_token=token,
+                scm_provider="github",
+            )
+        )
+        db.add(PatchedFile(scan_id=stored_scan, path="a.yml", content=b"same patch\n"))
+        db.add(
+            Scan(
+                scan_id=requested_scan,
+                session_id=session_id,
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-02T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+            )
+        )
+        db.add(PatchedFile(scan_id=requested_scan, path="a.yml", content=b"same patch\n"))
+        await db.commit()
+
+    response = await client.post(
+        _op_url(project_id, "/submit"),
+        json={"activity_id": requested_scan, "submit_token": token},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "durable_patches",
+    [RuntimeError("database read failed"), []],
+    ids=["load-error", "hash-unavailable"],
+)
+async def test_durable_patch_verification_failure_does_not_replay_scan_pr(
+    client: AsyncClient,
+    durable_patches: list[dict[str, object]] | RuntimeError,
+) -> None:
+    """A failed durable hash check cannot fall back to a historical PR.
+
+    Args:
+        client: Async HTTP test client.
+        durable_patches: Durable rows, or a simulated database read failure.
+    """
+    from unittest.mock import AsyncMock as _AsyncMock
+
+    suffix = "hash-unavailable" if not durable_patches else "load-error"
+    project_id = f"proj-submit-durable-hash-failure-{suffix}"
+    session_id = f"sess-submit-durable-hash-failure-{suffix}"
+    current_scan = "scan-submit-durable-current"
+    durable_scan = "scan-submit-durable-hash"
+    token = "3a4b5c6d7e8f90a1b2c3d4e5f6071829"  # notsecret
+
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name=f"submit-durable-hash-failure-{suffix}",
+                repo_url="https://github.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        db.add(Session(session_id=session_id, project_path="/proj", first_seen="t0", last_seen="t1"))
+        for scan_id, created_at, pr_number in (
+            (current_scan, "2026-01-01T00:00:00Z", 42),
+            (durable_scan, "2026-01-02T00:00:00Z", 43),
+        ):
+            db.add(
+                Scan(
+                    scan_id=scan_id,
+                    session_id=session_id,
+                    project_id=project_id,
+                    project_path="/proj",
+                    source="gateway",
+                    created_at=created_at,
+                    scan_type="remediate",
+                    total_violations=1,
+                    fixed_count=1,
+                    branch_name=f"apme/{scan_id}",
+                    commit_sha=f"sha-{scan_id}",
+                    pr_url=f"https://github.com/org/repo/pull/{pr_number}",
+                    submit_token=token if scan_id == durable_scan else None,
+                    scm_provider="github",
+                )
+            )
+        await db.commit()
+
+    incoming_patches = [{"path": "a.yml", "content": b"current patch\n"}]
+    patched_files_mock = _AsyncMock(side_effect=[incoming_patches, durable_patches])
+    with patch("apme_gateway.api.operation_router.q.get_patched_files", new=patched_files_mock):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": current_scan, "submit_token": token},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+
+
+async def test_incomplete_durable_claim_blocks_cross_scan_retry(client: AsyncClient) -> None:
+    """An incomplete prior token claim is not mistaken for a cache miss.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    from apme_gateway.scm.base import PullRequestResult
+
+    project_id = "proj-submit-incomplete-claim"
+    token = "4b5c6d7e8f90a1b2c3d4e5f60718293a"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id="scan-submit-incomplete-current",
+        operation_id="op-submit-incomplete-current",
+    )
+    async with get_session() as db:
+        db.add(
+            Scan(
+                scan_id="scan-submit-incomplete-prior",
+                session_id="sess-submit",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2025-12-31T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+                submit_token=token,
+            )
+        )
+        await db.commit()
+
+    push_mock = AsyncMock(return_value="sha-should-not-push")
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_mock),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+        patch(
+            "apme_gateway.scm.github.GitHubProvider.create_pull_request",
+            new=AsyncMock(
+                return_value=PullRequestResult(
+                    pr_url="https://github.com/org/repo/pull/44",
+                    branch_name="apme/retry",
+                    provider="github",
+                )
+            ),
+        ),
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
+    push_mock.assert_not_called()
+
+
+async def test_untokened_submit_blocks_incomplete_scan_claim(client: AsyncClient) -> None:
+    """A tokenless retry cannot bypass an unfinished claim on the same scan.
+
+    Args:
+        client: Async test client.
+
+    Returns:
+        None: Assert-only test.
+    """
+    project_id = "proj-submit-untokened-incomplete-claim"
+    scan_id = "scan-submit-untokened-incomplete-claim"
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-untokened-incomplete-claim",
+    )
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        scan.submit_token = "5c6d7e8f90a1b2c3d4e5f60718293a4b"  # notsecret
+        await db.commit()
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new_callable=AsyncMock) as create_branch,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id},
+        )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "start a new operation with a new token" in response.json()["detail"]["message"]
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_branch.assert_not_awaited()
+    create_pr.assert_not_awaited()
+
+
+async def test_tokenless_submit_reuses_recorded_branch(client: AsyncClient) -> None:
+    """A tokenless follow-up opens a PR from the prior branch-only submit.
+
+    Args:
+        client: Async test client.
+
+    Returns:
+        None: Assert-only test.
+    """
+    from apme_gateway.scm.base import PullRequestResult
+
+    project_id = "proj-submit-reuse-recorded-branch"
+    scan_id = "scan-submit-reuse-recorded-branch"
+    branch_name = "apme/remediate-token-branch"
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-reuse-recorded-branch",
+    )
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        scan.submit_token = "7e8f90a1b2c3d4e5f60718293a4b5c6d"  # notsecret
+        scan.branch_name = branch_name
+        await db.commit()
+
+    branch_head = AsyncMock(return_value="parent-sha")
+    push_files = AsyncMock(return_value="commit-sha")
+    create_branch = AsyncMock()
+    create_pr = AsyncMock(
+        return_value=PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/52",
+            branch_name=branch_name,
+            provider="github",
+        )
+    )
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=branch_head),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_files),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=create_pr),
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["branch_name"] == branch_name
+    branch_head.assert_awaited_once()
+    assert branch_head.await_args is not None
+    assert branch_head.await_args.args[1] == branch_name
+    create_branch.assert_not_awaited()
+    push_files.assert_awaited_once()
+    assert push_files.await_args is not None
+    assert push_files.await_args.args[1] == branch_name
+    create_pr.assert_awaited_once()
+
+
+@pytest.mark.parametrize("clear_cache", [False, True])  # type: ignore[untyped-decorator]
+async def test_same_token_cannot_upgrade_branch_only_submit_to_pr(
+    client: AsyncClient,
+    clear_cache: bool,
+) -> None:
+    """A same-token retry cannot change a branch-only submit into a PR request.
+
+    Args:
+        client: Async test client.
+        clear_cache: Whether to exercise durable replay without the in-memory cache.
+
+    Returns:
+        None: Assert-only test.
+    """
+    project_id = f"proj-submit-pr-intent-{clear_cache}"
+    scan_id = f"scan-submit-pr-intent-{clear_cache}"
+    token = "8f90a1b2c3d4e5f60718293a4b5c6d7e"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id=f"op-submit-pr-intent-{clear_cache}",
+    )
+
+    branch_head = AsyncMock(return_value=None)
+    push_files = AsyncMock(return_value="commit-sha")
+    create_branch = AsyncMock(return_value="parent-sha")
+    create_pr = AsyncMock()
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=branch_head),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_files),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=create_pr),
+    ):
+        first_response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id, "submit_token": token, "create_pr": False},
+        )
+        assert first_response.status_code == 200, first_response.text
+        assert first_response.json()["pr_url"] is None
+        if clear_cache:
+            clear_submit_idempotency_store()
+
+        retry_response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": scan_id, "submit_token": token, "create_pr": True},
+        )
+
+    assert retry_response.status_code == 409, retry_response.text
+    assert retry_response.json()["detail"]["code"] == "idempotency_conflict"
+    assert "Submit without the token" in retry_response.json()["detail"]["message"]
+    branch_head.assert_awaited_once()
+    push_files.assert_awaited_once()
+    create_branch.assert_awaited_once()
+    create_pr.assert_not_awaited()
+
+
+async def test_concurrent_same_token_submit_pushes_once(client: AsyncClient) -> None:
+    """Concurrent same-token submits serialize; the duplicate replays.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio as _asyncio
+
+    await _setup_completed_operation(
+        project_id="proj-submit-race",
+        scan_id="scan-submit-race",
+        operation_id="op-submit-race",
+    )
+    push_calls = 0
+
+    async def _slow_push(*args: object, **kwargs: object) -> str:
+        nonlocal push_calls
+        push_calls += 1
+        await _asyncio.sleep(0.2)
+        return "sha-race"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        await _asyncio.sleep(0.05)
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/7", branch_name="apme/remediate-x", provider="github"
+        )
+
+    token = "293a4b5c6d7e8f90a1b2c3d4e5f60718"  # notsecret
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_slow_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first_coro = client.post(_op_url("proj-submit-race", "/submit"), json={"submit_token": token})
+        second_coro = client.post(_op_url("proj-submit-race", "/submit"), json={"submit_token": token})
+        first, second = await _asyncio.gather(first_coro, second_coro)
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert first.json() == second.json()
+        assert push_calls == 1
+
+
+# ── POST /operate integration tests (hermetic; engine/driver/scm mocked) ──
+
+
+async def _setup_operate_project(
+    *,
+    project_id: str = "proj-operate-1",
+    repo_url: str = "https://github.com/org/repo.git",
+) -> None:
+    """Seed a project row for POST /operate tests.
+
+    Args:
+        project_id: Project UUID.
+        repo_url: SCM clone URL.
+    """
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="operate-proj",
+                repo_url=repo_url,
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        await db.commit()
+
+
+def _fake_completed_drive() -> object:
+    """Return a fake _drive_operation completing with patches.
+
+    The fake seeds the scan/patched-file rows the embedded submit reads,
+    then transitions the registry operation to ``COMPLETED``. Patch into
+    ``apme_gateway.api.operation_router._drive_operation`` via ``patch``
+    with ``new=`` by callers.
+
+    Returns:
+        Fake drive coroutine function.
+    """
+
+    async def _fake_drive(
+        *,
+        operation_id: str,
+        project_id: str,
+        scan_id: str,
+        remediate: bool,
+        options: object = None,
+        **kwargs: object,
+    ) -> None:
+        """Complete the operation with one patched file.
+
+        Args:
+            operation_id: Registry operation identifier.
+            project_id: Owning project UUID.
+            scan_id: Engine scan identifier.
+            remediate: Whether this is a remediation.
+            options: Ignored drive options.
+            **kwargs: Ignored engine/SCM plumbing.
+        """
+        _ = (options, kwargs)
+        scan_type = "remediate" if remediate else "check"
+        sess_id = f"sess-{scan_id[:8]}"
+        async with get_session() as db:
+            db.add(Session(session_id=sess_id, project_path="/proj", first_seen="t0", last_seen="t1"))
+            db.add(
+                Scan(
+                    scan_id=scan_id,
+                    session_id=sess_id,
+                    project_id=project_id,
+                    project_path="/proj",
+                    source="gateway",
+                    created_at="2026-01-01T00:00:00Z",
+                    scan_type=scan_type,
+                    total_violations=1,
+                    fixed_count=1,
+                )
+            )
+            if remediate:
+                db.add(PatchedFile(scan_id=scan_id, path="a.yml", content=b"fixed\n"))
+            await db.commit()
+        registry = get_operation_registry()
+        state = registry.get(operation_id)
+        if state is not None:
+            if remediate:
+                state.result = OperationResult(total_violations=1, remediated_count=1, patches=[{"path": "a.yml"}])
+            else:
+                state.result = OperationResult(total_violations=1, remediated_count=0, patches=[])
+            registry.transition(operation_id, OperationStatus.COMPLETED)
+
+    return _fake_drive
+
+
+def _operate_url(project_id: str) -> str:
+    """Build the atomic operate URL.
+
+    Args:
+        project_id: Target project UUID.
+
+    Returns:
+        Atomic operate endpoint path.
+    """
+    return f"/api/v1/projects/{project_id}/operate"
+
+
+async def test_operate_defaults_to_readonly_check(client: AsyncClient) -> None:
+    """Bare POST /operate defaults to a read-only check with no submit.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_operate_project(project_id="proj-operate-default")
+    with (
+        patch(
+            "apme_gateway.api.operation_router._drive_operation",
+            new=_fake_completed_drive(),
+        ),
+        patch("apme_gateway.config.load_config") as mock_cfg,
+        patch("apme_gateway._galaxy_inject.load_galaxy_server_defs", new=AsyncMock(return_value=[])),
+    ):
+        mock_cfg.return_value = type(
+            "Cfg",
+            (),
+            {
+                "engine_address": "localhost:50051",
+                "scm_token": "tok",
+                "github_api_url": "https://api.github.com",
+                "gitlab_api_url": "https://gitlab.example.com/api/v4",
+                "bitbucket_api_url": "https://api.bitbucket.org/2.0",
+            },
+        )()
+        resp = await client.post(_operate_url("proj-operate-default"), json={})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert body["scan_type"] == "check"
+
+
+async def test_operate_tier_flags_accepted(client: AsyncClient) -> None:
+    """Tier auto-approve flags are accepted and complete hermetically.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_operate_project(project_id="proj-operate-tiers")
+    with (
+        patch(
+            "apme_gateway.api.operation_router._drive_operation",
+            new=_fake_completed_drive(),
+        ),
+        patch("apme_gateway.config.load_config") as mock_cfg,
+        patch("apme_gateway._galaxy_inject.load_galaxy_server_defs", new=AsyncMock(return_value=[])),
+    ):
+        mock_cfg.return_value = type(
+            "Cfg",
+            (),
+            {
+                "engine_address": "localhost:50051",
+                "scm_token": "tok",
+                "github_api_url": "https://api.github.com",
+                "gitlab_api_url": "https://gitlab.example.com/api/v4",
+                "bitbucket_api_url": "https://api.bitbucket.org/2.0",
+            },
+        )()
+        resp = await client.post(
+            _operate_url("proj-operate-tiers"),
+            json={
+                "action": "remediate",
+                "options": {"auto_approve_tier1": True, "auto_approve_ai": True, "enable_ai": True},
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "completed"
+
+
+async def test_operate_embedded_submit_replays_on_idempotency_key(client: AsyncClient) -> None:
+    """Two /operate calls with the same Idempotency-Key push only once.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_operate_project(project_id="proj-operate-replay")
+    push_calls = 0
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        nonlocal push_calls
+        push_calls += 1
+        return "sha-operate"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/11",
+            branch_name="apme/remediate-operate",
+            provider="github",
+        )
+
+    token = "3a4b5c6d7e8f90a1b2c3d4e5f6071829"  # notsecret
+    with (
+        patch(
+            "apme_gateway.api.operation_router._drive_operation",
+            new=_fake_completed_drive(),
+        ),
+        patch("apme_gateway.config.load_config") as mock_cfg,
+        patch("apme_gateway._galaxy_inject.load_galaxy_server_defs", new=AsyncMock(return_value=[])),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        mock_cfg.return_value = type(
+            "Cfg",
+            (),
+            {
+                "engine_address": "localhost:50051",
+                "scm_token": "tok",
+                "github_api_url": "https://api.github.com",
+                "gitlab_api_url": "https://gitlab.example.com/api/v4",
+                "bitbucket_api_url": "https://api.bitbucket.org/2.0",
+            },
+        )()
+        payload = {
+            "action": "remediate",
+            "options": {
+                "auto_approve_tier1": True,
+                "submit": {"create_pr": True, "branch_name": "apme/remediate-operate"},
+            },
+        }
+        headers = {"Idempotency-Key": token}
+        first = await client.post(_operate_url("proj-operate-replay"), json=payload, headers=headers)
+        assert first.status_code == 200, first.text
+        second = await client.post(_operate_url("proj-operate-replay"), json=payload, headers=headers)
+        assert second.status_code == 200, second.text
+    assert push_calls == 1
+    assert first.json().get("pr_url") == "https://github.com/org/repo/pull/11"
+    assert second.json().get("pr_url") == "https://github.com/org/repo/pull/11"
+
+
+async def test_operate_409_on_active_operation(client: AsyncClient) -> None:
+    """POST /operate 409s while a non-terminal operation is active.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_operate_project(project_id="proj-operate-busy")
+    registry = get_operation_registry()
+    registry.create(
+        operation_id="op-operate-busy",
+        project_id="proj-operate-busy",
+        scan_id="scan-operate-busy",
+        scan_type="check",
+    )
+    resp = await client.post(_operate_url("proj-operate-busy"), json={"action": "check"})
+    assert resp.status_code == 409
+
+
+async def test_operate_early_400_on_weak_token(client: AsyncClient) -> None:
+    """Weak submit tokens fail fast with 400 before any operation starts.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_operate_project(project_id="proj-operate-weak")
+    resp = await client.post(
+        _operate_url("proj-operate-weak"),
+        json={"action": "check", "options": {"submit": {"submit_token": "tok-abc-123"}}},
+    )
+    assert resp.status_code == 400
+    assert get_operation_registry().get_by_project("proj-operate-weak") is None
+
+
+async def test_operate_early_422_on_bad_branch(client: AsyncClient) -> None:
+    """Invalid submit branch names fail fast with 422 before any operation starts.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_operate_project(project_id="proj-operate-branch")
+    resp = await client.post(
+        _operate_url("proj-operate-branch"),
+        json={"action": "check", "options": {"submit": {"branch_name": "../escape"}}},
+    )
+    assert resp.status_code == 422
+    assert get_operation_registry().get_by_project("proj-operate-branch") is None
+
+
+async def test_atomic_ai_escalation_groups_rule_ids() -> None:
+    """Auto-escalation groups candidates by path with non-empty rule_ids."""
+    import asyncio as _asyncio
+
+    from apme_gateway.api.atomic_operate import _auto_drive_atomic_gates
+
+    registry = get_operation_registry()
+    state = registry.create(
+        operation_id="op-ai-group",
+        project_id="proj-ai-group",
+        scan_id="scan-ai-group",
+        scan_type="remediate",
+    )
+    registry.transition(state.operation_id, OperationStatus.AWAITING_AI_TRIAGE)
+    state.ai_triage_candidates = [
+        {"path": "play.yml#task1", "rule_id": "L001"},
+        {"path": "play.yml#task1", "rule_id": "L002"},
+        {"path": "other.yml#task9", "rule_id": "L001"},
+    ]
+    loop = _asyncio.get_running_loop()
+    state.escalate_ai_future = loop.create_future()
+    driver = _asyncio.create_task(
+        _auto_drive_atomic_gates(operation_id=state.operation_id, auto_approve_tier1=False, auto_approve_ai=True)
+    )
+    try:
+        targets = await _asyncio.wait_for(_asyncio.shield(state.escalate_ai_future), timeout=5.0)
+    finally:
+        driver.cancel()
+        import contextlib as _ctx
+
+        with _ctx.suppress(_asyncio.CancelledError):
+            await driver
+    by_path = {t["path"]: t["rule_ids"] for t in targets}
+    assert sorted(by_path["play.yml#task1"]) == ["L001", "L002"]
+    assert by_path["other.yml#task9"] == ["L001"]
+    assert all(t["rule_ids"] for t in targets)
+
+
+async def test_conflict_scan_ignores_expired_entries(client: AsyncClient) -> None:
+    """Expired entries are evicted by the conflict scan, not 409s.
+
+    A same-scan re-submit with a fresh token and different branch must
+    not hit ``idempotency_conflict`` from a TTL-dead entry; the dead
+    row is evicted like the single-key path treats it as a miss.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import time
+
+    from apme_gateway.api.submit_idempotency import (
+        _SUBMIT_IDEMPOTENCY_STORE,
+        _SUBMIT_IDEMPOTENCY_TTL_S,
+    )
+    from apme_gateway.scm.base import PullRequestResult
+
+    await _setup_completed_operation(
+        project_id="proj-submit-conflict-ttl",
+        scan_id="scan-submit-conflict-ttl",
+        operation_id="op-submit-conflict-ttl",
+    )
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        return "sha-conflict-ttl"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/9", branch_name="apme/remediate-x", provider="github"
+        )
+
+    token1 = "c3d4e5f60718293a4b5c6d7e8f90a1b2"  # notsecret
+    token2 = "d4e5f60718293a4b5c6d7e8f90a1b2c3"  # notsecret
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first = await client.post(
+            _op_url("proj-submit-conflict-ttl", "/submit"),
+            json={"submit_token": token1},
+        )
+        assert first.status_code == 200, first.text
+        # Expire the stored entry (logically dead; single-key path misses).
+        _SUBMIT_IDEMPOTENCY_STORE[("proj-submit-conflict-ttl", token1)].created_at = (
+            time.monotonic() - _SUBMIT_IDEMPOTENCY_TTL_S - 1.0
+        )
+        second = await client.post(
+            _op_url("proj-submit-conflict-ttl", "/submit"),
+            json={"submit_token": token2, "branch_name": "apme/other"},
+        )
+        # The dead entry must not raise idempotency_conflict; the call
+        # still 409s because the scan already has a PR (plain message).
+        assert second.status_code == 409, second.text
+        detail = second.json()["detail"]
+        assert isinstance(detail, str)
+        assert "PR already created" in detail
+
+
+# ── #4: patch-hash determinism, 409, lock timeout, mutex, equivalence ──
+
+
+async def test_compute_patch_hash_determinism() -> None:
+    """Patch hash is deterministic across shapes and orderings."""
+    from apme_gateway.api.submit_idempotency import _compute_patch_hash
+
+    assert _compute_patch_hash(None) is None
+    assert _compute_patch_hash([]) is None
+
+    dict_rows = [
+        {"path": "b.yml", "content": "b-content\n"},
+        {"path": "a.yml", "content": b"a-content\n"},
+    ]
+
+    class _Row:
+        def __init__(self, path: str, content: bytes) -> None:
+            self.path = path
+            self.content = content
+
+    obj_rows = [_Row("a.yml", b"a-content\n"), _Row("b.yml", b"b-content\n")]
+    assert _compute_patch_hash(dict_rows) == _compute_patch_hash(obj_rows)
+
+    reordered = [
+        {"path": "a.yml", "content": b"a-content\n"},
+        {"path": "b.yml", "content": "b-content\n"},
+    ]
+    assert _compute_patch_hash(dict_rows) == _compute_patch_hash(reordered)
+
+    different = [
+        {"path": "a.yml", "content": b"a-content-changed\n"},
+        {"path": "b.yml", "content": "b-content\n"},
+    ]
+    assert _compute_patch_hash(dict_rows) != _compute_patch_hash(different)
+
+
+async def test_patch_hash_mismatch_is_409() -> None:
+    """Same token with a different patch set replays as 409."""
+    import pytest as _pytest
+    from fastapi import HTTPException as _HTTPException
+
+    from apme_gateway.api.schemas import SubmitResponse
+    from apme_gateway.api.submit_idempotency import (
+        SubmitBinding,
+        SubmitIdempotencyKey,
+        _check_idempotency_binding,
+        _put_idempotency_entry,
+    )
+
+    key = SubmitIdempotencyKey(project_id="proj-hash", token="a1b2c3d4e5f60718293a4b5c6d7e8f9012")  # notsecret
+    _put_idempotency_entry(
+        key,
+        SubmitResponse(branch_name="apme/remediate-x", commit_sha="sha", pr_url=None, provider="github"),
+        SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-1", patch_hash="aaa"),
+    )
+    from apme_gateway.api.submit_idempotency import _SUBMIT_IDEMPOTENCY_STORE as _store
+
+    entry = _store[("proj-hash", "a1b2c3d4e5f60718293a4b5c6d7e8f9012")]  # notsecret
+    with _pytest.raises(_HTTPException) as exc_info:
+        _check_idempotency_binding(
+            entry, SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-1", patch_hash="bbb")
+        )
+    assert exc_info.value.status_code == 409
+
+
+async def test_patch_hash_replay_when_one_side_none() -> None:
+    """One-sided hashes bind fail-closed: stored-only 409s, stored-None backfills (#13)."""
+    import pytest as _pytest
+    from fastapi import HTTPException as _HTTPException
+
+    from apme_gateway.api.schemas import SubmitResponse
+    from apme_gateway.api.submit_idempotency import (
+        SubmitBinding,
+        SubmitIdempotencyKey,
+        _check_idempotency_binding,
+        _put_idempotency_entry,
+    )
+
+    key = SubmitIdempotencyKey(project_id="proj-hash-none", token="b2c3d4e5f60718293a4b5c6d7e8f9012a3")  # notsecret
+    _put_idempotency_entry(
+        key,
+        SubmitResponse(branch_name="apme/remediate-x", commit_sha="sha", pr_url=None, provider="github"),
+        SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-1", patch_hash=None),
+    )
+    from apme_gateway.api.submit_idempotency import _SUBMIT_IDEMPOTENCY_STORE as _store
+
+    entry = _store[("proj-hash-none", "b2c3d4e5f60718293a4b5c6d7e8f9012a3")]  # notsecret
+    # Stored None + incoming hash present: replays and binds the hash.
+    _check_idempotency_binding(
+        entry, SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-1", patch_hash="abc")
+    )
+    assert entry.patch_hash == "abc"
+
+    key2 = SubmitIdempotencyKey(project_id="proj-hash-none2", token="c3d4e5f60718293a4b5c6d7e8f9012a3b4")  # notsecret
+    _put_idempotency_entry(
+        key2,
+        SubmitResponse(branch_name="apme/remediate-x", commit_sha="sha", pr_url=None, provider="github"),
+        SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-1", patch_hash="abc"),
+    )
+    entry2 = _store[("proj-hash-none2", "c3d4e5f60718293a4b5c6d7e8f9012a3b4")]  # notsecret
+    # Stored hash + incoming None: 409 fail-closed (cannot prove same patch set).
+    with _pytest.raises(_HTTPException) as exc_info:
+        _check_idempotency_binding(entry2, SubmitBinding(branch_name=None, activity_id=None, scan_id="scan-1"))
+    assert exc_info.value.status_code == 409
+
+
+async def test_acquire_lock_timeout_503_with_retry_after() -> None:
+    """A hung lock fails fast with 503 + Retry-After."""
+    import asyncio as _asyncio
+
+    import pytest as _pytest
+    from fastapi import HTTPException as _HTTPException
+
+    from apme_gateway.api.submit_idempotency import _acquire_lock_with_timeout
+
+    lock = _asyncio.Lock()
+    await lock.acquire()
+    try:
+        with _pytest.raises(_HTTPException) as exc_info:
+            await _acquire_lock_with_timeout(lock, timeout=0.05)
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.headers is not None
+        assert "Retry-After" in exc_info.value.headers
+    finally:
+        lock.release()
+
+
+async def test_cross_token_same_scan_serializes(client: AsyncClient) -> None:
+    """Concurrent different-token submits for one scan push only once.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio as _asyncio
+
+    await _setup_completed_operation(
+        project_id="proj-submit-xtoken",
+        scan_id="scan-submit-xtoken",
+        operation_id="op-submit-xtoken",
+    )
+    push_calls = 0
+
+    async def _slow_push(*args: object, **kwargs: object) -> str:
+        nonlocal push_calls
+        push_calls += 1
+        await _asyncio.sleep(0.2)
+        return "sha-xtoken"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/21", branch_name="apme/remediate-x", provider="github"
+        )
+
+    token1 = "d4e5f60718293a4b5c6d7e8f90a1b2c3d4"  # notsecret
+    token2 = "e5f60718293a4b5c6d7e8f90a1b2c3d4e5"  # notsecret
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_slow_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        first_coro = client.post(_op_url("proj-submit-xtoken", "/submit"), json={"submit_token": token1})
+        second_coro = client.post(_op_url("proj-submit-xtoken", "/submit"), json={"submit_token": token2})
+        first, second = await _asyncio.gather(first_coro, second_coro)
+        statuses = sorted([first.status_code, second.status_code])
+        assert statuses == [200, 409], (first.text, second.text)
+        assert push_calls == 1
+
+
+async def test_submit_binding_equivalence() -> None:
+    """Put/get roundtrip preserves the dataclass binding fields."""
+    from apme_gateway.api.schemas import SubmitResponse
+    from apme_gateway.api.submit_idempotency import (
+        SubmitBinding,
+        SubmitIdempotencyKey,
+        _check_idempotency_binding,
+        _get_idempotency_entry,
+        _put_idempotency_entry,
+    )
+
+    key = SubmitIdempotencyKey(project_id="proj-equiv", token="f60718293a4b5c6d7e8f90a1b2c3d4e5f6")  # notsecret
+    binding = SubmitBinding(
+        branch_name="apme/branch-a",
+        activity_id="scan-equiv",
+        scan_id="scan-equiv",
+        patch_hash="deadbeef",
+    )
+    response = SubmitResponse(branch_name="apme/branch-a", commit_sha="sha", pr_url=None, provider="github")
+    _put_idempotency_entry(key, response, binding)
+    entry = _get_idempotency_entry(key)
+    assert entry is not None
+    assert entry.response == response
+    assert entry.branch_name == binding.branch_name
+    assert entry.activity_id == binding.activity_id
+    assert entry.scan_id == binding.scan_id
+    assert entry.patch_hash == binding.patch_hash
+    # An equal binding replays without raising.
+    _check_idempotency_binding(
+        entry,
+        SubmitBinding(
+            branch_name="apme/branch-a",
+            activity_id="scan-equiv",
+            scan_id="scan-other",
+            patch_hash="deadbeef",
+        ),
+    )
+
+
+async def test_restart_replay_cross_scan_no_second_push(client: AsyncClient) -> None:
+    """Fresh scan_id + same token replays the stored PR after cache loss.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import hashlib
+    import re as _re
+
+    from apme_gateway.api.submit_idempotency import clear_submit_idempotency_store
+
+    project_id = "proj-submit-restart-xscan"
+    old_scan = "scan-submit-restart-old"
+    fresh_scan = "scan-submit-restart-fresh"
+    token = "0718293a4b5c6d7e8f90a1b2c3d4e5f607"  # notsecret
+    normalized_token = _re.sub(r"[^0-9a-f]", "", token)
+    token_digest = hashlib.sha256(normalized_token.encode("ascii")).hexdigest()[:16]
+    branch = f"apme/remediate-{token_digest}"
+    pr_url = "https://github.com/org/repo/pull/31"
+
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="submit-restart-xscan",
+                repo_url="https://github.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        db.add(Session(session_id="sess-restart-xscan", project_path="/proj", first_seen="t0", last_seen="t1"))
+        db.add(
+            Scan(
+                scan_id=old_scan,
+                session_id="sess-restart-xscan",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+                branch_name=branch,
+                commit_sha="sha-old",
+                pr_url=pr_url,
+                submit_token=token,
+                scm_provider="github",
+            )
+        )
+        db.add(PatchedFile(scan_id=old_scan, path="a.yml", content=b"fixed\n"))
+        db.add(
+            Scan(
+                scan_id=fresh_scan,
+                session_id="sess-restart-xscan",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-02T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+            )
+        )
+        db.add(PatchedFile(scan_id=fresh_scan, path="a.yml", content=b"fixed\n"))
+        await db.commit()
+
+    registry = get_operation_registry()
+    state = registry.create(
+        operation_id="op-submit-restart-xscan",
+        project_id=project_id,
+        scan_id=fresh_scan,
+        scan_type="remediate",
+    )
+    registry.transition("op-submit-restart-xscan", OperationStatus.COMPLETED)
+    state.result = OperationResult(total_violations=1, remediated_count=1, patches=[{"path": "a.yml"}])
+
+    clear_submit_idempotency_store()
+    create_branch_mock = AsyncMock(return_value="base-sha")
+    push_mock = AsyncMock(return_value="sha-fresh")
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_mock),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch_mock),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        resp = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["pr_url"] == pr_url
+        assert body["branch_name"] == branch
+        create_branch_mock.assert_not_called()
+        push_mock.assert_not_called()
+
+    # The replayed publish metadata is recorded on the scan handling this
+    # request (#2): a later tokenless submit on the fresh scan must continue
+    # on the pushed branch instead of deriving a new scan-based one (and
+    # pushing the same patches, or opening a duplicate PR).
+    async with get_session() as db:
+        replayed = await q.get_scan(db, fresh_scan)
+    assert replayed is not None
+    assert replayed.branch_name == branch
+    assert replayed.commit_sha == "sha-old"
+    assert replayed.pr_url == pr_url
+
+
+async def test_implicit_durable_replay_keeps_activity_binding(client: AsyncClient) -> None:
+    """An implicit retry must not cache ``None`` over the bound activity.
+
+    The original submit named an activity (its scan); an implicit retry
+    (activity omitted) replays the durable row and warms the idempotency
+    cache. That cached entry must bind the original activity — not the
+    retry's ``None`` — or a later explicit retry for the same activity
+    409s ``idempotency_conflict`` at the fast-path check instead of
+    replaying.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import hashlib
+    import re as _re
+
+    project_id = "proj-submit-rebind-durable"
+    old_scan = "scan-submit-rebind-durable-old"
+    fresh_scan = "scan-submit-rebind-durable-fresh"
+    token = "1a2b3c4d5e6f708192a3b4c5d6e7f809"  # notsecret
+    normalized_token = _re.sub(r"[^0-9a-f]", "", token)
+    token_digest = hashlib.sha256(normalized_token.encode("ascii")).hexdigest()[:16]
+    branch = f"apme/remediate-{token_digest}"
+    pr_url = "https://github.com/org/repo/pull/41"
+
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="submit-rebind-durable",
+                repo_url="https://github.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        db.add(Session(session_id="sess-rebind-durable", project_path="/proj", first_seen="t0", last_seen="t1"))
+        db.add(
+            Scan(
+                scan_id=old_scan,
+                session_id="sess-rebind-durable",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+                branch_name=branch,
+                commit_sha="sha-rebind",
+                pr_url=pr_url,
+                submit_token=token,
+                scm_provider="github",
+            )
+        )
+        db.add(PatchedFile(scan_id=old_scan, path="a.yml", content=b"fixed\n"))
+        db.add(
+            Scan(
+                scan_id=fresh_scan,
+                session_id="sess-rebind-durable",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-02T00:00:00Z",
+                scan_type="remediate",
+                total_violations=1,
+                fixed_count=1,
+            )
+        )
+        db.add(PatchedFile(scan_id=fresh_scan, path="a.yml", content=b"fixed\n"))
+        await db.commit()
+
+    registry = get_operation_registry()
+    state = registry.create(
+        operation_id="op-submit-rebind-durable",
+        project_id=project_id,
+        scan_id=fresh_scan,
+        scan_type="remediate",
+    )
+    registry.transition("op-submit-rebind-durable", OperationStatus.COMPLETED)
+    state.result = OperationResult(total_violations=1, remediated_count=1, patches=[{"path": "a.yml"}])
+
+    push_mock = AsyncMock(return_value="sha-rebound")
+    create_branch_mock = AsyncMock(return_value="base-sha")
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_mock),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=create_branch_mock),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        # Implicit retry (activity omitted): replays the durable row and
+        # warms the idempotency cache from the implicit path.
+        implicit = await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+        assert implicit.status_code == 200, implicit.text
+        assert implicit.json()["pr_url"] == pr_url
+
+        # Explicit retry naming the original activity: the warmed entry
+        # must replay, not 409 "already used for a different activity".
+        explicit = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token, "activity_id": old_scan},
+        )
+        assert explicit.status_code == 200, explicit.text
+        body = explicit.json()
+        assert body["pr_url"] == pr_url
+        assert body["branch_name"] == branch
+    push_mock.assert_not_awaited()
+    create_branch_mock.assert_not_awaited()
+
+
+async def test_implicit_scan_replay_keeps_activity_binding(client: AsyncClient) -> None:
+    """A warm replay of a scan-carried PR keeps its activity binding.
+
+    After a cache loss, an implicit retry replays the PR recorded on the
+    scan that carries the token. The warmed entry must bind that scan's
+    activity so a later explicit retry for the same activity replays
+    instead of 409-ing ``idempotency_conflict``. The durable lookup is
+    patched out to isolate this path: it normally answers first because
+    the token-carrying scan is exactly the row it would find.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import hashlib
+    import re as _re
+
+    project_id = "proj-submit-rebind-scan"
+    scan_id = "scan-submit-rebind-scan"
+    token = "2b3c4d5e6f708192a3b4c5d6e7f8091a"  # notsecret
+    normalized_token = _re.sub(r"[^0-9a-f]", "", token)
+    token_digest = hashlib.sha256(normalized_token.encode("ascii")).hexdigest()[:16]
+    branch = f"apme/remediate-{token_digest}"
+    pr_url = "https://github.com/org/repo/pull/42"
+
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-rebind-scan",
+    )
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        scan.branch_name = branch
+        scan.commit_sha = "sha-rebind-scan"
+        scan.pr_url = pr_url
+        scan.submit_token = token
+        await db.commit()
+
+    push_mock = AsyncMock(return_value="sha-rebound")
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_mock),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=AsyncMock(return_value="base-sha")),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+        patch("apme_gateway.api.operation_router.q.get_scan_by_submit_token", new=AsyncMock(return_value=None)),
+    ):
+        implicit = await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+        assert implicit.status_code == 200, implicit.text
+
+        explicit = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token, "activity_id": scan_id},
+        )
+        assert explicit.status_code == 200, explicit.text
+        body = explicit.json()
+        assert body["pr_url"] == pr_url
+        assert body["branch_name"] == branch
+    push_mock.assert_not_awaited()
+
+
+async def test_uppercase_token_keeps_deterministic_branch(client: AsyncClient) -> None:
+    """Uppercase hex tokens derive the same auto-branch as lowercase (#N1).
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import hashlib
+
+    await _setup_completed_operation(
+        project_id="proj-submit-upper",
+        scan_id="scan-submit-upper",
+        operation_id="op-submit-upper",
+    )
+
+    async def _fake_push(*args: object, **kwargs: object) -> str:
+        return "sha-upper"
+
+    async def _fake_branch(*args: object, **kwargs: object) -> str:
+        return "base-sha"
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    async def _fake_pr(*args: object, **kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/9", branch_name="apme/remediate-x", provider="github"
+        )
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+    ):
+        resp = await client.post(
+            _op_url("proj-submit-upper", "/submit"),
+            json={},
+            headers={"Idempotency-Key": "B2C3D4E5F60718293A4B5C6D7E8F90A1"},  # notsecret
+        )
+        assert resp.status_code == 200, resp.text
+        token_digest = hashlib.sha256(b"b2c3d4e5f60718293a4b5c6d7e8f90a1").hexdigest()[:16]  # notsecret
+        assert resp.json()["branch_name"] == f"apme/remediate-{token_digest}"
+
+
+async def test_cancelled_submit_releases_pre_mutation_claim(client: AsyncClient) -> None:
+    """A client disconnect before the SCM mutation must not strand the claim.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio
+
+    project_id = "proj-submit-cancelled"
+    scan_id = "scan-submit-cancelled"
+    token = "9f8e7d6c5b4a39281706f5e4d3c2b1a0"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-cancelled",
+    )
+
+    async def _cancelled(*_args: object, **_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=_cancelled),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+
+    # Nothing was pushed, so the durable claim must be released: a retry with
+    # the same token has to be able to run instead of 409-ing forever.
+    push_files.assert_not_awaited()
+    create_pr.assert_not_awaited()
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        assert scan.submit_token is None
+    state = get_operation_registry().get("op-submit-cancelled")
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "SCM submit cancelled"
+
+
+async def test_cancelled_release_still_retires_the_operation(client: AsyncClient) -> None:
+    """A cancellation during claim release must still retire the operation.
+
+    The pre-mutation release is an await: a repeated client disconnect can
+    cancel its DB call (``CancelledError`` bypasses the release helper's
+    ``except Exception``). Without retiring in a ``finally``, the operation
+    stays ``SUBMITTING_PR`` with no driver and every later live submit 409s.
+    The claim is kept because its release was never confirmed.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio
+
+    project_id = "proj-submit-cancel-release"
+    scan_id = "scan-submit-cancel-release"
+    token = "4d5e6f708192a3b4c5d6e7f8091a2b3c"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-cancel-release",
+    )
+
+    async def _cancelled(*_args: object, **_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=_cancelled),
+        patch("apme_gateway.api.operation_router._release_pre_mutation_submit_claim", new=_cancelled),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+
+    push_files.assert_not_awaited()
+    # The release was cancelled before it confirmed, so the durable claim
+    # is kept: a retry with the same token still gets the explicit 409.
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        assert scan.submit_token == token
+    # But the operation must leave SUBMITTING_PR, or every later live
+    # submit 409s on a driver-less operation.
+    state = get_operation_registry().get("op-submit-cancel-release")
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "SCM submit cancelled"
+
+
+async def test_timeout_release_cancelled_still_retires_the_operation(client: AsyncClient) -> None:
+    """A disconnect during the timeout-path release must still retire.
+
+    An SCM timeout enters the 504 handler; a client disconnect cancelling
+    the claim-release DB call inside that handler would otherwise skip the
+    ``COMPLETED`` restoration and strand the operation in
+    ``SUBMITTING_PR`` while cancellation propagates.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio
+
+    project_id = "proj-submit-timeout-release"
+    scan_id = "scan-submit-timeout-release"
+    token = "5e6f708192a3b4c5d6e7f8091a2b3c4d"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-timeout-release",
+    )
+
+    async def _timed_out(*_args: object, **_kwargs: object) -> None:
+        raise TimeoutError
+
+    async def _cancelled_release(*_args: object, **_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=_timed_out),
+        patch("apme_gateway.api.operation_router._release_pre_mutation_submit_claim", new=_cancelled_release),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+
+    push_files.assert_not_awaited()
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        assert scan.submit_token == token
+    state = get_operation_registry().get("op-submit-timeout-release")
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "SCM provider timed out"
+
+
+async def test_scm_error_release_cancelled_still_retires_the_operation(client: AsyncClient) -> None:
+    """A disconnect during the error-path release must still retire.
+
+    An SCM provider failure enters the 502 handler; a client disconnect
+    cancelling the claim-release DB call inside that handler must not skip
+    the ``COMPLETED`` restoration (same shape as the timeout path).
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio
+
+    project_id = "proj-submit-error-release"
+    scan_id = "scan-submit-error-release"
+    token = "6f708192a3b4c5d6e7f8091a2b3c4d5e"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-error-release",
+    )
+
+    async def _provider_error(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("provider exploded")
+
+    async def _cancelled_release(*_args: object, **_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=_provider_error),
+        patch("apme_gateway.api.operation_router._release_pre_mutation_submit_claim", new=_cancelled_release),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+
+    push_files.assert_not_awaited()
+    async with get_session() as db:
+        scan = await db.get(Scan, scan_id)
+        assert scan is not None
+        assert scan.submit_token == token
+    state = get_operation_registry().get("op-submit-error-release")
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "RuntimeError: provider exploded"
+
+
+async def test_token_respelling_shares_one_claim_identity(client: AsyncClient) -> None:
+    """Case/dash respellings of one token cannot claim a second scan.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    project_id = "proj-submit-respell"
+    token = "3f1e0d9c8b7a69584736251403f2e1d0"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id="scan-submit-respell-current",
+        operation_id="op-submit-respell",
+    )
+    async with get_session() as db:
+        db.add(
+            Scan(
+                scan_id="scan-submit-respell-prior",
+                session_id="sess-submit",
+                project_id=project_id,
+                project_path="/proj",
+                source="gateway",
+                created_at="2026-01-01T00:00:01Z",
+                scan_type="remediate",
+                submit_token=token,
+            )
+        )
+        await db.commit()
+
+    respelled = token.upper()[:16] + "-" + token.upper()[16:]
+    with (
+        patch("apme_gateway.api.operation_router.q.get_scan_by_submit_token", new=AsyncMock(return_value=None)),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new_callable=AsyncMock) as branch_head,
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new_callable=AsyncMock) as create_pr,
+    ):
+        response = await client.post(
+            _op_url(project_id, "/submit"),
+            json={"activity_id": "scan-submit-respell-current", "submit_token": respelled},
+        )
+
+    # A respelling must collide on the per-project token uniqueness constraint
+    # instead of claiming a second scan and pushing into the first scan's
+    # auto-branch (same digest, different claim).
+    assert response.status_code == 409, response.text
+    branch_head.assert_not_awaited()
+    push_files.assert_not_awaited()
+    create_pr.assert_not_awaited()
+
+
+async def test_replay_bookkeeping_does_not_overwrite_later_publish() -> None:
+    """Replay metadata never replaces a publish the scan recorded later.
+
+    A cross-scan replay stamps the token's cached branch/commit on the scan
+    handling the request. If that scan has since published on its own (a
+    tokenless PR follow-up advances the commit), the cached values describe an
+    older push: writing them back pairs the stored PR with a commit that is
+    not its head. Only an unpublished scan may be stamped.
+    """
+    from apme_gateway.api.operation_router import _record_replayed_publish
+    from apme_gateway.api.schemas import SubmitResponse
+
+    project_id = "proj-replay-bookkeeping"
+    published_scan = "scan-replay-published"
+    blank_scan = "scan-replay-blank"
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="replay-bookkeeping",
+                repo_url="https://github.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        db.add(Session(session_id="sess-replay-bookkeeping", project_path="/proj", first_seen="t0", last_seen="t1"))
+        for scan_id, branch, commit, pr_url in (
+            (published_scan, "apme/remediate-newer", "sha-newer", "https://github.com/org/repo/pull/77"),
+            (blank_scan, None, None, None),
+        ):
+            db.add(
+                Scan(
+                    scan_id=scan_id,
+                    session_id="sess-replay-bookkeeping",
+                    project_id=project_id,
+                    project_path="/proj",
+                    source="gateway",
+                    created_at="2026-01-02T00:00:00Z",
+                    scan_type="remediate",
+                    total_violations=1,
+                    fixed_count=1,
+                    branch_name=branch,
+                    commit_sha=commit,
+                    pr_url=pr_url,
+                )
+            )
+        await db.commit()
+
+    cached = SubmitResponse(
+        branch_name="apme/remediate-older",
+        commit_sha="sha-older",
+        pr_url="https://github.com/org/repo/pull/12",
+        provider="github",
+    )
+
+    async with get_session() as db:
+        await _record_replayed_publish(db, published_scan, cached)
+    async with get_session() as db:
+        overwritten = await q.get_scan(db, published_scan)
+    assert overwritten is not None
+    assert overwritten.branch_name == "apme/remediate-newer"
+    assert overwritten.commit_sha == "sha-newer"
+    assert overwritten.pr_url == "https://github.com/org/repo/pull/77"
+
+    # A scan with no publish of its own is still stamped, so a later tokenless
+    # submit on it continues on the pushed branch.
+    async with get_session() as db:
+        await _record_replayed_publish(db, blank_scan, cached)
+    async with get_session() as db:
+        stamped = await q.get_scan(db, blank_scan)
+    assert stamped is not None
+    assert stamped.branch_name == "apme/remediate-older"
+    assert stamped.commit_sha == "sha-older"
+    assert stamped.pr_url == "https://github.com/org/repo/pull/12"
+
+
+async def test_header_that_canonicalizes_to_empty_is_400(client: AsyncClient) -> None:
+    """A present ``Idempotency-Key`` that normalizes to "" is rejected.
+
+    ``----`` canonicalizes to the empty string. Treating that as "no token"
+    silently downgrades an explicitly token'd request to a tokenless submit,
+    skipping both validation and idempotency — so presence has to be tracked
+    separately from the canonical value.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _setup_completed_operation(
+        project_id="proj-submit-empty-header",
+        scan_id="scan-submit-empty-header",
+        operation_id="op-submit-empty-header",
+    )
+
+    for raw_header in ("----", "", "   -   "):
+        push_mock = AsyncMock(return_value="sha-should-not-push")
+        with patch("apme_gateway.scm.github.GitHubProvider.push_files", new=push_mock):
+            resp = await client.post(
+                _op_url("proj-submit-empty-header", "/submit"),
+                json={},
+                headers={"Idempotency-Key": raw_header},
+            )
+        assert resp.status_code == 400, (raw_header, resp.text)
+        detail = resp.json()["detail"]
+        assert isinstance(detail, dict)
+        assert detail["code"] == "invalid_idempotency_token"
+        push_mock.assert_not_called()
+
+
+async def test_cancelled_claim_phase_retires_the_operation(client: AsyncClient) -> None:
+    """Cancellation while the durable claim is written must retire the operation.
+
+    The claim is the first mutating step, so a client disconnect there leaves
+    the operation in ``SUBMITTING_PR`` with no driver: every later retry 409s
+    on an operation that never published anything. Cancelling the claim
+    transaction must transition the operation instead of bypassing the
+    ``Exception`` handlers (``CancelledError`` is a ``BaseException``).
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio
+    from collections.abc import AsyncIterator as _AsyncIterator
+    from contextlib import asynccontextmanager
+
+    project_id = "proj-submit-claim-cancel"
+    scan_id = "scan-submit-claim-cancel"
+    token = "1a2b3c4d5e6f708192a3b4c5d6e7f809"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-claim-cancel",
+    )
+
+    from apme_gateway.db import get_session as real_get_session
+
+    claim_attempts: list[int] = []
+
+    @asynccontextmanager
+    async def _cancel_second_transaction() -> _AsyncIterator[object]:
+        # First transaction loads the scan/patch set; the second one is the
+        # claim, which is where the request is cancelled.
+        if claim_attempts:
+            raise asyncio.CancelledError
+        claim_attempts.append(1)
+        async with real_get_session() as session:
+            yield session
+
+    with (
+        patch("apme_gateway.api.operation_router.get_session", new=_cancel_second_transaction),
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new_callable=AsyncMock) as push_files,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token},
+        )
+
+    push_files.assert_not_awaited()
+    state = get_operation_registry().get("op-submit-claim-cancel")
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "Submit claim cancelled"
+
+
+async def test_cancelled_publish_persistence_keeps_claim_and_retires(client: AsyncClient) -> None:
+    """Cancellation after the push must keep the claim and retire the operation.
+
+    The SCM publish already happened, so releasing the claim would let a retry
+    push a second commit. Cancellation also bypasses the ``Exception`` handler
+    that records the failure, so it must be handled explicitly: the operation
+    is retired as completed and the durable claim stays.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    import asyncio
+
+    from apme_gateway.scm.base import PullRequestResult
+
+    project_id = "proj-submit-persist-cancel"
+    scan_id = "scan-submit-persist-cancel"
+    token = "2b3c4d5e6f708192a3b4c5d6e7f8091a"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-persist-cancel",
+    )
+
+    async def _fake_push(*_args: object, **_kwargs: object) -> str:
+        return "sha-persist-cancel"
+
+    async def _fake_branch(*_args: object, **_kwargs: object) -> str:
+        return "base-sha"
+
+    async def _fake_pr(*_args: object, **_kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/9", branch_name="apme/remediate-x", provider="github"
+        )
+
+    async def _cancelled_record(*_args: object, **_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+        patch(
+            "apme_gateway.api.operation_router.q.record_scan_scm_publish",
+            new=_cancelled_record,
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client.post(
+            _op_url(project_id, "/submit"),
+            json={"submit_token": token},
+        )
+
+    async with get_session() as db:
+        scan = await asyncio.wait_for(db.get(Scan, scan_id), 30)
+    assert scan is not None
+    assert scan.submit_token == token
+    state = get_operation_registry().get("op-submit-persist-cancel")
+    assert state is not None
+    assert state.status == OperationStatus.COMPLETED
+    assert state.error == "SCM publish persisted but not recorded"
+
+
+async def test_warm_replay_records_publish_outside_the_shared_lock(client: AsyncClient) -> None:
+    """Replay bookkeeping must not run under the module-wide idempotency lock.
+
+    ``record_scan_scm_publish`` issues an UPDATE that can block on another
+    process's scan-row lock. Holding ``_SUBMIT_IDEMPOTENCY_LOCK`` across it
+    would stall every project's submit (there is no acquisition timeout on
+    that lock), so the write belongs outside it — as the durable replay path
+    already does.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    from apme_gateway.api import operation_router as router_mod
+    from apme_gateway.scm.base import PullRequestResult
+
+    project_id = "proj-submit-replay-lock"
+    scan_id = "scan-submit-replay-lock"
+    token = "3c4d5e6f708192a3b4c5d6e7f8091a2b"  # notsecret
+    await _setup_completed_operation(
+        project_id=project_id,
+        scan_id=scan_id,
+        operation_id="op-submit-replay-lock",
+    )
+
+    async def _fake_push(*_args: object, **_kwargs: object) -> str:
+        return "sha-replay-lock"
+
+    async def _fake_branch(*_args: object, **_kwargs: object) -> str:
+        return "base-sha"
+
+    async def _fake_pr(*_args: object, **_kwargs: object) -> PullRequestResult:
+        return PullRequestResult(
+            pr_url="https://github.com/org/repo/pull/11", branch_name="apme/remediate-x", provider="github"
+        )
+
+    lock_states: list[bool] = []
+
+    # Private lock handle: read through vars() because mypy rejects a literal
+    # getattr() for a name the module does not re-export.
+    submit_lock = vars(router_mod)["_SUBMIT_IDEMPOTENCY_LOCK"]
+
+    async def _observed_record(*_args: object, **kwargs: object) -> q.ScmPublishRecord:
+        lock_states.append(submit_lock.locked())
+        recorded_url = kwargs.get("pr_url")
+        return q.ScmPublishRecord(found=True, pr_url=recorded_url if isinstance(recorded_url, str) else None)
+
+    with (
+        patch("apme_gateway.scm.github.GitHubProvider.push_files", new=_fake_push),
+        patch("apme_gateway.scm.github.GitHubProvider.create_branch", new=_fake_branch),
+        patch("apme_gateway.scm.github.GitHubProvider.create_pull_request", new=_fake_pr),
+        patch("apme_gateway.scm.github.GitHubProvider.branch_head_sha", new=AsyncMock(return_value=None)),
+        patch("apme_gateway.api.operation_router.q.record_scan_scm_publish", new=_observed_record),
+    ):
+        first = await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+        assert first.status_code == 200, first.text
+        replay = await client.post(_op_url(project_id, "/submit"), json={"submit_token": token})
+        assert replay.status_code == 200, replay.text
+        assert replay.json() == first.json()
+
+    assert lock_states, "the warm-cache replay did not record publish metadata"
+    assert lock_states == [False] * len(lock_states)
+
+
+async def test_operate_setup_failure_retires_the_claim(client: AsyncClient) -> None:
+    """A setup failure after claiming the project must not wedge it.
+
+    The project is claimed before config and Galaxy definitions load, and the
+    registry reaper only removes terminal operations. A failure while loading
+    them (or a disconnect before the drive task is attached) would leave the
+    operation registered, non-terminal and driver-less, so every later request
+    for the project would 409 until the Gateway restarted.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    from apme_gateway.operation_types import OperationStatus as _Status
+
+    project_id = "proj-operate-setup-fail"
+    async with get_session() as db:
+        db.add(
+            Project(
+                id=project_id,
+                name="operate-setup-fail",
+                repo_url="https://github.com/org/repo.git",
+                branch="main",
+                created_at="2026-01-01T00:00:00Z",
+                scm_token="tok",
+                scm_provider="github",
+            )
+        )
+        await db.commit()
+
+    async def _boom() -> list[object]:
+        raise RuntimeError("galaxy definitions unavailable")
+
+    with (
+        patch("apme_gateway._galaxy_inject.load_galaxy_server_defs", new=_boom),
+        patch("apme_gateway.api.operation_router._drive_operation", new_callable=AsyncMock) as drive,
+        pytest.raises(RuntimeError, match="galaxy definitions unavailable"),
+    ):
+        await client.post(f"/api/v1/projects/{project_id}/operate", json={"action": "check"})
+
+    drive.assert_not_awaited()
+    state = get_operation_registry().get_by_project(project_id)
+    assert state is not None, "the claim was dropped instead of retired"
+    assert state.status in {_Status.FAILED, _Status.COMPLETED}
+    assert state.error is not None and "setup failed" in state.error.lower()

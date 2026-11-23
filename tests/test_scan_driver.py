@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import socket
 import subprocess
 import tempfile
 from collections.abc import AsyncIterator
@@ -49,6 +50,19 @@ def _decode_auth_env(env: dict[str, str]) -> str:
     scheme, _, encoded = value.partition("Basic ")
     assert scheme.strip().rstrip(":").upper() == "AUTHORIZATION"
     return base64.b64decode(encoded.strip()).decode("utf-8")
+
+
+def _public_resolve_infos() -> list[tuple[int, int, int, str, tuple[str, int]]]:
+    """Return canned public-IP ``getaddrinfo`` results for the re-resolve guard.
+
+    The clone/fetch SSRF guard re-resolves the host immediately before
+    spawn; stub it with a public IP so git-behavior tests stay hermetic
+    (no real DNS) while the validator itself remains stubbed per test.
+
+    Returns:
+        Single-entry ``getaddrinfo``-shaped list for a public IP.
+    """
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("140.82.113.4", 443))]
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -130,7 +144,21 @@ def test_derive_session_id_different_projects() -> None:
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_clone_repo_success() -> None:
     """Verify clone_repo succeeds when git returns 0."""
-    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+    # SSRF validation is unit-tested in test_repo_url_validation.py; stub it
+    # here so loop-mocked git behavior is isolated from DNS (fail-closed
+    # validation rejects the loop mock's non-list getaddrinfo result).
+    # The pre-spawn re-resolve guard is stubbed with a public IP likewise.
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch(
+            "apme_gateway.scan.repo_url.validate_repo_url_async",
+            new=AsyncMock(return_value="https://github.com/test/repo.git"),
+        ),
+        patch(
+            "apme_gateway.scan.driver._resolve_host_ips",
+            new=AsyncMock(return_value=_public_resolve_infos()),
+        ),
+    ):
         result = MagicMock()
         result.returncode = 0
         result.stderr = ""
@@ -144,7 +172,19 @@ async def test_clone_repo_success() -> None:
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_clone_repo_failure() -> None:
     """Verify clone_repo raises RuntimeError when git fails."""
-    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+    # SSRF validation stubbed (see test_clone_repo_success): this test
+    # targets git-failure mapping, not DNS.
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch(
+            "apme_gateway.scan.repo_url.validate_repo_url_async",
+            new=AsyncMock(return_value="https://github.com/bad/repo.git"),
+        ),
+        patch(
+            "apme_gateway.scan.driver._resolve_host_ips",
+            new=AsyncMock(return_value=_public_resolve_infos()),
+        ),
+    ):
         result = MagicMock()
         result.returncode = 128
         result.stderr = "fatal: repository not found"
@@ -273,7 +313,19 @@ async def test_fetch_remote_head_success() -> None:
     fake_sha = "a" * 40
     _REMOTE_HEAD_CACHE.clear()
     _REMOTE_HEAD_NEG_CACHE.clear()
-    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+    # SSRF validation stubbed (see test_clone_repo_success): this test
+    # targets ls-remote parsing, not DNS.
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch(
+            "apme_gateway.scan.repo_url.validate_repo_url_async",
+            new=AsyncMock(return_value="https://github.com/test/repo.git"),
+        ),
+        patch(
+            "apme_gateway.scan.driver._resolve_host_ips",
+            new=AsyncMock(return_value=_public_resolve_infos()),
+        ),
+    ):
         result = MagicMock()
         result.returncode = 0
         result.stdout = f"{fake_sha}\trefs/heads/main\n"
@@ -485,7 +537,19 @@ async def test_clone_repo_with_scm_token() -> None:
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_clone_repo_redacts_error_messages() -> None:
     """Verify clone_repo redacts tokens from error messages."""
-    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+    # SSRF validation stubbed (see test_clone_repo_success): this test
+    # targets stderr redaction, not DNS.
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch(
+            "apme_gateway.scan.repo_url.validate_repo_url_async",
+            new=AsyncMock(return_value="https://github.com/bad/repo.git"),
+        ),
+        patch(
+            "apme_gateway.scan.driver._resolve_host_ips",
+            new=AsyncMock(return_value=_public_resolve_infos()),
+        ),
+    ):
         result = MagicMock()
         result.returncode = 128
         result.stderr = "fatal: https://x-access-token:ghp_secret@github.com/repo not found"
@@ -509,7 +573,19 @@ async def test_clone_repo_redacts_error_messages() -> None:
 async def test_clone_repo_redacts_basic_header_in_error() -> None:
     """Verify clone_repo masks AUTHORIZATION Basic material from git stderr."""
     token = base64.b64encode(b"x-access-token:ghp_secret123").decode("ascii")
-    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+    # SSRF validation stubbed (see test_clone_repo_success): this test
+    # targets stderr redaction, not DNS.
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch(
+            "apme_gateway.scan.repo_url.validate_repo_url_async",
+            new=AsyncMock(return_value="https://github.com/bad/repo.git"),
+        ),
+        patch(
+            "apme_gateway.scan.driver._resolve_host_ips",
+            new=AsyncMock(return_value=_public_resolve_infos()),
+        ),
+    ):
         result = MagicMock()
         result.returncode = 128
         result.stderr = f"trace: http.extraHeader: AUTHORIZATION: Basic {token}\nfatal: auth failed"
@@ -749,7 +825,14 @@ def test_auth_cache_marker_separates_url_userpass() -> None:
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_clone_repo_timeout_expired_surfaces_runtime_error() -> None:
     """clone_repo TimeoutExpired surfaces as RuntimeError, never raw."""
-    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+    import socket as _socket  # noqa: PLC0415
+
+    fake_infos = [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("140.82.113.4", 443))]
+    with (
+        patch("apme_gateway.scan.repo_url._resolve_host_ips", return_value=fake_infos),
+        patch("apme_gateway.scan.driver._resolve_host_ips", return_value=fake_infos),
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+    ):
         mock_loop.return_value.run_in_executor = AsyncMock(
             side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=120)
         )
@@ -984,7 +1067,19 @@ async def test_clone_repo_redacts_tokens_straddling_stderr_truncation() -> None:
     filler = "E" * 470
     stderr = f"{filler} https://x-access-token:{secret}@github.com/org/repo not found"
     assert "@" not in stderr[:500]
-    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+    # SSRF validation stubbed (see test_clone_repo_success): this test
+    # targets stderr redaction, not DNS.
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch(
+            "apme_gateway.scan.repo_url.validate_repo_url_async",
+            new=AsyncMock(return_value="https://github.com/bad/repo.git"),
+        ),
+        patch(
+            "apme_gateway.scan.driver._resolve_host_ips",
+            new=AsyncMock(return_value=_public_resolve_infos()),
+        ),
+    ):
         result = MagicMock()
         result.returncode = 128
         result.stderr = stderr
@@ -1067,3 +1162,117 @@ async def test_clone_repo_rejects_none_branch() -> None:
         await clone_repo("https://github.com/o/r.git", None, td + "/repo")  # type: ignore[arg-type]
     with tempfile.TemporaryDirectory() as td, pytest.raises(ValueError, match="Invalid branch name"):
         await clone_repo("https://github.com/o/r.git", 123, td + "/repo")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_joins_inflight_git_on_cancel() -> None:
+    """Cancellation waits for the running git clone before unwinding.
+
+    The caller's ``finally`` deletes the clone destination, so returning
+    while git is still writing into it races the removal.
+    """
+    import asyncio
+    import threading
+    import time
+
+    finished = threading.Event()
+
+    def _slow_git(*_args: object, **_kwargs: object) -> MagicMock:
+        time.sleep(0.3)
+        finished.set()
+        result = MagicMock()
+        result.returncode = 0
+        result.stderr = ""
+        return result
+
+    with (
+        patch(
+            "apme_gateway.scan.repo_url.validate_repo_url_async",
+            new=AsyncMock(return_value="https://github.com/test/repo.git"),
+        ),
+        patch(
+            "apme_gateway.scan.driver._resolve_host_ips",
+            new=AsyncMock(return_value=_public_resolve_infos()),
+        ),
+        patch("apme_gateway.scan.driver.subprocess.run", new=_slow_git),
+        tempfile.TemporaryDirectory() as td,
+    ):
+        dest = os.path.join(td, "repo")
+        task = asyncio.create_task(clone_repo("https://github.com/test/repo.git", "main", dest))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert finished.is_set(), "clone was abandoned instead of joined"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_remove_clone_tree_runs_off_the_event_loop(tmp_path: object) -> None:
+    """Clone cleanup happens in a worker thread, not on the event loop.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+    """
+    import threading
+
+    from apme_gateway.scan.driver import remove_clone_tree
+
+    seen: list[threading.Thread] = []
+
+    def _fake_rmtree(_path: object, ignore_errors: bool = False) -> None:
+        seen.append(threading.current_thread())
+
+    with patch("apme_gateway.scan.driver.shutil.rmtree", new=_fake_rmtree):
+        await remove_clone_tree(str(tmp_path))
+    assert seen, "rmtree was never called"
+    assert seen[0] is not threading.main_thread()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_remove_clone_tree_survives_cancellation(tmp_path: object) -> None:
+    """A cancelled clone cleanup still deletes the checkout.
+
+    The default executor is saturated first, so the delete is queued rather
+    than running. Cancelling the request at that point cancels a bare
+    ``asyncio.to_thread`` await together with its queued call and the
+    checkout is leaked; the retained, shielded task still runs once a worker
+    frees up.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+    """
+    import asyncio
+
+    from apme_gateway.scan import driver as driver_mod
+
+    clone_dir = os.path.join(str(tmp_path), "clone")
+    os.makedirs(clone_dir)
+    with open(os.path.join(clone_dir, "file.txt"), "w", encoding="utf-8") as handle:
+        handle.write("content")
+
+    loop = asyncio.get_running_loop()
+    # Touch the default executor so it exists, then read its worker count.
+    await asyncio.to_thread(lambda: None)
+    executor = loop._default_executor  # type: ignore[attr-defined]
+    assert executor is not None
+    workers = executor._max_workers
+
+    import threading
+
+    release = threading.Event()
+    occupied = [asyncio.create_task(asyncio.to_thread(release.wait, 10)) for _ in range(workers)]
+    await asyncio.sleep(0.05)
+
+    task = asyncio.create_task(driver_mod.remove_clone_tree(clone_dir))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await asyncio.gather(*occupied, return_exceptions=True)
+    for pending in list(getattr(driver_mod, "_CLEANUP_TASKS", ())):
+        await asyncio.gather(pending, return_exceptions=True)
+    await asyncio.sleep(0.1)
+
+    assert os.path.isdir(clone_dir) is False or not os.listdir(clone_dir), "cancelled cleanup leaked the checkout"
+    assert not getattr(driver_mod, "_CLEANUP_TASKS", set())

@@ -290,7 +290,7 @@ def test_git_and_galaxy_wheels_share_a_dependency_resolver(tmp_path: Path, monke
 
     monkeypatch.setenv("APME_GALAXY_PROXY_URL", index.as_uri())
     monkeypatch.setenv("UV_DEFAULT_INDEX", (tmp_path / "unconfigured-index").as_uri())
-    prepare = MagicMock()
+    prepare = MagicMock(return_value=SimpleNamespace(scope_id=None, prepared=[], failed_specs=[], shared=True))
     monkeypatch.setattr(venv_module, "_prepare_collections_via_proxy", prepare)
     venv_root = tmp_path / "venv"
     venv.EnvBuilder().create(venv_root)
@@ -300,7 +300,11 @@ def test_git_and_galaxy_wheels_share_a_dependency_resolver(tmp_path: Path, monke
     )
 
     prepare.assert_called_once_with(
-        index.as_uri(), ["demo.other", "demo.common:==1.0.0"], provided={"demo.custom": "1.2.3"}, timeout=ANY
+        index.as_uri(),
+        ["demo.other", "demo.common:==1.0.0"],
+        None,
+        provided={"demo.custom": "1.2.3"},
+        timeout=ANY,
     )
     tree = venv_module.get_dependency_tree(venv_root)
     assert (
@@ -714,7 +718,15 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
         venv_root=final_root, failed_collections=["unavailable.collection"], installed_collections=[]
     )
 
-    def acquire(sid: str, version: str, specs: list[str], *, local_wheels: dict[str, LocalCollectionWheel]) -> object:
+    def acquire(
+        sid: str,
+        version: str,
+        specs: list[str],
+        galaxy_env: object = None,
+        galaxy_server_configs: object = None,
+        *,
+        local_wheels: dict[str, LocalCollectionWheel],
+    ) -> object:
         calls.append((sid, tuple(specs)))
         result = final if "example.new" in specs else initial
         if not result.failed_collections:
@@ -754,9 +766,13 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
     assert calls[1][1] == ("example.new", "demo.custom")
     assert not (final_root / ".git-dependencies-ready").exists()
 
-    # The marker must be created only after the combined installation succeeds.
+    # A retry may install a conflicting transitive Galaxy collection before
+    # the snapshot is written. Git must win and the marker must be created only
+    # after the combined installation succeeds.
     galaxy_file = final_root / "ansible_collections/demo/custom/plugins/modules/a.py"
     final.failed_collections = []
+    galaxy_file.parent.mkdir(parents=True)
+    galaxy_file.write_bytes(b"galaxy-version")
 
     def stop_after_install(*args: object, **kwargs: object) -> object:
         raise RuntimeError("validators not needed")
@@ -905,7 +921,7 @@ async def test_git_graph_uses_final_collection_environment(
     initial = SimpleNamespace(venv_root=initial_root, failed_collections=[], installed_collections=[])
     final = SimpleNamespace(venv_root=final_root, failed_collections=[], installed_collections=[])
     manager = SimpleNamespace(
-        peek_warm=lambda sid, version, specs: final if specs else initial,
+        peek_warm=lambda sid, version, specs, galaxy_server_configs=None: final if specs else initial,
         get=lambda *_: initial,
     )
     monkeypatch.setattr(engine_server.EngineServicer, "_get_venv_manager", lambda _: manager)

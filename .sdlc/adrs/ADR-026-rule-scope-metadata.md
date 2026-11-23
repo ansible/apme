@@ -165,7 +165,9 @@ All steps completed in the initial implementation PR:
 8. **Violation converters**: `violation_dict_to_proto` / `violation_proto_to_dict` in both daemon and CLI carry `scope`
 9. **`partition.py` rewritten**: `PLAY_LEVEL_RULES` eliminated; routing uses `AI_PROPOSABLE_SCOPES = {TASK, BLOCK}`. `CROSS_FILE_RULES` reduced to `{R111, R112}` — the remaining task-scoped rules that need cross-file context
 10. **Rule docs**: 92 `.md` files updated with `scope:` in YAML front matter
-11. **Backward compatibility**: violations without `scope` default to `TASK` (most permissive)
+11. **Missing-scope safety**: validators must stamp `scope`; violations with an absent or
+    unspecified scope remain non-AI-routable and go to Tier 3. A `TASK` fallback may be
+    used for legacy display only, never to establish eligibility for automated remediation.
 
 ## Related Decisions
 
@@ -188,3 +190,4 @@ All steps completed in the initial implementation PR:
 |------|--------|--------|
 | 2026-03-19 | AI Agent | Initial proposal |
 | 2026-03-19 | AI Agent | Accepted — full implementation: proto schema, models, all rule classes/docs/Rego, converters, partition logic, 11 new tests |
+| 2026-10-20 | Agent | Clarify missing and unspecified scopes remain non-AI-routable through serialization; legacy TASK fallback is display-only |

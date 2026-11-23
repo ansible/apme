@@ -10,6 +10,7 @@ import sys
 import types
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import IO, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
@@ -1283,6 +1284,71 @@ def test_chunked_build_bundle_file_and_dir(tmp_path: Path) -> None:
     assert bundle2.scan_id != ""
 
 
+def test_chunked_build_bundle_enforces_file_cap_before_full_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first over-cap candidate is not fully read or retained.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    from apme_engine.daemon.chunked_fs import ScanBundleLimitExceeded, build_scan_bundle
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    first = root / "a.yml"
+    second = root / "b.yml"
+    first.write_bytes(b"a" * 32_768)
+    second.write_bytes(b"b" * 49_152)
+
+    read_totals: dict[Path, int] = {}
+    original_open = Path.open
+
+    class _TrackedReader:
+        def __init__(self, path: Path, source: BinaryIO) -> None:
+            self._path = path
+            self._source = source
+
+        def __enter__(self) -> _TrackedReader:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self._source.close()
+
+        def read(self, size: int = -1) -> bytes:
+            content = self._source.read(size)
+            read_totals[self._path] = read_totals.get(self._path, 0) + len(content)
+            return content
+
+    def tracked_open(
+        path: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> IO[str] | BinaryIO:
+        source = original_open(path, mode, buffering, encoding, errors, newline)
+        if path in {first, second} and mode == "rb":
+            return cast(BinaryIO, _TrackedReader(path, cast(BinaryIO, source)))
+        return cast(IO[str], source)
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+    with pytest.raises(ScanBundleLimitExceeded, match="file limit exceeded"):
+        build_scan_bundle(root, max_files=1)
+
+    assert 8192 in read_totals.values()
+    fully_read_paths = [path for path, total in read_totals.items() if total == path.stat().st_size]
+    assert len(fully_read_paths) == 1
+    assert sum(read_totals.values()) < first.stat().st_size + second.stat().st_size
+
+    read_totals.clear()
+    with pytest.raises(ScanBundleLimitExceeded, match="size limit exceeded"):
+        build_scan_bundle(root, max_bytes=40_000)
+    assert sum(read_totals.values()) <= 40_000 + 8193
+
+
 def test_chunked_build_bundle_options(tmp_path: Path) -> None:
     """Options fields populate from kwargs.
 
@@ -2227,8 +2293,8 @@ def test_ansible_server_validate_empty_returns_empty() -> None:
 
         req = validate_pb2.ValidateRequest(request_id="empty-1")
         resp = await AnsibleValidatorServicer().Validate(req, MagicMock())
-        assert resp.violations == []  # type: ignore[attr-defined]
-        assert resp.request_id == "empty-1"  # type: ignore[attr-defined]
+        assert resp.violations == []
+        assert resp.request_id == "empty-1"
 
     asyncio.run(_run())
 
@@ -2252,7 +2318,7 @@ def test_ansible_server_validate_bad_hierarchy_payload() -> None:
         )
         with patch.object(mod, "_run_ansible_validate", return_value=fake):
             resp = await AnsibleValidatorServicer().Validate(req, MagicMock())
-        assert resp.request_id == "bad-h"  # type: ignore[attr-defined]
+        assert resp.request_id == "bad-h"
 
     asyncio.run(_run())
 
@@ -2282,8 +2348,8 @@ def test_ansible_server_validate_metadata_and_source() -> None:
         )
         with patch.object(mod, "_run_ansible_validate", return_value=fake):
             resp = await AnsibleValidatorServicer().Validate(req, MagicMock())
-        assert resp.diagnostics.metadata["cache_introspect_hits"] == "2"  # type: ignore[attr-defined]
-        assert resp.diagnostics.metadata["ansible_core_version"] == "2.20"  # type: ignore[attr-defined]
+        assert resp.diagnostics.metadata["cache_introspect_hits"] == "2"
+        assert resp.diagnostics.metadata["ansible_core_version"] == "2.20"
 
     asyncio.run(_run())
 
@@ -2303,7 +2369,7 @@ def test_ansible_server_validate_exception_returns_infra() -> None:
         )
         with patch.object(mod, "_run_ansible_validate", side_effect=RuntimeError("boom")):
             resp = await AnsibleValidatorServicer().Validate(req, MagicMock())
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
 
     asyncio.run(_run())
 
@@ -2424,6 +2490,8 @@ def test_session_store_reap_loop_removes_expired(monkeypatch: pytest.MonkeyPatch
 
     async def _run() -> None:
         monkeypatch.setattr(session_mod, "_REAP_INTERVAL", 0.01)
+        monkeypatch.setattr(session_mod, "_CREATE_INTERVAL_S", 0.0)
+        monkeypatch.setattr(session_mod, "_MIN_CREATE_INTERVAL_S", 0.0)
         store = SessionStore()
         stale = store.create()
         stale.last_activity_at = datetime.now(UTC) - timedelta(seconds=session_mod._DEFAULT_TTL + 5)
@@ -2479,7 +2547,7 @@ def test_collection_health_validate_no_venv() -> None:
 
         req = validate_pb2.ValidateRequest(request_id="ch-empty")
         resp = await CollectionHealthValidatorServicer().Validate(req, MagicMock())
-        assert resp.violations == []  # type: ignore[attr-defined]
+        assert resp.violations == []
 
     asyncio.run(_run())
 
@@ -2495,8 +2563,8 @@ def test_collection_health_validate_success() -> None:
         viol = {"rule_id": "L001", "severity": "low", "message": "m", "file": "c.yml", "line": 1, "path": ""}
         with patch.object(mod, "_run_scan", return_value=[viol]):
             resp = await CollectionHealthValidatorServicer().Validate(req, MagicMock())
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.diagnostics.validator_name == "collection_health"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.diagnostics.validator_name == "collection_health"
 
     asyncio.run(_run())
 
@@ -2512,7 +2580,7 @@ def test_collection_health_validate_exception_returns_infra() -> None:
         req = validate_pb2.ValidateRequest(request_id="ch-exc", venv_path="/sessions/v1")
         with patch.object(mod, "_run_scan", side_effect=RuntimeError("boom")):
             resp = await CollectionHealthValidatorServicer().Validate(req, MagicMock())
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
 
     asyncio.run(_run())
 
@@ -2564,7 +2632,7 @@ def test_dep_audit_validate_no_venv() -> None:
 
         req = validate_pb2.ValidateRequest(request_id="dep-empty")
         resp = await DepAuditValidatorServicer().Validate(req, MagicMock())
-        assert resp.violations == []  # type: ignore[attr-defined]
+        assert resp.violations == []
 
     asyncio.run(_run())
 
@@ -2580,8 +2648,8 @@ def test_dep_audit_validate_success() -> None:
         viol = {"rule_id": "R200", "severity": "high", "message": "cve", "file": "", "line": 1, "path": ""}
         with patch.object(mod, "_run_audit", return_value=[viol]):
             resp = await DepAuditValidatorServicer().Validate(req, MagicMock())
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.diagnostics.validator_name == "dep_audit"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.diagnostics.validator_name == "dep_audit"
 
     asyncio.run(_run())
 
@@ -2597,7 +2665,7 @@ def test_dep_audit_validate_exception_returns_infra() -> None:
         req = validate_pb2.ValidateRequest(request_id="dep-exc", venv_path="/sessions/v1")
         with patch.object(mod, "_run_audit", side_effect=RuntimeError("boom")):
             resp = await DepAuditValidatorServicer().Validate(req, MagicMock())
-        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE
 
     asyncio.run(_run())
 
@@ -2790,7 +2858,7 @@ def test_chunked_build_bundle_read_error_skipped(tmp_path: Path) -> None:
 
     target = tmp_path / "play.yml"
     target.write_text("- hosts: all\n")
-    with patch.object(Path, "read_bytes", side_effect=OSError("denied")):
+    with patch.object(Path, "open", side_effect=OSError("denied")):
         bundle = build_scan_bundle(target, scan_id="r1")
     assert bundle.files == []
 
