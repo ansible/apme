@@ -29,6 +29,8 @@ Git collection identities and versions as scan-local candidates. Its shared
 cache contains the Hub artifacts. For mixed installs the Proxy also relays
 Python wheels referenced by Hub collections. Python requirements from Git
 snapshots remain collection content. Git roles are materialized directly.
+Git wheels carry the collection's Ansible Core compatibility constraint into
+the shared resolver, which keeps the session's selected Core version pinned.
 Gateway DB stores
 the disabled-by-default singleton policy and optional project requirements token.
 The upload contract carries collection files rather than opaque wheel artifacts,
@@ -70,6 +72,7 @@ ADR-045, ADR-060.
 |------|--------|
 | 2026-11-13 | Implemented global policy, project credential override, gateway fetching and isolated Engine dependency payloads (REQ-023). |
 | 2026-11-23 | Install Git collections as local wheels in the shared venv resolver. |
+| 2026-11-23 | Enforce Git collection Ansible Core compatibility during wheel resolution. |
 
 Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).
 

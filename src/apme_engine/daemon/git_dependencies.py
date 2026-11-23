@@ -34,6 +34,12 @@ def _build_git_wheel(fqcn: str, contents: dict[str, bytes]) -> LocalCollectionWh
             if "galaxy.yml" not in contents and "galaxy.yaml" in contents:
                 contents["galaxy.yml"] = contents.pop("galaxy.yaml")
             metadata = yaml.safe_load(contents["galaxy.yml"])
+        if "meta/runtime.yml" in contents:
+            runtime = yaml.safe_load(contents["meta/runtime.yml"])
+            if runtime is not None and not isinstance(runtime, dict):
+                raise ValueError("Collection runtime metadata must be a mapping")
+            if isinstance(metadata, dict) and runtime is not None and "requires_ansible" in runtime:
+                metadata = {**metadata, "requires_ansible": runtime["requires_ansible"]}
     except (KeyError, TypeError, ValueError, yaml.YAMLError):
         raise ValueError(f"Invalid metadata or dependency constraints for Git collection {fqcn}") from None
 
@@ -67,7 +73,7 @@ def build_git_collection_wheels(files: Mapping[str, bytes]) -> dict[str, LocalCo
 
 
 def install_git_dependencies(venv_root: Path, files: Mapping[str, bytes]) -> None:
-    """Materialize Git roles and index the Git collections installed as wheels.
+    """Materialize Git roles and record the snapshot's dependency identities.
 
     Args:
         venv_root: Venv dedicated to this dependency payload hash.

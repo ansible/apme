@@ -40,6 +40,9 @@ the resolver uses the configured Galaxy servers for their collection
 dependencies. A Git collection's Python requirements file remains part of
 its snapshot, with Python package installation scoped to those declared by
 Galaxy wheels. The Proxy relays those Python wheels during mixed installs.
+Required Python packages need a compatible wheel in the configured index for a
+mixed install to succeed. The session's Ansible Core version must also satisfy
+any `requires_ansible` constraint declared in the collection's `meta/runtime.yml`.
 Engine copies Git roles into the venv for Ansible syntax checks. Dependency
 snapshots are separate from project
 source and generated project edits. Their content selects the venv, so updates

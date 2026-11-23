@@ -17,6 +17,7 @@ from typing import Protocol
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
+from packaging.requirements import Requirement
 
 from apme.v1.common_pb2 import File
 from apme.v1.engine_pb2 import ScanChunk
@@ -312,6 +313,34 @@ def test_git_and_galaxy_wheels_share_a_dependency_resolver(tmp_path: Path, monke
     assert (collection / "requirements.txt").read_bytes() == b"git-private-package==1.0.0\n"
 
 
+@pytest.mark.parametrize("from_runtime", [False, True])  # type: ignore[untyped-decorator]
+def test_git_wheel_carries_ansible_core_constraint(from_runtime: bool) -> None:
+    """The wheel dependency rejects Core versions outside the declared range.
+
+    Args:
+        from_runtime: Declare the constraint in the collection runtime metadata.
+    """
+    prefix = "ansible_collections/demo/custom/"
+    files = {f"{prefix}galaxy.yml": b"namespace: demo\nname: custom\nversion: 1.0.0\n"}
+    if from_runtime:
+        files[f"{prefix}meta/runtime.yml"] = b"requires_ansible: '>=2.21,<2.22'\n"
+    else:
+        files[f"{prefix}galaxy.yml"] += b"requires_ansible: '>=2.21,<2.22'\n"
+
+    wheel = build_git_collection_wheels(files)["demo.custom"]
+    with zipfile.ZipFile(io.BytesIO(wheel.content)) as archive:
+        metadata = archive.read("ansible_collection_demo_custom-1.0.0.dist-info/METADATA").decode()
+    requirement = Requirement(
+        next(
+            line.removeprefix("Requires-Dist: ")
+            for line in metadata.splitlines()
+            if line.startswith("Requires-Dist: ansible-core")
+        )
+    )
+    assert requirement.specifier.contains("2.21.1")
+    assert not requirement.specifier.contains("2.20.1")
+
+
 def test_mixed_install_preserves_selected_core(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The solver receives the session's selected version of ansible-core.
 
@@ -329,6 +358,7 @@ def test_mixed_install_preserves_selected_core(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(venv_module, "_venv_site_packages", lambda root: root)
     install = MagicMock(return_value=SimpleNamespace(returncode=0))
     monkeypatch.setattr(venv_module, "_run_pip_install", install)
+    monkeypatch.setattr(venv_module, "_uv_available", lambda: True)
     assert (
         venv_module.install_collections_incremental(
             tmp_path, ["demo.custom"], local_wheels=local_wheels, ansible_version="2.20.1"
@@ -356,6 +386,7 @@ def test_mixed_install_rejects_colliding_collection_names(tmp_path: Path, monkey
     )
     monkeypatch.setenv("APME_GALAXY_PROXY_URL", "http://localhost:8765")
     monkeypatch.setattr(venv_module, "get_venv_python", lambda root: root / "bin" / "python")
+    monkeypatch.setattr(venv_module, "_uv_available", lambda: True)
     with pytest.raises(ValueError, match="map to the same wheel distribution"):
         venv_module.install_collections_incremental(tmp_path, list(local_wheels), local_wheels=local_wheels)
 
@@ -380,6 +411,7 @@ def test_mixed_install_rejects_colliding_hub_dependency(tmp_path: Path, monkeypa
     monkeypatch.setattr(venv_module, "get_venv_python", lambda root: root / "bin" / "python")
     monkeypatch.setattr(venv_module, "_venv_site_packages", lambda root: root)
     monkeypatch.setattr(venv_module, "_install_collections_via_proxy", lambda *args, **kwargs: [])
+    monkeypatch.setattr(venv_module, "_uv_available", lambda: True)
     with pytest.raises(ValueError, match="acme_ops.tools.*same wheel distribution"):
         venv_module.install_collections_incremental(
             tmp_path, ["demo.parent", "acme.ops_tools"], local_wheels=local_wheels

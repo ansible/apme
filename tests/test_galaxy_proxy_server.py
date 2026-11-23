@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from galaxy_proxy.proxy import server as proxy_server
 from galaxy_proxy.proxy.server import _safe_server_label, create_app
@@ -133,6 +134,19 @@ def test_local_python_index_relays_wheels(tmp_path: Path, monkeypatch: pytest.Mo
         forged = path.replace("/python-wheels/", "/python-wheels/a", 1)
         assert client.get(forged).status_code == 404
         assert len(requests) == 4
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_python_wheel_response_closes_upstream_before_first_read() -> None:
+    """Close the upstream connection when sending the response headers fails."""
+    upstream = httpx.Response(200, stream=httpx.ByteStream(b"wheel"))
+    response = proxy_server._UpstreamWheelResponse(upstream, {})
+    receive = AsyncMock()
+    send = AsyncMock(side_effect=BrokenPipeError)
+    with pytest.raises(ClientDisconnect):
+        await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+    assert not upstream.is_stream_consumed
+    assert upstream.is_closed
 
 
 @pytest.fixture()  # type: ignore[untyped-decorator]

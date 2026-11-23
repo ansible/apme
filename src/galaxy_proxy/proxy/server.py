@@ -35,7 +35,10 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from starlette.types import Receive, Scope, Send
+
 import httpx
+from anyio import CancelScope  # type: ignore[import-not-found]
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from packaging.requirements import InvalidRequirement, Requirement
@@ -82,6 +85,34 @@ _ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
 _UNAUTH_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _ON_DEMAND_WHEEL_TTL_S = 300.0
 _ON_DEMAND_WHEEL_LIMIT_BYTES = 64 * 1024 * 1024
+
+
+class _UpstreamWheelResponse(StreamingResponse):  # type: ignore[misc]
+    """Own the upstream response for the lifetime of the ASGI response."""
+
+    def __init__(self, upstream: httpx.Response, headers: dict[str, str]) -> None:
+        """Create a streaming response with the upstream status and selected headers.
+
+        Args:
+            upstream: Open source of the wheel bytes.
+            headers: Response headers approved for relay.
+        """
+        super().__init__(upstream.aiter_raw(), headers=headers, status_code=upstream.status_code)
+        self._upstream = upstream
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Close the upstream even if sending the response fails before the first read.
+
+        Args:
+            scope: ASGI connection metadata.
+            receive: ASGI receiver for client events.
+            send: ASGI sender for response events.
+        """
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with CancelScope(shield=True):
+                await self._upstream.aclose()
 
 
 def _unauth_admin_allowed() -> bool:
@@ -1227,14 +1258,7 @@ def create_app(
             await upstream.aclose()
             return Response(headers=headers, status_code=upstream.status_code)
 
-        async def stream() -> AsyncIterator[bytes]:
-            try:
-                async for chunk in upstream.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream.aclose()
-
-        return StreamingResponse(stream(), headers=headers, status_code=upstream.status_code)
+        return _UpstreamWheelResponse(upstream, headers)
 
     @app.get("/wheels/{filename}")  # type: ignore[untyped-decorator]
     async def serve_wheel(filename: str) -> Response:

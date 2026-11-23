@@ -75,7 +75,15 @@ def normalize_source_collection_metadata(metadata: object, fqcn: str) -> dict[st
                 dependencies[dep] = str(specifiers)
     except (KeyError, TypeError, ValueError):
         raise ValueError(f"Invalid metadata or dependency constraints for Git collection {fqcn}") from None
-    return {"namespace": namespace, "name": name, "version": str(version), "dependencies": dependencies}
+    normalized = {"namespace": namespace, "name": name, "version": str(version), "dependencies": dependencies}
+    if (requires_ansible := metadata.get("requires_ansible")) is not None:
+        try:
+            if not isinstance(requires_ansible, str):
+                raise ValueError("Expected a version specifier")
+            normalized["requires_ansible"] = str(SpecifierSet(requires_ansible))
+        except ValueError:
+            raise ValueError(f"Invalid requires_ansible for Git collection {fqcn}") from None
+    return normalized
 
 
 def galaxy_to_metadata(galaxy: dict[str, Any]) -> str:
