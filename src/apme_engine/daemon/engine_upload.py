@@ -84,6 +84,8 @@ def validate_dependency_path(path: str) -> str:
     Raises:
         ValueError: Invalid collection, role or install layout.
     """
+    if "\0" in path:
+        raise ValueError("Invalid dependency install path")
     normalized = _normalize_upload_path(path)
     parts = normalized.split("/")
     collection = (

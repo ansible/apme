@@ -7,6 +7,9 @@ scoped to the repository origin by the caller.
 
 ## Temporary storage
 
+The local Podman pod provides the Gateway with a 512 MiB tmpfs at
+`/run/apme-git` with an 8192-inode limit.
+
 Set `APME_GIT_FETCH_ROOT` to a dedicated, writable **tmpfs mount root** with at
 most 512 MiB and 65536 inodes. For example, an administrator can provision a
 Linux tmpfs with `size=512m,nr_inodes=8192,mode=0700,uid=1001,gid=0` at

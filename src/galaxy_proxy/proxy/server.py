@@ -35,13 +35,14 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import InvalidWheelFilename, parse_wheel_filename
 from packaging.version import Version
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from galaxy_proxy.collection_downloader import (
     GalaxyServerConfig,
@@ -52,6 +53,7 @@ from galaxy_proxy.collection_downloader import (
 from galaxy_proxy.converter import tarball_to_wheel
 from galaxy_proxy.metadata import sha256_file_hex
 from galaxy_proxy.naming import (
+    fqcn_to_python,
     is_collection_package,
     normalize_pep503,
     python_to_fqcn,
@@ -276,9 +278,11 @@ class _PrepareCollectionsPayload(BaseModel):  # type: ignore[misc]
 
     Attributes:
         specs: Collection FQCNs with optional version constraints.
+        provided: Exact versions already supplied by scan-local collections.
     """
 
     specs: list[str]
+    provided: dict[str, str] = Field(default_factory=dict)
 
 
 _COLLECTION_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
@@ -636,11 +640,12 @@ def create_app(
             Exception: Re-raises an unhandled downstream request exception.
         """
         path = request.url.path
-        simple_package = normalize_pep503(path.removeprefix("/simple/").rstrip("/"))
+        simple_path = path.removeprefix("/simple-local/").removeprefix("/simple/")
+        simple_package = normalize_pep503(simple_path.rstrip("/"))
         collection_path = (
             path.startswith("/wheels/")
-            or path == "/simple/"
-            or (path.startswith("/simple/") and is_collection_package(simple_package))
+            or path in {"/simple/", "/simple-local/"}
+            or (simple_path != path and is_collection_package(simple_package))
         )
         if collection_path or path in {"/admin/prepare-collections", "/convert-tarballs"}:
             await _reconcile_native_config()
@@ -936,6 +941,16 @@ def create_app(
         specs = [spec.strip() for spec in body.specs]
         if any(not _valid_collection_spec(spec) for spec in specs):
             raise HTTPException(status_code=422, detail="Invalid collection spec")
+        provided = body.provided
+        if len(provided) > 2000 or any(
+            len(fqcn) + len(version) >= 255
+            or not re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*", fqcn)
+            or not re.fullmatch(r"[0-9][0-9A-Za-z._+-]*", version)
+            or not _valid_collection_spec(f"{fqcn}:{version}")
+            for fqcn, version in provided.items()
+        ):
+            raise HTTPException(status_code=422, detail="Invalid scan-local collection candidate")
+        provided_packages = {fqcn_to_python(fqcn): Version(version) for fqcn, version in provided.items()}
 
         generation = app.state.galaxy_config_generation
 
@@ -943,7 +958,10 @@ def create_app(
             spec_list: list[str], handoff_snapshot: dict[str, tuple[float, bytes]]
         ) -> dict[str, bool]:
             memo: dict[str, bool] = {}
-            return {spec: _cache_satisfies_spec(cache, handoff_snapshot, spec, _memo=memo) for spec in spec_list}
+            return {
+                spec: _cache_satisfies_spec(cache, handoff_snapshot, spec, _memo=memo, provided=provided_packages)
+                for spec in spec_list
+            }
 
         async def _check_specs(spec_list: list[str]) -> dict[str, bool]:
             # Snapshot mutable app state on the event loop, then do wheel
@@ -997,6 +1015,7 @@ def create_app(
                         servers=servers_for_download,
                         ansible_galaxy_bin=galaxy_bin,
                         include_dependencies=True,
+                        provided=provided or None,
                     )
                     failed.extend(result.failed_specs)
                     for tarball in result.tarball_paths:
@@ -1030,7 +1049,8 @@ def create_app(
                     del _prepare_fallback_wheels[filename]
             for spec in failed:
                 fqcn, separator, requested = spec.partition(":")
-                if not separator or not requested or requested.startswith(("<", ">", "!", "=", "~", "*")):
+                requested = requested.removeprefix("==")
+                if not separator or not re.fullmatch(r"[0-9][0-9A-Za-z._+-]*", requested):
                     continue
                 namespace, collection = fqcn.split(".", 1)
                 filename = wheel_filename(namespace, collection, requested)
@@ -1058,8 +1078,9 @@ def create_app(
             "</body></html>\n"
         )
 
+    @app.get("/simple-local/{package_name}/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
     @app.get("/simple/{package_name}/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
-    async def project_page(package_name: str) -> HTMLResponse:
+    async def project_page(package_name: str, request: Request) -> HTMLResponse:
         """PEP 503 project page listing wheels already prepared by the CLI.
 
         Engine prepares pinned requirements through the authenticated admin
@@ -1068,6 +1089,7 @@ def create_app(
 
         Args:
             package_name: Requested package name from the URL path.
+            request: Used to select whether to relay Python wheel artifacts.
 
         Returns:
             HTML Simple API response (collection listing or passthrough).
@@ -1085,7 +1107,8 @@ def create_app(
                     status_code=404,
                     detail=f"Package {package_name!r} is not an Ansible collection and passthrough is disabled",
                 )
-            html, status = await passthrough.fetch_project_page(normalized)
+            local_artifacts = request.url.path.startswith("/simple-local/")
+            html, status = await passthrough.fetch_project_page(normalized, local_artifacts=local_artifacts)
             return HTMLResponse(content=html, status_code=status)
 
         logger.info("collection_requested package=%s type=collection endpoint=project", normalized)
@@ -1169,6 +1192,49 @@ def create_app(
 
         html = "<!DOCTYPE html>\n<html><body>\n" + "\n".join(links) + "\n</body></html>\n"
         return HTMLResponse(content=html)
+
+    @app.api_route("/python-wheels/{signature}/{token}/{filename}", methods=["GET", "HEAD"])  # type: ignore[untyped-decorator]
+    async def serve_python_wheel(signature: str, token: str, filename: str, request: Request) -> Response:
+        """Stream an approved wheel or wheel metadata from the Python index.
+
+        Args:
+            signature: Proxy signature for the upstream URL.
+            token: Encoded upstream URL.
+            filename: Filename for the wheel or its PEP 658 metadata.
+            request: Client request with optional Range header.
+
+        Returns:
+            Wheel, wheel metadata, or the corresponding status response.
+
+        Raises:
+            HTTPException: If the artifact link is invalid or the upstream request fails.
+        """
+        if passthrough is None:
+            raise HTTPException(status_code=404, detail="Python wheels are disabled")
+        try:
+            artifact = await passthrough.open_artifact(
+                signature, token, filename, request.method, request.headers.get("range")
+            )
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail="Python wheel download failed") from exc
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Invalid Python wheel link")
+        upstream, headers = artifact
+        if upstream.is_redirect:
+            await upstream.aclose()
+            raise HTTPException(status_code=502, detail="Python wheel endpoint redirected")
+        if request.method == "HEAD":
+            await upstream.aclose()
+            return Response(headers=headers, status_code=upstream.status_code)
+
+        async def stream() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await upstream.aclose()
+
+        return StreamingResponse(stream(), headers=headers, status_code=upstream.status_code)
 
     @app.get("/wheels/{filename}")  # type: ignore[untyped-decorator]
     async def serve_wheel(filename: str) -> Response:
@@ -1565,6 +1631,8 @@ def _cache_satisfies_spec(
     spec: str,
     _visiting: set[str] | None = None,
     _memo: dict[str, bool] | None = None,
+    *,
+    provided: dict[str, Version] | None = None,
 ) -> bool:
     """Return whether cache has a matching wheel and its collection dependencies.
 
@@ -1574,6 +1642,7 @@ def _cache_satisfies_spec(
         spec: Galaxy FQCN with an optional version constraint.
         _visiting: Specs already being checked to break dependency cycles.
         _memo: Completed top-level satisfaction results shared across a phase.
+        provided: Exact scan-local package versions available to the resolver.
 
     Returns:
         Whether a matching wheel and its collection dependency closure are cached.
@@ -1653,6 +1722,11 @@ def _cache_satisfies_spec(
             dep_package = normalize_pep503(requirement.name)
             if not dep_package.startswith("ansible-collection-"):
                 continue
+            if provided and dep_package in provided:
+                dependencies_satisfied = requirement.specifier.contains(provided[dep_package], prereleases=True)
+                if not dependencies_satisfied:
+                    break
+                continue
             try:
                 dep_namespace, dep_name = python_to_fqcn(dep_package)
             except ValueError:
@@ -1660,7 +1734,7 @@ def _cache_satisfies_spec(
                 break
             dep_fqcn = f"{dep_namespace}.{dep_name}"
             dep_spec = f"{dep_fqcn}:{requirement.specifier}" if requirement.specifier else dep_fqcn
-            if not _cache_satisfies_spec(cache, handoffs, dep_spec, visiting, memo):
+            if not _cache_satisfies_spec(cache, handoffs, dep_spec, visiting, memo, provided=provided):
                 dependencies_satisfied = False
                 break
         if dependencies_satisfied:

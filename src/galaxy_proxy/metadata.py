@@ -9,12 +9,73 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
 from galaxy_proxy.naming import fqcn_to_python
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+_COLLECTION_NAME = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
+_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+_SEMVER = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    rf"(?:-{_PRERELEASE_IDENTIFIER}(?:\.{_PRERELEASE_IDENTIFIER})*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
+
+
+def normalize_source_collection_metadata(metadata: object, fqcn: str) -> dict[str, Any]:
+    """Validate fields from a checkout before they become wheel headers.
+
+    Args:
+        metadata: Parsed collection metadata from the source checkout.
+        fqcn: Expected collection identity in the dependency upload.
+
+    Returns:
+        Collection identity, version and dependency constraints for the wheel builder.
+
+    Raises:
+        ValueError: Invalid collection metadata or dependency constraints.
+    """
+    try:
+        if not _COLLECTION_NAME.fullmatch(fqcn) or not isinstance(metadata, dict):
+            raise ValueError("Invalid collection metadata")
+        namespace, name = fqcn.split(".")
+        if metadata["namespace"] != namespace or metadata["name"] != name:
+            raise ValueError("Metadata identity does not match snapshot layout")
+        raw_version = metadata["version"]
+        if not isinstance(raw_version, str) or not _SEMVER.fullmatch(raw_version):
+            raise ValueError("Collection version must use SemVer")
+        version = Version(raw_version)
+        if "-" in raw_version.partition("+")[0] and not version.is_prerelease:
+            raise ValueError("A SemVer prerelease must remain a prerelease in wheel metadata")
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"Git collection {fqcn} must have matching metadata and a wheel-compatible version") from None
+    try:
+        dependencies: dict[str, str] = {}
+        raw_dependencies = metadata.get("dependencies")
+        if raw_dependencies is not None and not isinstance(raw_dependencies, dict):
+            raise ValueError("Collection dependencies must be a mapping")
+        for dep, constraint in (raw_dependencies or {}).items():
+            if not isinstance(dep, str) or not _COLLECTION_NAME.fullmatch(dep) or not isinstance(constraint, str):
+                raise ValueError("Invalid dependency")
+            constraint = constraint.strip()
+            if not constraint or constraint == "*":
+                dependencies[dep] = ""
+            else:
+                constraint = re.sub(r"(^|,)\s*=(?!=)", r"\1==", constraint)
+                if constraint[0] not in "<>=!~":
+                    constraint = f"=={constraint}"
+                specifiers = SpecifierSet(constraint)
+                if any(specifier.operator in {"~=", "==="} for specifier in specifiers):
+                    raise ValueError("Unsupported Galaxy version operator")
+                dependencies[dep] = str(specifiers)
+    except (KeyError, TypeError, ValueError):
+        raise ValueError(f"Invalid metadata or dependency constraints for Git collection {fqcn}") from None
+    return {"namespace": namespace, "name": name, "version": str(version), "dependencies": dependencies}
 
 
 def galaxy_to_metadata(galaxy: dict[str, Any]) -> str:
@@ -97,11 +158,12 @@ def galaxy_to_metadata_with_python_deps(
         if "://" in line or line.startswith((".", "/")):
             continue
         try:
-            Requirement(line)
+            requirement = Requirement(line)
         except InvalidRequirement:
-            logger.debug("Skipping non-PEP-508 requirement line: %s", line)
+            logger.debug("Skipping non-PEP-508 collection requirement")
             continue
-        extra_lines.append(f"Requires-Dist: {line}")
+        if requirement.url is None:
+            extra_lines.append(f"Requires-Dist: {line}")
 
     if extra_lines:
         return base + "\n".join(extra_lines) + "\n"

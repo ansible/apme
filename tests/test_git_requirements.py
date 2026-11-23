@@ -1,17 +1,20 @@
 """Git requirement policy, credential and dependency isolation regressions."""
 
 import asyncio
+import io
 import os
 import shlex
 import subprocess
 import sys
 import tempfile
+import venv
+import zipfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Protocol
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -19,8 +22,9 @@ from apme.v1.common_pb2 import File
 from apme.v1.engine_pb2 import ScanChunk
 from apme_engine.daemon import engine_upload
 from apme_engine.daemon.engine_server import _discover_collection_specs
-from apme_engine.daemon.git_dependencies import install_git_dependencies
+from apme_engine.daemon.git_dependencies import build_git_collection_wheels, install_git_dependencies
 from apme_engine.daemon.session import SessionState
+from apme_engine.venv_manager.venv_collections import LocalCollectionWheel
 from apme_gateway.scan import git_requirements as git
 
 
@@ -65,6 +69,9 @@ def _snapshot_mock(
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "collection_uses_source", [False, True], ids=["url-in-name", "url-in-source"]
+)
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     "override,project_token,expected,operation_token,source_origin",
     [
         (None, "project", "project", None, "git.example"),
@@ -84,6 +91,7 @@ async def test_credentials_and_dependency_layout(
     expected: str | None,
     operation_token: str | None,
     source_origin: str,
+    collection_uses_source: bool,
 ) -> None:
     """Git requirements use their override or default to project credentials.
 
@@ -95,18 +103,24 @@ async def test_credentials_and_dependency_layout(
         expected: Credential used to fetch dependencies.
         operation_token: Effective project clone credential.
         source_origin: Git dependency hostname.
+        collection_uses_source: Put the Git collection URL in its source field.
     """
-    (tmp_path / "requirements.yml").write_text("""collections:
-  - name: https://git.example/collection.git
+    collection_url = f"https://{source_origin}/collection.git"
+    role_url = f"https://{source_origin}/role.git"
+    collection_fields = f"name: {collection_url}"
+    if collection_uses_source:
+        collection_fields = f"name: demo.custom\n    source: {collection_url}"
+    requirements = tmp_path / "collections/requirements.yml"
+    requirements.parent.mkdir()
+    requirements.write_text(f"""collections:
+  - {collection_fields}
     type: git
     version: v1
 roles:
-  - src: git+https://git.example/role.git
+  - src: git+{role_url}
     name: example_role
     version: main
 """)
-    path = tmp_path / "requirements.yml"
-    path.write_text(path.read_text().replace("git.example", source_origin))
     db = SimpleNamespace(
         get=AsyncMock(
             side_effect=[
@@ -139,7 +153,7 @@ roles:
     ) -> None:
         assert url_userpass is None
         assert scm_provider == ("gitlab" if source_origin == "git.example" else None)
-        calls.append((ref, token))
+        calls.append((url, ref, token))
         root = Path(dest)
         if "collection" in url:
             (root / "galaxy.yml").write_text("namespace: demo\nname: custom\nversion: 1.0.0\n")
@@ -153,7 +167,7 @@ roles:
     result = await git.resolve_git_requirements(
         "project", str(tmp_path), repo_url="https://git.example/project", scm_token=operation_token
     )
-    assert calls == [("v1", expected), ("main", expected)]
+    assert calls == [(collection_url, "v1", expected), (role_url, "main", expected)]
     assert {f.path for f in result} == {
         "ansible_collections/demo/custom/galaxy.yml",
         "ansible_collections/demo/custom/plugins/modules/probe.py",
@@ -236,6 +250,140 @@ def test_install_dependencies_and_reject_traversal(tmp_path: Path, monkeypatch: 
         install_git_dependencies(tmp_path, {"../outside": b"bad"})
     install_git_dependencies(tmp_path, {"roles/test/tasks/main.yml": b"[]"})
     assert (site / "roles/test/tasks/main.yml").read_bytes() == b"[]"
+
+
+def test_git_and_galaxy_wheels_share_a_dependency_resolver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The recorded tree includes the Git wheel and dependencies from the Galaxy index.
+
+    Args:
+        tmp_path: Disposable venv and package index.
+        monkeypatch: Local index and preparation overrides.
+    """
+    from apme_engine.venv_manager import session as venv_module
+    from galaxy_proxy.converter import collection_to_wheel
+
+    if not venv_module._uv_available():
+        pytest.skip("uv is required to record the dependency tree")
+    local_wheels = build_git_collection_wheels(
+        {
+            "ansible_collections/demo/custom/galaxy.yml": (
+                b"namespace: demo\nname: custom\nversion: 1.2.3\ndependencies:\n  demo.common: '=1.0.0'\n"
+            ),
+            "ansible_collections/demo/custom/plugins/modules/example.py": b"# Git snapshot",
+            "ansible_collections/demo/custom/requirements.txt": b"git-private-package==1.0.0\n",
+        }
+    )
+    index = tmp_path / "index"
+    for name, version, dependencies in (
+        ("other", "2.0.0", {"demo.custom": ">=1.2.3"}),
+        ("common", "1.0.0", {}),
+        ("custom", "2.0.0", {}),
+    ):
+        filename, content = collection_to_wheel(
+            {"namespace": "demo", "name": name, "version": version, "dependencies": dependencies}, {}
+        )
+        package_path = index / "simple-local" / f"ansible-collection-demo-{name}"
+        package_path.mkdir(parents=True)
+        (package_path / filename).write_bytes(content)
+        (package_path / "index.html").write_text(f'<a href="{filename}">{filename}</a>\n')
+
+    monkeypatch.setenv("APME_GALAXY_PROXY_URL", index.as_uri())
+    monkeypatch.setenv("UV_DEFAULT_INDEX", (tmp_path / "unconfigured-index").as_uri())
+    prepare = MagicMock()
+    monkeypatch.setattr(venv_module, "_prepare_collections_via_proxy", prepare)
+    venv_root = tmp_path / "venv"
+    venv.EnvBuilder().create(venv_root)
+    assert (
+        venv_module.install_collections_incremental(venv_root, ["demo.other", "demo.custom"], local_wheels=local_wheels)
+        == []
+    )
+
+    prepare.assert_called_once_with(
+        index.as_uri(), ["demo.other", "demo.common:==1.0.0"], provided={"demo.custom": "1.2.3"}, timeout=ANY
+    )
+    tree = venv_module.get_dependency_tree(venv_root)
+    assert (
+        "ansible-collection-demo-other v2.0.0\n"
+        "└── ansible-collection-demo-custom v1.2.3\n"
+        "    └── ansible-collection-demo-common v1.0.0"
+    ) in tree
+    collection = venv_module._venv_site_packages(venv_root) / "ansible_collections/demo/custom"
+    assert (collection / "plugins/modules/example.py").read_bytes() == b"# Git snapshot"
+    assert (collection / "requirements.txt").read_bytes() == b"git-private-package==1.0.0\n"
+
+
+def test_mixed_install_preserves_selected_core(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The solver receives the session's selected version of ansible-core.
+
+    Args:
+        tmp_path: Session venv path.
+        monkeypatch: Replace subprocess installation with a call recorder.
+    """
+    from apme_engine.venv_manager import session as venv_module
+
+    local_wheels = build_git_collection_wheels(
+        {"ansible_collections/demo/custom/galaxy.yml": b"namespace: demo\nname: custom\nversion: 1.0.0\n"}
+    )
+    monkeypatch.setenv("APME_GALAXY_PROXY_URL", "http://localhost:8765")
+    monkeypatch.setattr(venv_module, "get_venv_python", lambda root: root / "bin" / "python")
+    monkeypatch.setattr(venv_module, "_venv_site_packages", lambda root: root)
+    install = MagicMock(return_value=SimpleNamespace(returncode=0))
+    monkeypatch.setattr(venv_module, "_run_pip_install", install)
+    assert (
+        venv_module.install_collections_incremental(
+            tmp_path, ["demo.custom"], local_wheels=local_wheels, ansible_version="2.20.1"
+        )
+        == []
+    )
+    assert "ansible-core==2.20.1" in install.call_args.args[1]
+    assert install.call_args.kwargs["proxy_only"] is True
+
+
+def test_mixed_install_rejects_colliding_collection_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Collection identities cannot overwrite each other's wheel.
+
+    Args:
+        tmp_path: Session venv path.
+        monkeypatch: Configure an index without making a network request.
+    """
+    from apme_engine.venv_manager import session as venv_module
+
+    local_wheels = build_git_collection_wheels(
+        {
+            "ansible_collections/acme/ops_tools/galaxy.yml": b"namespace: acme\nname: ops_tools\nversion: 1.0.0\n",
+            "ansible_collections/acme_ops/tools/galaxy.yml": b"namespace: acme_ops\nname: tools\nversion: 1.0.0\n",
+        }
+    )
+    monkeypatch.setenv("APME_GALAXY_PROXY_URL", "http://localhost:8765")
+    monkeypatch.setattr(venv_module, "get_venv_python", lambda root: root / "bin" / "python")
+    with pytest.raises(ValueError, match="map to the same wheel distribution"):
+        venv_module.install_collections_incremental(tmp_path, list(local_wheels), local_wheels=local_wheels)
+
+
+def test_mixed_install_rejects_colliding_hub_dependency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A direct Git wheel cannot stand in for a differently named transitive dependency.
+
+    Args:
+        tmp_path: Session venv path.
+        monkeypatch: Replace package installation with an already-installed fixture.
+    """
+    from apme_engine.venv_manager import session as venv_module
+
+    local_wheels = build_git_collection_wheels(
+        {"ansible_collections/acme/ops_tools/galaxy.yml": b"namespace: acme\nname: ops_tools\nversion: 1.0.0\n"}
+    )
+    parent = tmp_path / "ansible_collections" / "demo" / "parent"
+    parent.mkdir(parents=True)
+    (parent / "MANIFEST.json").write_text('{"collection_info": {"dependencies": {"acme_ops.tools": "*"}}}')
+    (tmp_path / "ansible_collections" / "acme" / "ops_tools").mkdir(parents=True)
+    monkeypatch.setenv("APME_GALAXY_PROXY_URL", "http://localhost:8765")
+    monkeypatch.setattr(venv_module, "get_venv_python", lambda root: root / "bin" / "python")
+    monkeypatch.setattr(venv_module, "_venv_site_packages", lambda root: root)
+    monkeypatch.setattr(venv_module, "_install_collections_via_proxy", lambda *args, **kwargs: [])
+    with pytest.raises(ValueError, match="acme_ops.tools.*same wheel distribution"):
+        venv_module.install_collections_incremental(
+            tmp_path, ["demo.parent", "acme.ops_tools"], local_wheels=local_wheels
+        )
 
 
 def test_git_role_is_loaded_as_external_context(tmp_path: Path) -> None:
@@ -407,6 +555,36 @@ def test_missing_collection_metadata_reports_error(tmp_path: Path) -> None:
         git._collect_files("collections", {}, tmp_path, tmp_path, "test")
 
 
+def test_git_collection_rejects_direct_collection_dependencies_before_upload(tmp_path: Path) -> None:
+    """Git collection metadata may request collections through the configured indexes.
+
+    Args:
+        tmp_path: Disposable collection checkout.
+    """
+    (tmp_path / "galaxy.yml").write_text(
+        "namespace: demo\nname: custom\nversion: 1.0.0\ndependencies:\n  demo.other: https://example.com/repo.git\n"
+    )
+    with pytest.raises(ValueError, match="Invalid metadata or dependency constraints for Git collection demo.custom"):
+        git._collect_files("collections", {}, tmp_path, tmp_path, "collection.git")
+
+
+def test_git_collection_rejects_checkout_for_a_different_collection(tmp_path: Path) -> None:
+    """A named Git source must contain that collection.
+
+    Args:
+        tmp_path: Disposable collection checkout.
+    """
+    (tmp_path / "galaxy.yml").write_text("namespace: demo\nname: other\nversion: 1.0.0\n")
+    with pytest.raises(ValueError, match="name does not match"):
+        git._collect_files(
+            "collections",
+            {"name": "demo.custom", "type": "git", "source": "https://example.com/repo.git"},
+            tmp_path,
+            tmp_path,
+            "collection.git",
+        )
+
+
 @pytest.mark.parametrize("output", ["not json", "null", '["ok", 42]'])  # type: ignore[untyped-decorator]
 def test_role_path_probe_errors_are_scoped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str) -> None:
     """Bad role path probes produce an L057 result instead of aborting all validation.
@@ -504,11 +682,18 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
         venv_root=final_root, failed_collections=["unavailable.collection"], installed_collections=[]
     )
 
-    def peek(sid: str, version: str, specs: list[str]) -> object:
+    def acquire(sid: str, version: str, specs: list[str], *, local_wheels: dict[str, LocalCollectionWheel]) -> object:
         calls.append((sid, tuple(specs)))
-        return final if specs else initial
+        result = final if "example.new" in specs else initial
+        if not result.failed_collections:
+            path = "ansible_collections/demo/custom/plugins/modules/a.py"
+            with zipfile.ZipFile(io.BytesIO(local_wheels["demo.custom"].content)) as wheel:
+                destination = result.venv_root / path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(wheel.read(path))
+        return result
 
-    manager = SimpleNamespace(peek_warm=peek, get=lambda *_: initial)
+    manager = SimpleNamespace(peek_warm=lambda *_: None, acquire=acquire, get=lambda *_: initial)
     monkeypatch.setattr(engine_server.EngineServicer, "_get_venv_manager", lambda _: manager)
     monkeypatch.setattr(venv_module, "_venv_site_packages", lambda _: tmp_path)
     monkeypatch.setattr(
@@ -520,7 +705,10 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
         ),
     )
     monkeypatch.setattr(git_dependencies, "_venv_site_packages", lambda root: root)
-    dependency = {"ansible_collections/demo/custom/plugins/modules/a.py": b"git-version"}
+    dependency = {
+        "ansible_collections/demo/custom/galaxy.yml": b"namespace: demo\nname: custom\nversion: 1.0.0\n",
+        "ansible_collections/demo/custom/plugins/modules/a.py": b"git-version",
+    }
     with pytest.raises(engine_server.CollectionDependencyError):
         await engine_server.EngineServicer()._execute_scan_pipeline(
             tmp_path,
@@ -530,16 +718,12 @@ async def test_git_snapshot_isolated_from_later_galaxy_requirements(
             dependency_files=dependency,
         )
     assert calls[0][0] != calls[1][0]
-    assert calls[0][1] == ()
-    assert calls[1][1] == ("example.new",)
+    assert calls[0][1] == ("demo.custom",)
+    assert calls[1][1] == ("example.new", "demo.custom")
     assert not (final_root / ".git-dependencies-ready").exists()
 
-    # A retry may install a conflicting transitive Galaxy collection before
-    # the snapshot is written. Git must win and the marker must be created only
-    # after the acquisition succeeds.
+    # The marker must be created only after the combined installation succeeds.
     galaxy_file = final_root / "ansible_collections/demo/custom/plugins/modules/a.py"
-    galaxy_file.parent.mkdir(parents=True)
-    galaxy_file.write_bytes(b"galaxy-version")
     final.failed_collections = []
 
     def stop_after_install(*args: object, **kwargs: object) -> object:
@@ -613,7 +797,7 @@ def test_collection_metadata_rejects_alias_graph(tmp_path: Path) -> None:
         git._collect_files("collections", {}, tmp_path, tmp_path, "collection.git")
 
 
-@pytest.mark.parametrize("field", ["src", "name", "version"])  # type: ignore[untyped-decorator]
+@pytest.mark.parametrize("field", ["src", "name", "source", "version"])  # type: ignore[untyped-decorator]
 async def test_requirement_rejects_alias_graph_before_fetch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
 ) -> None:
@@ -625,7 +809,7 @@ async def test_requirement_rejects_alias_graph_before_fetch(
         field: Field containing an aliased YAML graph.
     """
     declaration = "  - type: git\n"
-    if field == "version":
+    if field in {"source", "version"}:
         declaration += "    name: https://git.example/collection.git\n"
     declaration += f"    {field}: *graph\n"
     (tmp_path / "requirements.yml").write_text("graph: &graph [a, a]\ncollections:\n" + declaration)

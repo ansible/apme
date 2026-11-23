@@ -35,12 +35,27 @@ def tarball_to_wheel(tarball_data: bytes) -> tuple[str, bytes]:
         A tuple of (wheel_filename, wheel_bytes).
     """
     galaxy, contents = _extract_tarball(tarball_data)
+    return collection_to_wheel(galaxy, contents)
 
+
+def collection_to_wheel(
+    galaxy: dict[str, Any], contents: dict[str, bytes], *, resolve_python_requirements: bool = True
+) -> tuple[str, bytes]:
+    """Package collection metadata and validated relative files into a wheel.
+
+    Args:
+        galaxy: Collection metadata used to generate wheel metadata.
+        contents: Files relative to the collection root.
+        resolve_python_requirements: Convert requirements.txt to wheel metadata. Otherwise keep the file as content.
+
+    Returns:
+        Wheel filename and bytes.
+    """
     namespace = galaxy["namespace"]
     name = galaxy["name"]
     version = galaxy["version"]
 
-    req_txt_bytes = contents.pop("requirements.txt", None)
+    req_txt_bytes = contents.get("requirements.txt") if resolve_python_requirements else None
     req_txt = req_txt_bytes.decode("utf-8", errors="replace") if req_txt_bytes else None
 
     metadata_content = galaxy_to_metadata_with_python_deps(galaxy, req_txt)
@@ -55,6 +70,8 @@ def tarball_to_wheel(tarball_data: bytes) -> tuple[str, bytes]:
 
     with zipfile.ZipFile(wheel_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for relative_path, data in sorted(contents.items()):
+            if relative_path == "requirements.txt" and resolve_python_requirements:
+                continue
             arc_path = f"{collection_prefix}/{relative_path}"
             zf.writestr(arc_path, data)
             record_entries.append((arc_path, sha256_digest(data), len(data)))

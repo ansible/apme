@@ -202,6 +202,8 @@ spec:
           value: "0.0.0.0"
         - name: APME_GATEWAY_HTTP_PORT
           value: "8080"
+        - name: APME_GIT_FETCH_ROOT
+          value: "/run/apme-git"
         - name: APME_ABBENAY_HTTP_URL
           value: "http://127.0.0.1:8787"
         - name: APME_ABBENAY_HTTP_TOKEN
@@ -239,6 +241,8 @@ spec:
       volumeMounts:
         - name: abbenay-run
           mountPath: /tmp/abbenay-run
+        - name: git-fetch
+          mountPath: /run/apme-git:Z
     - name: ui
       image: apme-ui:latest
       ports:
@@ -334,6 +338,9 @@ spec:
     - name: proxy-cache
       persistentVolumeClaim:
         claimName: apme-proxy-cache
+    - name: git-fetch
+      persistentVolumeClaim:
+        claimName: apme-git-fetch
     - name: abbenay-config
       hostPath:
         path: ${APME_ROOT}/containers/abbenay/config

@@ -638,6 +638,8 @@ async def test_creation_cancel_drains_pipe_of_already_exited_child(monkeypatch: 
     children = []
 
     async def spawn(*args: str, **kwargs: object) -> asyncio.subprocess.Process:
+        # Pause the reader without depending on the host's pipe capacity.
+        kwargs["limit"] = 32
         process = await original_spawn(*args, **kwargs)  # type: ignore[arg-type]
         children.append(process)
         async with asyncio.timeout(3):
@@ -650,7 +652,7 @@ async def test_creation_cancel_drains_pipe_of_already_exited_child(monkeypatch: 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     task = asyncio.create_task(
         safe_fetch._run(
-            [sys.executable, "-c", "import sys; sys.stderr.buffer.write(b'x' * 180000); sys.stderr.flush()"],
+            [sys.executable, "-c", "import sys; sys.stderr.buffer.write(b'x' * 256); sys.stderr.flush()"],
             dict(os.environ),
         )
     )

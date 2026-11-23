@@ -39,6 +39,8 @@ with a deployment-wide opt-in and optional project requirements credential.
 - **THEN** the gateway fetches the dependency and transfers files over gRPC
 - **AND** the Engine installs the snapshot without external queries
 - **AND** dependency files are excluded from project edits and returned patches
+- **AND** Git collections install as wheels in the same resolver as Galaxy
+  collections and appear in the dependency tree
 
 ## Inputs / Outputs
 

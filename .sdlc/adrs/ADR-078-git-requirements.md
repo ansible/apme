@@ -20,8 +20,20 @@ The Gateway resolves explicit Git requirements before opening FixSession. An
 additive ScanChunk.dependency_files field streams credential-free dependency files
 with the existing upload bounds. Engine session state stores them separately from
 project files. Their content hash and effective Galaxy requirements select a separate venv; only Engine writes it.
-Git collection identities are excluded from Galaxy resolution. Gateway DB stores
+The Gateway validates source collection metadata before uploading the snapshot.
+The Engine's venv installer assembles the local wheel from those bounded files
+using the same builder as Galaxy Proxy. The venv resolver installs these wheels
+together with Galaxy collections. Explicit Git wheels take precedence over Hub
+candidates for the same identity. For Hub preparation, the Proxy receives the
+Git collection identities and versions as scan-local candidates. Its shared
+cache contains the Hub artifacts. For mixed installs the Proxy also relays
+Python wheels referenced by Hub collections. Python requirements from Git
+snapshots remain collection content. Git roles are materialized directly.
+Gateway DB stores
 the disabled-by-default singleton policy and optional project requirements token.
+The upload contract carries collection files rather than opaque wheel artifacts,
+so the Engine can enforce the same paths and file limits for every FixSession
+client.
 Credentials follow requirements override, project token, deployment fallback.
 
 ## Alternatives Considered
@@ -57,6 +69,7 @@ ADR-045, ADR-060.
 | Date | Change |
 |------|--------|
 | 2026-11-13 | Implemented global policy, project credential override, gateway fetching and isolated Engine dependency payloads (REQ-023). |
+| 2026-11-23 | Install Git collections as local wheels in the shared venv resolver. |
 
 Disk cleanup follow-up: [ansible/apme#878](https://github.com/ansible/apme/issues/878).
 

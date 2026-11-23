@@ -40,16 +40,21 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from functools import partial
+from itertools import batched
 from pathlib import Path
 
 import httpx
+import yaml
 
 from apme_engine.config_env import get_env_int
 from apme_engine.venv_manager.venv_collections import (
     _SAFE_VERSION_RE,
+    LocalCollectionWheel,
     _installed_satisfies_spec,
+    _spec_bare_fqcn,
     _spec_to_pip,
     enforce_sibling_cap,
 )
@@ -59,12 +64,14 @@ from apme_engine.venv_manager.venv_collections import (
 from apme_engine.venv_manager.venv_collections import (
     _requirements_hash as _requirements_hash,
 )
+from galaxy_proxy.naming import fqcn_to_python
 
 logger = logging.getLogger("apme.venv")
 
 _PROXY_ENV = "APME_GALAXY_PROXY_URL"
 _PROXY_ADMIN_TOKEN_ENV = "APME_PROXY_ADMIN_TOKEN"
 _PROXY_ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
+_PROXY_PREPARE_TIMEOUT_S = 360.0
 
 
 def get_data_root() -> Path:
@@ -199,6 +206,7 @@ def _run_subprocess_timed(
     *,
     timeout: float,
     check: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``cmd`` in an isolated process group with a wall-clock bound.
 
@@ -211,6 +219,7 @@ def _run_subprocess_timed(
         cmd: Command argv.
         timeout: Wall-clock bound in seconds.
         check: If True, raise ``CalledProcessError`` on non-zero exit.
+        env: Child process environment, or None to inherit it.
 
     Returns:
         CompletedProcess with stdout/stderr captured.
@@ -225,6 +234,7 @@ def _run_subprocess_timed(
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        env=env,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -251,6 +261,7 @@ def _run_pip_install(
     *,
     exclude_file: Path | None = None,
     no_build: bool = False,
+    proxy_only: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run a single pip/uv install command and return the result.
 
@@ -266,6 +277,7 @@ def _run_pip_install(
             that packages requiring native compilation are skipped.  Only
             used as a last-resort fallback when ``exclude_file`` is not
             available (non-uv installs).
+        proxy_only: Use only the Galaxy Proxy index and temporary caches for Git installs.
 
     Returns:
         CompletedProcess with stdout/stderr captured.
@@ -277,7 +289,20 @@ def _run_pip_install(
             fast — the exclude/no-build fallback chain only helps build
             failures, not stalled indexes.
     """
-    if use_uv:
+    if proxy_only:
+        cmd = [
+            "uv",
+            "--no-config",
+            "--no-cache",
+            "pip",
+            "install",
+            "--python",
+            str(pip_python),
+            "--default-index",
+            simple_url,
+            "--no-build",
+        ]
+    elif use_uv:
         cmd = [
             "uv",
             "pip",
@@ -293,7 +318,6 @@ def _run_pip_install(
             cmd.extend(["--excludes", str(exclude_file)])
         if no_build:
             cmd.append("--no-build")
-        cmd.extend(pip_specs)
     else:
         cmd = [
             str(pip_python),
@@ -305,8 +329,11 @@ def _run_pip_install(
         ]
         if no_build:
             cmd.extend(["--only-binary", ":all:"])
-        cmd.extend(pip_specs)
+    cmd.extend(pip_specs)
     try:
+        if proxy_only:
+            env = {key: value for key, value in os.environ.items() if not key.startswith(("PIP_", "UV_"))}
+            return _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S, env=env)
         return _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S)
     except subprocess.TimeoutExpired as exc:
         logger.warning(
@@ -358,24 +385,35 @@ def _extract_unbuildable_packages(output: str) -> list[str]:
     return result
 
 
-def _prepare_collections_via_proxy(proxy_url: str, collection_specs: list[str]) -> None:
+def _prepare_collections_via_proxy(
+    proxy_url: str,
+    collection_specs: list[str],
+    *,
+    provided: Mapping[str, str] | None = None,
+    timeout: float = _PROXY_PREPARE_TIMEOUT_S,
+) -> None:
     """Ask the proxy to resolve pins/latest versions using its Galaxy CLI.
 
     Args:
         proxy_url: Base URL of the Galaxy Proxy.
         collection_specs: Collection FQCNs with optional version constraints.
+        provided: Git collection identities and versions supplied by this scan.
+        timeout: Remaining time budget for the prepare request.
 
     Raises:
         RuntimeError: If the proxy cannot prepare the requested collections.
     """
     token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
     headers = {_PROXY_ADMIN_TOKEN_HEADER: token} if token else {}
+    payload: dict[str, object] = {"specs": collection_specs}
+    if provided:
+        payload["provided"] = dict(provided)
     try:
         response = httpx.post(
             proxy_url.rstrip("/") + "/admin/prepare-collections",
             headers=headers,
-            json={"specs": collection_specs},
-            timeout=360.0,
+            json=payload,
+            timeout=timeout,
         )
         response.raise_for_status()
     except httpx.HTTPError as exc:
@@ -395,6 +433,11 @@ def _install_collections_via_proxy(
     collection_specs: list[str],
     proxy_url: str,
     use_uv: bool,
+    *,
+    wheel_paths: Mapping[str, Path] | None = None,
+    wheel_dependencies: tuple[str, ...] = (),
+    provided: Mapping[str, str] | None = None,
+    ansible_version: str | None = None,
 ) -> list[str]:
     """Install collections into the venv via the galaxy proxy (PEP 503).
 
@@ -414,6 +457,10 @@ def _install_collections_via_proxy(
         collection_specs: Collection specifiers to install.
         proxy_url: Base URL of the galaxy proxy.
         use_uv: Whether to use uv for installation.
+        wheel_paths: Local wheels keyed by the collection FQCN they supply.
+        wheel_dependencies: Galaxy specs declared by local wheels.
+        provided: Galaxy versions supplied by the local wheels.
+        ansible_version: Exact Ansible version installed in this session.
 
     Returns:
         List of collection specs that failed to install (empty on full success).
@@ -422,24 +469,52 @@ def _install_collections_via_proxy(
         A stalled pip/uv install propagates ``PipInstallTimeout`` from the
         install helpers — failing fast instead of walking the fallback chain.
     """
-    simple_url = proxy_url.rstrip("/") + "/simple/"
-    pip_specs = [_spec_to_pip(s) for s in collection_specs]
+    wheels = wheel_paths or {}
+    index_path = "/simple-local/" if wheels else "/simple/"
+    simple_url = proxy_url.rstrip("/") + index_path
+    pip_specs = [
+        str(wheels[fqcn]) if (fqcn := _spec_bare_fqcn(spec)) in wheels else _spec_to_pip(spec)
+        for spec in collection_specs
+    ]
+    remote_specs = list(
+        dict.fromkeys(spec for spec in (*collection_specs, *wheel_dependencies) if _spec_bare_fqcn(spec) not in wheels)
+    )
 
     # Preparation resolves exact pins because the project page lists prepared
     # wheels and does not enumerate remote Galaxy versions. A config update can
     # race this request and return 409, so retry once after that conflict.
-    for attempt in range(2):
-        try:
-            _prepare_collections_via_proxy(proxy_url, collection_specs)
+    prepare_deadline = time.monotonic() + _PROXY_PREPARE_TIMEOUT_S
+    for batch in batched(remote_specs, 100):
+        for attempt in range(2):
+            remaining = prepare_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                _prepare_collections_via_proxy(proxy_url, list(batch), provided=provided, timeout=remaining)
+                break
+            except RuntimeError as exc:
+                cause = exc.__cause__
+                conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
+                if conflict and attempt == 0:
+                    logger.info("Galaxy configuration changed during collection preparation; retrying once")
+                    continue
+                logger.warning("Collection preparation failed; continuing with install: %s", exc)
+                break
+        if time.monotonic() >= prepare_deadline:
+            logger.warning("Collection preparation reached its time limit; continuing with install")
             break
-        except RuntimeError as exc:
-            cause = exc.__cause__
-            conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
-            if conflict and attempt == 0:
-                logger.info("Galaxy configuration changed during collection preparation; retrying once")
-                continue
-            logger.warning("Collection preparation failed; continuing with install: %s", exc)
-            break
+
+    if wheels:
+        if ansible_version:
+            pip_specs.append(f"ansible-core=={ansible_version}")
+        result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, proxy_only=True)
+        if result.returncode == 0:
+            return []
+        # Per-collection retries could replace the selected Git wheels with Hub versions.
+        logger.warning(
+            "Collection install with Git wheels failed: %s", _redact_url_credentials(result.stderr or result.stdout)
+        )
+        return collection_specs
 
     result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv)
     if result.returncode == 0:
@@ -644,6 +719,9 @@ def create_base_venv(
 def install_collections_incremental(
     venv_dir: Path,
     collection_specs: list[str],
+    *,
+    local_wheels: Mapping[str, LocalCollectionWheel] | None = None,
+    ansible_version: str | None = None,
 ) -> list[str]:
     """Install collections into an existing venv via the galaxy proxy.
 
@@ -658,12 +736,15 @@ def install_collections_incremental(
     Args:
         venv_dir: Root of the virtualenv (must already exist with ansible-core).
         collection_specs: Collection specifiers to install.
+        local_wheels: Local artifacts for collection identities in the request.
+        ansible_version: Exact version of Ansible Core to preserve during a mixed install.
 
     Returns:
         List of collection specs that failed to install (empty on full success).
 
     Raises:
-        RuntimeError: If APME_GALAXY_PROXY_URL is not configured.
+        RuntimeError: If APME_GALAXY_PROXY_URL is missing, or uv is missing for a mixed install.
+        ValueError: If multiple collection identities map to the same wheel distribution.
     """
     if not collection_specs:
         return []
@@ -676,7 +757,72 @@ def install_collections_incremental(
 
     pip_python = get_venv_python(venv_dir)
     use_uv = _uv_available()
-    return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
+    if not local_wheels:
+        return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
+    if not use_uv:
+        raise RuntimeError("Git collection installation requires uv")
+
+    dependencies = tuple(dep for wheel in local_wheels.values() for dep in wheel.collection_dependencies)
+    identities = {_spec_bare_fqcn(spec) for spec in (*collection_specs, *dependencies)} | set(local_wheels)
+    distribution_names: dict[str, str] = {}
+    for fqcn in sorted(identities):
+        owner = distribution_names.setdefault(fqcn_to_python(fqcn), fqcn)
+        if owner != fqcn:
+            raise ValueError(f"Collection names {owner!r} and {fqcn!r} map to the same wheel distribution")
+
+    with tempfile.TemporaryDirectory(prefix="apme-git-wheels-") as staging:
+        paths: dict[str, Path] = {}
+        for fqcn, wheel in local_wheels.items():
+            path = Path(staging) / wheel.filename
+            path.write_bytes(wheel.content)
+            paths[fqcn] = path
+        failed = _install_collections_via_proxy(
+            pip_python,
+            collection_specs,
+            proxy,
+            use_uv,
+            wheel_paths=paths,
+            wheel_dependencies=dependencies,
+            provided={fqcn: wheel.galaxy_version for fqcn, wheel in local_wheels.items()},
+            ansible_version=ansible_version,
+        )
+    if not failed:
+        _validate_installed_collection_identities(venv_dir, collection_specs)
+    return failed
+
+
+def _validate_installed_collection_identities(venv_dir: Path, specs: list[str]) -> None:
+    """Check that the resolver installed the requested Galaxy identities.
+
+    Args:
+        venv_dir: Session venv containing the resolved collection wheels.
+        specs: Collection requirements passed to the resolver.
+
+    Raises:
+        ValueError: If normalized wheel names aliased one Galaxy identity to another.
+    """
+    collections_dir = _venv_site_packages(venv_dir) / "ansible_collections"
+    installed = {}
+    expected = {_spec_bare_fqcn(spec) for spec in specs}
+    for collection in collections_dir.glob("*/*"):
+        if not collection.is_dir():
+            continue
+        fqcn = f"{collection.parent.name}.{collection.name}"
+        installed[fqcn_to_python(fqcn)] = fqcn
+        manifest = collection / "MANIFEST.json"
+        galaxy = collection / "galaxy.yml"
+        if manifest.is_file():
+            metadata = json.loads(manifest.read_bytes()).get("collection_info", {})
+        elif galaxy.is_file():
+            metadata = yaml.safe_load(galaxy.read_bytes())
+        else:
+            continue
+        expected.update(metadata.get("dependencies") or {})
+
+    for fqcn in sorted(expected):
+        owner = installed.get(fqcn_to_python(fqcn))
+        if owner is not None and owner != fqcn:
+            raise ValueError(f"Collection names {owner!r} and {fqcn!r} map to the same wheel distribution")
 
 
 def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
@@ -1131,6 +1277,8 @@ class VenvSessionManager:
         session_id: str,
         ansible_version: str,
         collection_specs: list[str] | None = None,
+        *,
+        local_wheels: Mapping[str, LocalCollectionWheel] | None = None,
     ) -> VenvSession:
         """Get or create a session venv, reconciling collections with the request.
 
@@ -1161,6 +1309,7 @@ class VenvSessionManager:
             session_id: Client-provided session identifier.
             ansible_version: e.g. ``"2.17.0"`` or ``"2.17"``.
             collection_specs: Collection specifiers to ensure are installed.
+            local_wheels: Local artifacts for collections in a snapshot-keyed session.
 
         Returns:
             A ``VenvSession`` with a ready-to-use venv.
@@ -1177,6 +1326,11 @@ class VenvSessionManager:
         session_id = _sanitize_session_id(session_id)
         specs = collection_specs or []
         pip_version = _normalize_version(ansible_version)
+        install = (
+            partial(install_collections_incremental, local_wheels=local_wheels, ansible_version=pip_version)
+            if local_wheels
+            else install_collections_incremental
+        )
         desired_hash = _requirements_hash(specs)
 
         session_dir = self._root / session_id
@@ -1224,7 +1378,7 @@ class VenvSessionManager:
                         failed: list[str] = []
                         if missing:
                             logger.debug("Venv: installing %d missing collections", len(missing))
-                            failed = install_collections_incremental(venv_dir, sorted(missing))
+                            failed = install(venv_dir, sorted(missing))
                             # Every still-requested past failure was retried
                             # above, so this round's failures are the full set.
                             existing.failed_collections = sorted(failed)
@@ -1289,7 +1443,7 @@ class VenvSessionManager:
                         failed = []
                         if specs:
                             logger.debug("Venv: installing %d collections", len(specs))
-                            failed = install_collections_incremental(venv_dir, specs)
+                            failed = install(venv_dir, specs)
                     except Exception:
                         # Never leave a cap-counted orphan: a failed cold
                         # build removes its version dir before re-raising so

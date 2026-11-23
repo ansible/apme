@@ -18,6 +18,7 @@ from apme_gateway.db import get_session
 from apme_gateway.db.models import GitRequirementsSettings, Project
 from apme_gateway.scm.safe_fetch import git_snapshot
 from apme_gateway.scm.tokens import select_usable_scm_token
+from galaxy_proxy.metadata import normalize_source_collection_metadata
 
 
 async def resolve_git_requirements(
@@ -61,6 +62,8 @@ async def resolve_git_requirements(
     total = 0
     for kind, entry in declarations:
         raw_source = entry.get("src", entry.get("name", ""))
+        if kind == "collections" and entry.get("type") == "git" and entry.get("source") is not None:
+            raw_source = entry["source"]
         if not isinstance(raw_source, str):
             raise ValueError("Git requirement source must be a string")
         source = raw_source.removeprefix("git+")
@@ -150,28 +153,41 @@ def _collect_files(
     ):
         raise ValueError("Git requirement content directory does not exist")
     if kind == "collections":
-        galaxy = content_root / "galaxy.yml"
-        if not galaxy.exists():
-            galaxy = content_root / "galaxy.yaml"
-        if galaxy.is_file() and not galaxy.is_symlink():
-            if galaxy.stat().st_size > 2 * 1024 * 1024:
-                raise RuntimeError("Git requirement metadata exceeds 2 MiB")
-            metadata = yaml.safe_load(galaxy.read_text())
-        else:
-            manifest = content_root / "MANIFEST.json"
-            if manifest.is_symlink():
-                raise ValueError("Symlinked collection metadata is not supported")
-            if not manifest.is_file():
-                raise ValueError("Git collection metadata (galaxy.yml or MANIFEST.json) not found")
+        manifest = content_root / "MANIFEST.json"
+        if manifest.is_symlink():
+            raise ValueError("Symlinked collection metadata is not supported")
+        if manifest.is_file():
             if manifest.stat().st_size > 2 * 1024 * 1024:
                 raise RuntimeError("Git requirement metadata exceeds 2 MiB")
             manifest_data = json.loads(manifest.read_text())
             metadata = manifest_data.get("collection_info") if isinstance(manifest_data, dict) else None
+        else:
+            galaxy = content_root / "galaxy.yml"
+            if not galaxy.exists():
+                galaxy = content_root / "galaxy.yaml"
+            if galaxy.is_symlink():
+                raise ValueError("Symlinked collection metadata is not supported")
+            if not galaxy.is_file():
+                raise ValueError("Git collection metadata (galaxy.yml or MANIFEST.json) not found")
+            if galaxy.stat().st_size > 2 * 1024 * 1024:
+                raise RuntimeError("Git requirement metadata exceeds 2 MiB")
+            metadata = yaml.safe_load(galaxy.read_text())
         if not isinstance(metadata, dict) or not metadata.get("namespace") or not metadata.get("name"):
             raise ValueError("Git collection metadata must include namespace and name")
         namespace, name = metadata["namespace"], metadata["name"]
         if not all(isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_]*", value) for value in (namespace, name)):
             raise ValueError("Invalid Git collection namespace or name")
+        fqcn = f"{namespace}.{name}"
+        declared_name = entry.get("name")
+        if (
+            entry.get("type") == "git"
+            and entry.get("source") is not None
+            and isinstance(declared_name, str)
+            and re.fullmatch(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*", declared_name)
+            and declared_name != fqcn
+        ):
+            raise ValueError("Git collection name does not match the checkout metadata")
+        normalize_source_collection_metadata(metadata, fqcn)
         prefix = f"ansible_collections/{namespace}/{name}"
     else:
         role_name = entry.get("name")

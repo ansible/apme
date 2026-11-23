@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from packaging.version import Version
 
 from galaxy_proxy.collection_downloader import DownloadResult, GalaxyServerConfig
 from galaxy_proxy.proxy.cache import ProxyCache
@@ -195,6 +196,46 @@ def test_prepare_collections_uses_cli_for_requested_pin_and_dependencies(
     assert response.json() == {"prepared": [WHEEL], "failed_specs": []}
     assert download.await_count == 1
     assert ProxyCache(tmp_path).get_wheel(WHEEL) == _wheel_bytes()
+
+
+def test_prepare_collections_accepts_scan_local_dependency(
+    tmp_path: Path, hub_server: GalaxyServerConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cold and warm prepare can satisfy a Hub dependency from this scan.
+
+    Args:
+        tmp_path: Temporary cache directory.
+        hub_server: Configured Private Automation Hub source.
+        monkeypatch: Pytest environment fixture.
+    """
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", ADMIN_TOKEN)
+    app = create_app(cache_dir=tmp_path, galaxy_servers=[hub_server], enable_passthrough=False)
+    wheel = _wheel_bytes(deps=("ansible-collection-demo-local>=1,<2",))
+
+    async def fake_download(specs: list[str], download_dir: Path, **kwargs: object) -> DownloadResult:
+        assert specs == ["ansible.posix:<2.0.0"]
+        assert kwargs["provided"] == {"demo.local": "1.3.0"}
+        tarball = download_dir / "ansible-posix-1.5.4.tar.gz"
+        tarball.touch()
+        return DownloadResult(tarball_paths=[tarball])
+
+    with (
+        TestClient(app) as client,
+        patch("galaxy_proxy.proxy.server.download_collections", side_effect=fake_download) as download,
+        patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(WHEEL, wheel)),
+    ):
+        for _ in range(2):
+            response = client.post(
+                "/admin/prepare-collections",
+                json={"specs": ["ansible.posix:<2.0.0"], "provided": {"demo.local": "1.3.0"}},
+                headers=_admin_headers(),
+            )
+            assert response.status_code == 200
+            assert response.json()["failed_specs"] == []
+    assert download.await_count == 1
+    cache = ProxyCache(tmp_path)
+    assert cache.get_wheel(WHEEL) == wheel
+    assert cache.get_wheel("ansible_collection_demo_local-1.3.0-py3-none-any.whl") is None
 
 
 def test_prepare_collections_serves_cached_pin_without_hub_access(
@@ -543,9 +584,11 @@ async def test_prepare_checks_cached_wheels_off_event_loop(tmp_path: Path, monke
         spec: str,
         _visiting: set[str] | None = None,
         _memo: dict[str, bool] | None = None,
+        *,
+        provided: dict[str, Version] | None = None,
     ) -> bool:
         check_threads.append(threading.get_ident())
-        return original_check(cache, handoffs, spec, _visiting, _memo)
+        return original_check(cache, handoffs, spec, _visiting, _memo, provided=provided)
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://proxy") as client:
         with patch("galaxy_proxy.proxy.server._cache_satisfies_spec", side_effect=record_check_thread):

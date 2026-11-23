@@ -320,6 +320,34 @@ class TestDownloadCollections:
         assert captured[-1] == "ansible.posix:1.5.4"
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+    async def test_download_resolves_dependency_provided_by_scan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Galaxy can resolve a local candidate without publishing its stub.
+
+        Args:
+            tmp_path: Local collection source and output directories.
+            monkeypatch: Temporary Ansible configuration.
+        """
+        monkeypatch.setenv("ANSIBLE_HOME", str(tmp_path / "ansible-home"))
+        source = tmp_path / "hub-parent"
+        source.mkdir()
+        (source / "README.md").write_text("Parent collection\n")
+        (source / "galaxy.yml").write_text(
+            "namespace: demo\nname: parent\nversion: 1.5.0\nauthors: [Demo]\nreadme: README.md\n"
+            "dependencies:\n  requirements.yml: '>=1.0.0,<2.0.0'\n"
+        )
+        result = await download_collections(
+            [str(source)],
+            tmp_path / "downloads",
+            include_dependencies=True,
+            provided={"requirements.yml": "1.0.0"},
+        )
+
+        assert result.failed_specs == []
+        assert [path.name for path in result.tarball_paths] == ["demo-parent-1.5.0.tar.gz"]
+
+    @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_failed_download_does_not_log_subprocess_output(
         self,
         tmp_path: Path,
