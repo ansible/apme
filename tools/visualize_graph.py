@@ -282,7 +282,15 @@ function drawEdge(group, srcId, tgtId, cls) {{
 }}
 
 // ── Flow edges (from pre-computed execution_edges) ───────────────
-execEdges.forEach(e => drawEdge(flowGroup, e.source, e.target, "flow"));
+const includeImportPairs = new Set(edgeData
+  .filter(e => e.type === "include" || e.type === "import")
+  .map(e => JSON.stringify([e.source, e.target])));
+execEdges.forEach(e => {{
+  // The cross-cutting pass draws these relationships with their dashed style.
+  // Keep the execution edges for layout, but do not paint a solid path beneath them.
+  if (includeImportPairs.has(JSON.stringify([e.source, e.target]))) return;
+  drawEdge(flowGroup, e.source, e.target, "flow");
+}});
 
 // ── Cross-cutting edges (dependency, notify, etc.) ───────────────
 const xEdgeGroup = container.append("g");
@@ -360,7 +368,9 @@ const groupColors = {{ play: "#f0883e", role: "#d2a8ff", block: "#d29922" }};
 // visible in the initial view; Plays and Blocks stay opt-in (#841).
 const groupState = {{ play: false, role: true, block: false }};
 
+const descendantsCache = new Map();
 function descendants(nodeId) {{
+  if (descendantsCache.has(nodeId)) return descendantsCache.get(nodeId);
   const result = [];
   const stack = [nodeId];
   const visited = new Set();
@@ -371,6 +381,7 @@ function descendants(nodeId) {{
     const ch = containsChildren[id];
     if (ch) ch.forEach(c => {{ result.push(c.target); stack.push(c.target); }});
   }}
+  descendantsCache.set(nodeId, result);
   return result;
 }}
 
