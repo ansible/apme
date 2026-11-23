@@ -27,6 +27,7 @@ from apme.v1.engine_pb2 import (
     FixOptions,
     FixReport,
     Proposal,
+    ScanDiagnostics,
     ScanOptions,
 )
 from apme_engine.config_env import get_env_float, get_env_int
@@ -204,6 +205,10 @@ class SessionState:
         requirements_files: Requirement file paths found in project (ADR-040).
         content_graph: Persisted ``ContentGraph`` across approval gates
             (ADR-044 Phase 3).  Typed as ``object`` to avoid coupling.
+        scan_diagnostics: Aggregate ``ScanDiagnostics`` captured from the
+            session's first full scan pass (issue #512).  Surfaced on both
+            ``SessionResult`` and ``FixCompletedEvent`` so direct FixSession
+            clients and the reporting sink read one source.
         graph_originals: Original file text keyed by path, used by
             ``splice_modifications`` after approval.
         graph_engine: ``GraphRemediationEngine`` retained across Option C
@@ -311,6 +316,8 @@ class SessionState:
     # Graph engine state persisted across approval gates (ADR-044 Phase 3).
     # Typed as ``object`` to avoid importing ContentGraph in this module.
     content_graph: object | None = None
+    # Aggregate scan diagnostics from the first full scan pass (issue #512).
+    scan_diagnostics: ScanDiagnostics | None = None
     graph_originals: dict[str, str] = field(default_factory=dict)
     graph_engine: object | None = None
     # working_files before Gate 2 AI assessment (restore on decline-all).
