@@ -5,8 +5,10 @@
 ## Purpose
 
 After convergence and approval, the Engine assembles the final
-`SessionResult` containing file patches, remaining violations, and the fix
-report. It also emits a `FixCompletedEvent` to the Gateway for persistence.
+`SessionResult` containing file patches, remaining violations, the fix
+report, and aggregate scan diagnostics (issue #512). It also emits a
+`FixCompletedEvent` to the Gateway for persistence, carrying the same
+diagnostics.
 
 ## Sequence
 

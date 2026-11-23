@@ -214,7 +214,7 @@ ValidatorDiagnostics(
 )
 ```
 
-Engine aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `FixCompletedEvent` reporting path (`reporting.proto`). `SessionEvent` / `SessionResult` do not carry a diagnostics field. The CLI surfaces pipeline timing via `-v` / `-vv` from session `ProgressUpdate` logs (summary vs full per-rule breakdown).
+Engine aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` (`engine.proto`), captured on the session's first full scan pass. The same aggregate is exposed on `SessionResult.diagnostics` for direct FixSession clients (issue #512) and on the `FixCompletedEvent` reporting path (`reporting.proto`). The CLI surfaces pipeline timing via `-v` / `-vv` from session `ProgressUpdate` logs (summary vs full per-rule breakdown).
 
 ---
 

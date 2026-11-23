@@ -30,6 +30,7 @@ from apme.v1.engine_pb2 import (
     ProposalsReady,
     ResumeRequest,
     ScanChunk,
+    ScanDiagnostics,
     SessionCommand,
     SessionEvent,
     SessionResult,
@@ -304,6 +305,7 @@ class TestSessionState:
         state.awaiting_ai_triage = True
         state.content_graph = object()
         state.graph_engine = object()
+        state.scan_diagnostics = ScanDiagnostics(files_scanned=3, total_ms=12.0)
         state.review_declined_proposals["p1"] = Proposal(id="p1")
         state.proposals["p2"] = Proposal(id="p2")
         state.status = 3  # COMPLETE
@@ -335,6 +337,7 @@ class TestSessionState:
         assert state.awaiting_ai_triage is False
         assert state.content_graph is None
         assert state.graph_engine is None
+        assert state.scan_diagnostics is None
         assert state.status == 2  # PROCESSING
         assert not temp.exists()
         assert state.temp_dir is None
@@ -594,6 +597,57 @@ class TestSessionBuildResult:
         diff = events[0].result.patches[0].diff
         assert "---" in diff and "+++" in diff
         assert "-line2" in diff and "+changed" in diff
+
+    async def test_result_carries_session_scan_diagnostics(self) -> None:
+        """SessionResult.diagnostics mirrors the session's captured scan diagnostics."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        session = SessionState(session_id="diag")
+        session.original_files = {"a.yml": b"x\n"}
+        session.working_files = {"a.yml": b"x\n"}
+        session.report = FixReport()
+        session.scan_diagnostics = ScanDiagnostics(files_scanned=2, total_violations=7, total_ms=42.0)
+
+        events = [e async for e in servicer._session_build_result(session)]
+        assert events[0].result.HasField("diagnostics")
+        assert events[0].result.diagnostics.files_scanned == 2
+        assert events[0].result.diagnostics.total_violations == 7
+        assert events[0].result.diagnostics.total_ms == pytest.approx(42.0)
+
+    async def test_result_without_diagnostics_leaves_field_unset(self) -> None:
+        """Sessions that never scanned do not emit an empty diagnostics message."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        session = SessionState(session_id="no-diag")
+        session.original_files = {"a.yml": b"x\n"}
+        session.working_files = {"a.yml": b"x\n"}
+        session.report = FixReport()
+
+        events = [e async for e in servicer._session_build_result(session)]
+        assert not events[0].result.HasField("diagnostics")
+
+    async def test_reporting_and_direct_result_share_diagnostics(self) -> None:
+        """FixCompletedEvent and SessionResult carry the same source diagnostics (issue #512)."""
+        from apme_engine.daemon import engine_server
+
+        servicer = engine_server.EngineServicer()
+        session = SessionState(session_id="shared")
+        session.original_files = {"a.yml": b"x\n"}
+        session.working_files = {"a.yml": b"y\n"}
+        session.report = FixReport()
+        session.scan_diagnostics = ScanDiagnostics(files_scanned=4, graph_nodes_built=15, total_ms=99.5)
+
+        events = [e async for e in servicer._session_build_result(session)]
+        result_diag = events[0].result.diagnostics
+        event = engine_server.EngineServicer._build_fix_event(session, [])
+        assert event.HasField("diagnostics")
+        # Same source object: every aggregate field agrees between the
+        # reporting path (FixCompletedEvent) and the direct client result.
+        assert event.diagnostics == result_diag
+        assert event.diagnostics.files_scanned == result_diag.files_scanned == 4
+        assert event.diagnostics.total_ms == result_diag.total_ms == pytest.approx(99.5)
 
 
 class TestWorkingFilesKey:

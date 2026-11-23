@@ -233,7 +233,7 @@ ValidatorDiagnostics(
 )
 ```
 
-Engine aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `FixCompletedEvent` reporting path. `apme check` (and related clients) show pipeline `ProgressUpdate` logs with `-v`/`-vv`; structured diagnostics are emitted on the reporting path, not on `SessionEvent` or `SessionResult`.
+Engine aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics`, captured on the session's first full scan pass. The same aggregate is exposed on both `SessionResult.diagnostics` for direct FixSession clients (issue #512) and the `FixCompletedEvent` reporting path. `apme check` (and related clients) show pipeline `ProgressUpdate` logs with `-v`/`-vv`; structured diagnostics are emitted on both paths.
 
 ---
 
