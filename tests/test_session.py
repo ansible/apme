@@ -305,6 +305,7 @@ class TestSessionState:
         state.awaiting_ai_triage = True
         state.content_graph = object()
         state.graph_engine = object()
+        state.scan_diagnostics = ScanDiagnostics(files_scanned=3, total_ms=12.0)
         state.review_declined_proposals["p1"] = Proposal(id="p1")
         state.proposals["p2"] = Proposal(id="p2")
         state.status = 3  # COMPLETE
@@ -336,6 +337,7 @@ class TestSessionState:
         assert state.awaiting_ai_triage is False
         assert state.content_graph is None
         assert state.graph_engine is None
+        assert state.scan_diagnostics is None
         assert state.status == 2  # PROCESSING
         assert not temp.exists()
         assert state.temp_dir is None

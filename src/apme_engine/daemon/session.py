@@ -451,6 +451,7 @@ class SessionState:
         self.awaiting_ai_triage = False
         self.content_graph = None
         self.graph_engine = None
+        self.scan_diagnostics = None
         self.status = 2  # PROCESSING
         self._cleanup_temp_dir()
 
