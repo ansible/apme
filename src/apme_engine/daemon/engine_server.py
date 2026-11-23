@@ -1557,9 +1557,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Returns:
             Same tuple as ``_scan_pipeline``.
         """
+        from apme_engine.daemon.git_dependencies import build_git_collection_wheels, install_git_dependencies
         from apme_engine.validators.ansible._venv import DEFAULT_VERSION
         from apme_engine.venv_manager.session import _venv_site_packages
-        from apme_engine.venv_manager.venv_collections import _requirements_hash
+        from apme_engine.venv_manager.venv_collections import LocalCollectionWheel, _requirements_hash
 
         scan_t0 = time.monotonic()
         collection_specs = list(collection_specs or [])
@@ -1568,16 +1569,27 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         sid = session_id or uuid.uuid4().hex[:12]
 
         git_collections: set[str] = set()
-        if dependency_files:
-            from apme_engine.daemon.git_dependencies import install_git_dependencies
+        git_wheels: dict[str, LocalCollectionWheel] | None = None
 
+        def acquire_scoped(venv_id: str, specs: list[str]) -> VenvSession:
+            nonlocal git_wheels
+            manager = self._get_venv_manager()
+            if git_collections and dependency_files:
+                if git_wheels is None:
+                    git_wheels = build_git_collection_wheels(dependency_files)
+                return manager.acquire(venv_id, core_version, specs, local_wheels=git_wheels)
+            return manager.acquire(venv_id, core_version, specs)
+
+        if dependency_files:
             git_collections = {
                 ".".join(path.split("/")[1:3]) for path in dependency_files if path.startswith("ansible_collections/")
             }
-            sid += "-git-" + engine_upload._hash_upload_files(dependency_files)[:16]
+            snapshot_prefix = "-git-wheel-" if git_collections else "-git-"
+            sid += snapshot_prefix + engine_upload._hash_upload_files(dependency_files)[:16]
             discovered_specs, _ = _discover_collection_specs(files)
             initial_specs = merge_collection_specs(collection_specs, discovered_specs, [])
             initial_specs = [spec for spec in initial_specs if spec.split(":")[0] not in git_collections]
+            initial_specs.extend(sorted(git_collections))
             git_base_sid = sid
             sid = f"{git_base_sid}-{_requirements_hash(initial_specs)[:16]}"
             loop = asyncio.get_running_loop()
@@ -1586,9 +1598,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             )
             if git_venv is None:
                 async with limit_venv_builds() as release_on, self._activate_galaxy_proxy_config(galaxy_cfg_path):
-                    acquire_future = loop.run_in_executor(
-                        None, lambda: self._get_venv_manager().acquire(sid, core_version, initial_specs)
-                    )
+                    acquire_future = loop.run_in_executor(None, acquire_scoped, sid, initial_specs)
                     release_on(cast(asyncio.Future[object], acquire_future))
                     git_venv = await asyncio.shield(acquire_future)
             if git_venv.failed_collections:
@@ -1648,6 +1658,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             hierarchy_collections,
         )
         collection_specs = [spec for spec in collection_specs if spec.split(":")[0] not in git_collections]
+        collection_specs.extend(sorted(git_collections))
         logger.info("Collection specs merged (req=%s): %s", scan_id, collection_specs)
         if dependency_files:
             # A changed Galaxy request gets a distinct venv, so incremental pip
@@ -1681,14 +1692,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 acquire_future = loop.run_in_executor(
                     None,
                     ctx.run,
-                    self._get_venv_manager().acquire,
+                    acquire_scoped,
                     sid,
-                    core_version,
                     collection_specs,
                 )
                 # Hold the build slot until the worker finishes, even if cancelled.
                 release_on(cast(asyncio.Future[object], acquire_future))
                 venv_session = await asyncio.shield(acquire_future)
+        git_wheels = None
         venv_path = str(venv_session.venv_root)
         if venv_session.failed_collections:
             logger.error(

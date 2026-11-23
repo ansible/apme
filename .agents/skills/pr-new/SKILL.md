@@ -143,6 +143,9 @@ artifact type, translate it:
    the same module? When a helper opens a channel, socket, or other
    closeable resource, does every return path (success and failure)
    close it — typically via `finally` — or can a failed RPC leak it?
+   For unit tests that stub an external command, trace executable discovery
+   and configuration checks too. Host setup should not decide whether the
+   test reaches the behavior it asserts.
    For fetch-based transports, trace response bodies on success, non-2xx,
    cancellation and cleanup requests. Consuming a main stream does not dispose
    separate creation, message or deletion responses.

@@ -43,3 +43,19 @@ spec:
   resources:
     requests:
       storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: apme-git-fetch
+  annotations:
+    volume.podman.io/type: tmpfs
+    volume.podman.io/device: tmpfs
+    # The kernel enforces both quotas. UID 1001 runs the Gateway.
+    volume.podman.io/mount-options: size=512m,nr_inodes=8192,mode=0700,uid=1001,gid=0
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 512Mi

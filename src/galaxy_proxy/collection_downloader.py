@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import contextlib
+import json
 import logging
 import os
 import re
@@ -16,6 +18,7 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -282,6 +285,73 @@ def _default_ansible_galaxy_bin() -> str:
     return "ansible-galaxy"
 
 
+def _write_requirements_with_local_candidates(specs: list[str], provided: Mapping[str, str], directory: Path) -> Path:
+    """Expose scan-local collection versions to Galaxy's dependency resolver.
+
+    Args:
+        specs: Hub collection requirements to resolve.
+        provided: Validated local collection identifiers and versions.
+        directory: Private temporary directory for the requirements and stubs.
+
+    Returns:
+        Requirements file understood by ansible-galaxy.
+    """
+    requirements = []
+    for spec in specs:
+        fqcn, _, version = spec.partition(":")
+        requirements.append({"name": fqcn, "version": version or "*"})
+    candidates = directory / "candidates"
+    candidates.mkdir()
+    for fqcn, version in provided.items():
+        namespace, name = fqcn.split(".")
+        candidate = candidates / fqcn
+        candidate.mkdir()
+        (candidate / "README.md").write_text("Scan-local collection candidate.\n")
+        (candidate / "galaxy.yml").write_text(
+            json.dumps(
+                {
+                    "namespace": namespace,
+                    "name": name,
+                    "version": version,
+                    "readme": "README.md",
+                    "authors": ["APME"],
+                }
+            )
+        )
+        requirements.append({"name": str(candidate), "type": "dir"})
+    path = directory / "requirements.yml"
+    path.write_text(json.dumps({"collections": requirements}))
+    return path
+
+
+async def _stage_local_candidates(specs: list[str], provided: Mapping[str, str], directory: Path) -> Path:
+    """Stage candidate files off the event loop and wait before allowing cleanup.
+
+    Args:
+        specs: Hub collection requirements to resolve.
+        provided: Validated local collection identifiers and versions.
+        directory: Private temporary directory owned by the downloader.
+
+    Returns:
+        The generated Galaxy requirements file.
+
+    Raises:
+        asyncio.CancelledError: If cancelled while waiting for the writer.
+    """
+    writer = asyncio.create_task(
+        asyncio.to_thread(_write_requirements_with_local_candidates, specs, provided, directory)
+    )
+    try:
+        return await asyncio.shield(writer)
+    except asyncio.CancelledError:
+        while not writer.done():
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await asyncio.shield(writer)
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            writer.result()
+        raise
+
+
 async def download_collections(
     collection_specs: list[str],
     download_dir: Path,
@@ -291,6 +361,7 @@ async def download_collections(
     ansible_galaxy_bin: str | None = None,
     timeout: float = 300.0,
     include_dependencies: bool = False,
+    provided: Mapping[str, str] | None = None,
 ) -> DownloadResult:
     """Download collection tarballs via ``ansible-galaxy collection download``.
 
@@ -314,6 +385,7 @@ async def download_collections(
         timeout: Subprocess timeout in seconds.
         include_dependencies: Whether ``ansible-galaxy`` should also download
             dependencies declared by the requested collections.
+        provided: Validated versions supplied by scan-local Git collections.
 
     Returns:
         DownloadResult with paths to downloaded tarballs and any failures.
@@ -360,15 +432,21 @@ async def download_collections(
     ]
     if not include_dependencies:
         cmd.append("--no-deps")
-    cmd.extend(normalized_specs)
 
     env = dict(os.environ)
     process: asyncio.subprocess.Process | None = None
     temp_cfg_dir: Path | None = None
+    temp_requirements_dir: Path | None = None
     started = time.perf_counter()
     status = "error"
 
     try:
+        if provided:
+            temp_requirements_dir = Path(tempfile.mkdtemp(prefix="apme-galaxy-candidates-"))
+            requirements = await _stage_local_candidates(normalized_specs, provided, temp_requirements_dir)
+            cmd.extend(["-r", str(requirements)])
+        else:
+            cmd.extend(normalized_specs)
         # Env vars outrank INI, so only inject when the caller did not supply
         # ansible.cfg (their galaxy.ignore_certs setting must win).
         if ansible_cfg_path is None:
@@ -406,7 +484,8 @@ async def download_collections(
         stderr_text = stderr_bytes.decode("utf-8", errors="replace")
         stdout_text = stdout_bytes.decode("utf-8", errors="replace")
 
-        tarballs = _find_tarballs(download_dir)
+        stub_prefixes = tuple(f"{fqcn.replace('.', '-')}-" for fqcn in provided or {})
+        tarballs = [path for path in _find_tarballs(download_dir) if not path.name.startswith(stub_prefixes)]
 
         if process.returncode != 0:
             logger.warning(
@@ -458,6 +537,8 @@ async def download_collections(
         )
         if temp_cfg_dir is not None:
             shutil.rmtree(temp_cfg_dir, ignore_errors=True)
+        if temp_requirements_dir is not None:
+            await asyncio.to_thread(shutil.rmtree, temp_requirements_dir, ignore_errors=True)
         try:
             from apme_engine.observability import record_galaxy_fetch
 

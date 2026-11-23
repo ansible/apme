@@ -7,8 +7,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from galaxy_proxy.proxy import server as proxy_server
 from galaxy_proxy.proxy.server import _safe_server_label, create_app
@@ -72,6 +74,79 @@ def test_response_middleware_logs_unhandled_failures(
     assert response.status_code == 500
     assert "server_response method=GET path=/test-unhandled-failure status=500" in caplog.text
     assert "sensitive failure detail" not in caplog.text
+
+
+@pytest.mark.parametrize("use_mirror", [False, True])  # type: ignore[untyped-decorator]
+def test_local_python_index_relays_wheels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use_mirror: bool) -> None:
+    """The mixed solver's Python index serves approved artifacts through the proxy.
+
+    Args:
+        tmp_path: Disposable proxy cache.
+        monkeypatch: Install an in-memory transport for the upstream index.
+        use_mirror: Exercise an authenticated same-origin mirror using relative wheel links.
+    """
+    wheel = "python_dep-1.0.0-py3-none-any.whl"
+    requests: list[httpx.Request] = []
+    index = "https://user:pass@mirror.example" if use_mirror else "https://pypi.org"
+    artifact_base = "/packages/" if use_mirror else "https://files.pythonhosted.org/packages/"
+
+    def fetch(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert not request.url.userinfo
+        if use_mirror:
+            assert request.url.host == "mirror.example"
+            assert request.headers.get("Authorization") == "Basic dXNlcjpwYXNz"
+        else:
+            assert "Authorization" not in request.headers
+        if request.url.path == "/simple/python-dep/":
+            return httpx.Response(
+                200,
+                text=(
+                    f'<a href="{artifact_base}{wheel}#sha256=123" '
+                    'data-requires-python="&gt;=3.12" data-core-metadata="true">wheel</a>'
+                    f'<a href="https://elsewhere.example/{wheel}">unsupported</a>'
+                ),
+            )
+        assert request.url.host == ("mirror.example" if use_mirror else "files.pythonhosted.org")
+        return httpx.Response(200, stream=httpx.ByteStream(b"streamed artifact"))
+
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "galaxy_proxy.proxy.passthrough.httpx.AsyncClient",
+        lambda **kwargs: async_client(transport=httpx.MockTransport(fetch), **kwargs),
+    )
+    with TestClient(create_app(cache_dir=tmp_path, pypi_url=index)) as client:
+        page = client.get("/simple-local/python-dep/")
+        assert page.status_code == 200
+        assert "https://" not in page.text
+        assert page.text.count("<a ") == 1
+        assert 'data-core-metadata="true"' in page.text
+        href = page.text.split('href="')[1].split('"')[0]
+        path, _, checksum = href.partition("#")
+        assert checksum == "sha256=123"
+        assert client.get(path, headers={"Range": "bytes=0-7"}).content == b"streamed artifact"
+        assert requests[-1].headers.get("Range") == "bytes=0-7"
+        assert client.get(path + ".metadata").content == b"streamed artifact"
+        assert requests[-1].url.path.endswith(wheel + ".metadata")
+        assert client.head(path).status_code == 200
+        assert requests[-1].method == "HEAD"
+        assert client.get(path.replace(wheel, "other.whl")).status_code == 404
+        forged = path.replace("/python-wheels/", "/python-wheels/a", 1)
+        assert client.get(forged).status_code == 404
+        assert len(requests) == 4
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_python_wheel_response_closes_upstream_before_first_read() -> None:
+    """Close the upstream connection when sending the response headers fails."""
+    upstream = httpx.Response(200, stream=httpx.ByteStream(b"wheel"))
+    response = proxy_server._UpstreamWheelResponse(upstream, {})
+    receive = AsyncMock()
+    send = AsyncMock(side_effect=BrokenPipeError)
+    with pytest.raises(ClientDisconnect):
+        await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+    assert not upstream.is_stream_consumed
+    assert upstream.is_closed
 
 
 @pytest.fixture()  # type: ignore[untyped-decorator]

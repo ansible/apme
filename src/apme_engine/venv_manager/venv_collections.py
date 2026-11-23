@@ -11,9 +11,27 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 _SAFE_VERSION_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
+
+
+@dataclass(frozen=True)
+class LocalCollectionWheel:
+    """A collection artifact supplied directly to the venv resolver.
+
+    Attributes:
+        filename: Wheel filename.
+        content: Wheel bytes.
+        galaxy_version: Collection version as declared by its source metadata.
+        collection_dependencies: Galaxy collection specifiers to prepare.
+    """
+
+    filename: str
+    content: bytes
+    galaxy_version: str
+    collection_dependencies: tuple[str, ...] = ()
 
 
 def _spec_to_pip(spec: str) -> str:

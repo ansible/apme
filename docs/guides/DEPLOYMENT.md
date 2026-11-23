@@ -237,6 +237,13 @@ the returned tarballs to wheels, and serves them from the cache. No remote
 version catalog is fetched. Configured Hub failures do not trigger an implicit
 public Galaxy fallback.
 
+When a scan includes Git collections, uv uses the proxy as its sole package
+index. The APME images include uv. The proxy relays required Python wheels
+from the configured PyPI-compatible index origin. The default public PyPI
+configuration also allows `files.pythonhosted.org`. A custom index used by
+a mixed scan must serve wheel URLs from its own origin without redirects or
+signed query strings.
+
 The engine, Gateway, and proxy share `APME_PROXY_ADMIN_TOKEN`; deployment
 configuration injects the same secret into each container. Downloads verify TLS certificates by default.
 Galaxy server creation/update accepts `validate_certs: true`, `false`, or
@@ -266,6 +273,7 @@ collections continue to abort scans; no implicit public Galaxy fallback is added
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
 | `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |
+| `APME_GIT_FETCH_ROOT` | `/run/apme-git` in the Podman pod | Gateway Git dependency checkout directory. The reference Podman configuration mounts a private tmpfs with limits of 512 MiB and 8192 inodes. See [Git fetch safeguards](SAFE_GIT_FETCH.md) for other deployments. |
 
 #### Abbenay AI
 
