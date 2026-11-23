@@ -36,10 +36,13 @@ def _wheel_bytes(
         Valid wheel archive bytes.
     """
     output = io.BytesIO()
+    # Fixed timestamp keeps the archive bytes deterministic so tests can compare
+    # wheels built in different calls (writestr embeds localtime otherwise).
+    zip_info = zipfile.ZipInfo(f"{distribution}-{version}.dist-info/METADATA", date_time=(1980, 1, 1, 0, 0, 0))
     with zipfile.ZipFile(output, "w") as wheel:
         requires = "".join(f"Requires-Dist: {dep}\n" for dep in deps)
         wheel.writestr(
-            f"{distribution}-{version}.dist-info/METADATA",
+            zip_info,
             f"Metadata-Version: 2.1\nName: {distribution.replace('_', '-')}\nVersion: {version}\n{requires}\n",
         )
     return output.getvalue()
