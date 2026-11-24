@@ -61,6 +61,17 @@ const dependencySources = {
   git: 'green',
 } as const satisfies Record<string, Color>;
 
+/**
+ * Color for a dependency license that needs legal review.
+ *
+ * Only positively non-open-source licenses (`proprietary`, which includes
+ * custom `LicenseRef-` references) are highlighted; open-source and unknown
+ * licenses render in the inherited text color so the table stays readable.
+ */
+export function licenseStatusColor(status: string | undefined): string | undefined {
+  return status === 'proprietary' ? themeColor('red') : undefined;
+}
+
 export function dependencySourceColor(source: string): string {
   return themeColor(
     Object.prototype.hasOwnProperty.call(dependencySources, source)

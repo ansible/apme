@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
@@ -582,8 +583,9 @@ class CollectionRefSchema(BaseModel):  # type: ignore[misc]
         fqcn: Fully-qualified collection name.
         version: Installed version string.
         source: Origin — galaxy, local, or git.
-        license: SPDX license identifier from collection metadata.
+        license: SPDX license identifier or name from collection metadata.
         supplier: Author or namespace from collection metadata.
+        license_status: Open-source classification for legal-risk display.
     """
 
     fqcn: str
@@ -591,6 +593,7 @@ class CollectionRefSchema(BaseModel):  # type: ignore[misc]
     source: str
     license: str = ""
     supplier: str = ""
+    license_status: Literal["open-source", "proprietary", "unknown"] = "unknown"
 
 
 class PythonPackageRefSchema(BaseModel):  # type: ignore[misc]
@@ -599,14 +602,16 @@ class PythonPackageRefSchema(BaseModel):  # type: ignore[misc]
     Attributes:
         name: PyPI package name.
         version: Installed version string.
-        license: License identifier from package metadata.
-        supplier: Author from package metadata.
+        license: SPDX license identifier or name from package metadata.
+        supplier: Author/maintainer from package metadata.
+        license_status: Open-source classification for legal-risk display.
     """
 
     name: str
     version: str
     license: str = ""
     supplier: str = ""
+    license_status: Literal["open-source", "proprietary", "unknown"] = "unknown"
 
 
 class ProjectDependencies(BaseModel):  # type: ignore[misc]

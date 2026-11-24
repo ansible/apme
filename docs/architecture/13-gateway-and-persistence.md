@@ -142,7 +142,7 @@ GalaxyServer (ADR-045)
 | `scan_patches` | Per-file unified diffs |
 | `scan_manifests` | Dependency manifest metadata (ansible-core version, requirements) |
 | `scan_collections` | Collection references per scan (FQCN, version, source, license) |
-| `scan_python_packages` | Python package references per scan |
+| `scan_python_packages` | Python package references per scan (name, version, license, supplier) |
 | `scan_graphs` | Serialized ContentGraph JSON |
 | `rules` | Registered rule catalog from engine |
 | `rule_overrides` | Admin-configured severity/enabled overrides |
@@ -185,7 +185,7 @@ and `/docs` from the Gateway process.
 | GET | `/projects/{id}/activity` | Project activity history |
 | GET | `/projects/{id}/violations` | Latest violations (filterable) |
 | GET | `/projects/{id}/trend` | Violation trend over time |
-| GET | `/projects/{id}/dependencies` | Dependency manifest (ADR-040) |
+| GET | `/projects/{id}/dependencies` | Dependency manifest (ADR-040); each ref carries `license` and a derived `license_status` (`open-source`/`proprietary`/`unknown`) |
 | GET | `/projects/{id}/sbom` | CycloneDX 1.5 SBOM export |
 | GET | `/projects/{id}/graph` | ContentGraph JSON for visualization |
 

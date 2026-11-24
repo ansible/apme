@@ -676,6 +676,78 @@ class TestListInstalledPackages:
             ("jinja2", "3.1.4", "BSD-3-Clause", "Pallets"),
         ]
 
+    def test_resolves_license_from_expression_and_classifier(self, tmp_path: Path) -> None:
+        """Modern PEP 639 packages and classifier-only packages get a license.
+
+        Real-world regression: ansible-core 2.19 publishes neither ``License``
+        nor ``License-Expression`` (only a Trove classifier), Jinja2 publishes
+        neither (maintainer only), and resolvelib publishes the free text
+        ``ISC License`` — all three used to report an empty license.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from apme_engine.venv_manager.session import list_installed_packages
+
+        venv = tmp_path / "venv"
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("#!/bin/sh\n")
+        (bindir / "python").chmod(0o755)
+
+        pkg_output = json.dumps(
+            [
+                {
+                    "name": "ansible-core",
+                    "version": "2.19.0",
+                    "license": "",
+                    "license_expression": "",
+                    "license_classifiers": [
+                        "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+                    ],
+                    "author": "Ansible Project",
+                },
+                {
+                    "name": "cryptography",
+                    "version": "43.0.0",
+                    "license": "",
+                    "license_expression": "Apache-2.0 OR BSD-3-Clause",
+                    "license_classifiers": [],
+                    "author": "The Python Cryptographic Authority",
+                },
+                {
+                    "name": "jinja2",
+                    "version": "3.1.4",
+                    "license": "",
+                    "license_expression": "",
+                    "license_classifiers": [],
+                    "maintainer": "Pallets",
+                    "maintainer_email": "contact@palletsprojects.com",
+                },
+                {
+                    "name": "resolvelib",
+                    "version": "1.1.0",
+                    "license": "ISC License",
+                    "license_expression": "",
+                    "license_classifiers": [],
+                    "author": "Tzu-ping Chung",
+                },
+            ]
+        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = pkg_output
+
+        with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
+            pkgs = list_installed_packages(venv)
+
+        assert pkgs == [
+            ("ansible-core", "2.19.0", "GPL-3.0-or-later", "Ansible Project"),
+            ("cryptography", "43.0.0", "Apache-2.0 OR BSD-3-Clause", "The Python Cryptographic Authority"),
+            ("jinja2", "3.1.4", "", "Pallets"),
+            ("resolvelib", "1.1.0", "ISC", "Tzu-ping Chung"),
+        ]
+
     def test_returns_empty_on_missing_venv(self, tmp_path: Path) -> None:
         """Returns empty list if venv has no python executable.
 
@@ -842,6 +914,165 @@ class TestListInstalledCollections:
 
         assert ("ansible.posix", "1.5.4", "GPL-3.0-or-later", "ansible") in colls
         assert ("community.general", "8.0.0", "GPL-3.0-or-later", "Ansible Project") in colls
+
+    def test_manifest_with_empty_license_uses_license_files(self, tmp_path: Path) -> None:
+        """Collections declaring ``license: []`` fall back to on-disk files.
+
+        Real-world regression: 7 of 9 popular collections (community.general,
+        amazon.aws, ansible.posix, kubernetes.core, ...) ship
+        ``license: []`` with a ``license_file`` and/or an SPDX-named
+        ``LICENSES/`` directory, so they used to report no license at all.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from apme_engine.venv_manager.session import list_installed_collections
+
+        venv = tmp_path / "venv"
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("#!/bin/sh\n")
+        (bindir / "python").chmod(0o755)
+
+        coll_path = tmp_path / "collections"
+        reuse_dir = coll_path / "community" / "general"
+        reuse_dir.mkdir(parents=True)
+        (reuse_dir / "MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "collection_info": {
+                        "license": [],
+                        "license_file": "COPYING",
+                        "authors": ["Ansible Project"],
+                    }
+                }
+            )
+        )
+        (reuse_dir / "COPYING").write_text("GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n")
+        licenses_dir = reuse_dir / "LICENSES"
+        licenses_dir.mkdir()
+        (licenses_dir / "GPL-3.0-or-later.txt").write_text("placeholder\n")
+        (licenses_dir / "MIT.txt").write_text("placeholder\n")
+
+        aws_dir = coll_path / "amazon" / "aws"
+        aws_dir.mkdir(parents=True)
+        (aws_dir / "MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "collection_info": {
+                        "license": [],
+                        "license_file": "COPYING",
+                        "authors": ["Ansible Cloud Team"],
+                    }
+                }
+            )
+        )
+        (aws_dir / "COPYING").write_text(
+            " GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n\n"
+            "   This program is free software: you can redistribute it and/or modify\n"
+            "   it under the terms of the GNU General Public License as published by\n"
+            "   the Free Software Foundation, either version 3 of the License, or\n"
+            "   (at your option) any later version.\n"
+        )
+
+        galaxy_output = json.dumps(
+            {
+                str(coll_path): {
+                    "community.general": {"version": "10.0.0"},
+                    "amazon.aws": {"version": "8.0.0"},
+                },
+            }
+        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = galaxy_output
+
+        with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
+            colls = list_installed_collections(venv)
+
+        assert ("community.general", "10.0.0", "GPL-3.0-or-later AND MIT", "Ansible Project") in colls
+        assert ("amazon.aws", "8.0.0", "GPL-3.0-or-later", "Ansible Cloud Team") in colls
+
+    def test_manifest_license_list_wins_over_license_files(self, tmp_path: Path) -> None:
+        """A declared (even free-text) license is not replaced by a file.
+
+        Real-world risk: a collection that declares ``license: ["Commercial
+        license"]`` while shipping ``LICENSES/MIT.txt`` must keep its
+        restriction, or the dependency loses its legal-review warning.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from apme_engine.venv_manager.session import list_installed_collections
+
+        venv = tmp_path / "venv"
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("#!/bin/sh\n")
+        (bindir / "python").chmod(0o755)
+
+        coll_path = tmp_path / "collections"
+        coll_dir = coll_path / "acme" / "tools"
+        coll_dir.mkdir(parents=True)
+        (coll_dir / "MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "collection_info": {
+                        "license": ["Commercial license"],
+                        "license_file": "LICENSE",
+                        "authors": ["Acme"],
+                    }
+                }
+            )
+        )
+        (coll_dir / "LICENSE").write_text("MIT License\n")
+        licenses_dir = coll_dir / "LICENSES"
+        licenses_dir.mkdir()
+        (licenses_dir / "MIT.txt").write_text("placeholder\n")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({str(coll_path): {"acme.tools": {"version": "1.0.0"}}})
+
+        with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
+            colls = list_installed_collections(venv)
+
+        assert ("acme.tools", "1.0.0", "Commercial license", "Acme") in colls
+
+    def test_malformed_manifest_license_does_not_abort_the_scan(self, tmp_path: Path) -> None:
+        """A non-list ``license`` value is ignored, not raised on.
+
+        ``license: 42`` would make ``list()`` raise ``TypeError``, which no
+        caller catches: one broken manifest would then wipe the session's whole
+        installed-metadata record.  The value falls back to the license files.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from apme_engine.venv_manager.session import list_installed_collections
+
+        venv = tmp_path / "venv"
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("#!/bin/sh\n")
+        (bindir / "python").chmod(0o755)
+
+        coll_path = tmp_path / "collections"
+        coll_dir = coll_path / "acme" / "tools"
+        coll_dir.mkdir(parents=True)
+        (coll_dir / "MANIFEST.json").write_text(
+            json.dumps({"collection_info": {"license": 42, "license_file": "COPYING", "authors": ["Acme"]}})
+        )
+        (coll_dir / "COPYING").write_text("Permission is hereby granted, free of charge, to any person\n")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({str(coll_path): {"acme.tools": {"version": "1.0.0"}}})
+
+        with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
+            colls = list_installed_collections(venv)
+
+        assert ("acme.tools", "1.0.0", "MIT", "Acme") in colls
 
     def test_falls_back_to_galaxy_yml(self, tmp_path: Path) -> None:
         """Reads license/supplier from galaxy.yml when MANIFEST.json is absent.
