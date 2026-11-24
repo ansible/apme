@@ -319,7 +319,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.45.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.45.1" },
     { name = "opentelemetry-sdk", specifier = ">=1.45.1" },
-    { name = "packaging", specifier = ">=23" },
+    { name = "packaging", specifier = ">=24.2" },
     { name = "pip-audit", specifier = ">=2.7" },
     { name = "protobuf", specifier = ">=7.35.1,<8" },
     { name = "pydantic", specifier = ">=2" },

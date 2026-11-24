@@ -273,3 +273,4 @@ The proxy already resolves transitive dependencies. The engine reads the install
 | 2026-09-22 | Agent | Status → Implemented — manifest persistence, dependencies/SBOM REST, and `apme sbom` shipped; role inventory remains deferred to ADR-044 |
 | 2026-09-22 | Agent | Status → Partially Implemented — project-scoped manifest/dependencies/SBOM shipped; global `GET /api/v1/collections`, `GET /api/v1/python-packages`, and collection-to-project endpoints remain |
 | 2026-10-27 | Daniel Danielsson | Excluded proxy-generated Galaxy collection wrappers from Python package manifest entries using wheel provenance metadata |
+| 2026-11-24 | Daniel Danielsson | License resolution centralized in `apme_engine.licensing`; `license_status` derived at the API layer, proto unchanged |

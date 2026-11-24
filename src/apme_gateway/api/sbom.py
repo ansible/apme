@@ -19,10 +19,16 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from apme_engine.licensing import CUSTOM_LICENSE_PREFIX, canonical_spdx, is_spdx_id
+
 if TYPE_CHECKING:
     from apme_gateway.db.models import ScanCollection, ScanManifest, ScanPythonPackage
 
 logger = logging.getLogger(__name__)
+
+#: ansible-core ships no ``License``/``License-Expression`` metadata (only a
+#: Trove classifier), so the framework component states its license directly.
+_ANSIBLE_CORE_LICENSE = "GPL-3.0-or-later"
 
 # ---------------------------------------------------------------------------
 # PURL helpers
@@ -126,10 +132,13 @@ class LicenseChoice:
     Attributes:
         license_id: SPDX license identifier (e.g. ``Apache-2.0``).
         license_name: Free-text license name when no SPDX ID is available.
+        expression: SPDX license expression (e.g. ``MIT OR Apache-2.0``) when
+            the value cannot be reduced to a single identifier.
     """
 
     license_id: str = ""
     license_name: str = ""
+    expression: str = ""
 
 
 @dataclass
@@ -268,6 +277,8 @@ def _org_entity_to_dict(org: OrganizationalEntity) -> dict[str, Any]:
 def _license_to_dict(lc: LicenseChoice) -> dict[str, Any]:
     if lc.license_id:
         return {"license": {"id": lc.license_id}}
+    if lc.expression:
+        return {"expression": lc.expression}
     if lc.license_name:
         return {"license": {"name": lc.license_name}}
     return {}
@@ -507,17 +518,33 @@ def validate_bom(bom: Bom) -> ValidationResult:
 
 
 def _make_license_choice(license_str: str) -> list[LicenseChoice]:
-    """Parse a license string into LicenseChoice list.
+    """Build a CycloneDX license choice from a stored license value.
+
+    Emits ``{"license": {"id": ...}}`` for a single SPDX license-list
+    identifier, ``{"expression": ...}`` for a compound SPDX expression, and
+    ``{"license": {"name": ...}}`` for free text such as ``"ISC License"``
+    (emitting a non-list id makes the BOM non-conformant).
+
+    ``LicenseRef-*`` is a valid SPDX *expression* element but is not in the
+    CycloneDX ``license.id`` enumeration, so a custom license reference is
+    emitted as an expression: a schema-validating consumer would otherwise
+    reject the whole BOM for a single custom license.
 
     Args:
-        license_str: SPDX license identifier string.
+        license_str: Stored license value (SPDX or free text).
 
     Returns:
         List with one LicenseChoice, or empty list if input is empty.
     """
-    if not license_str:
+    text = " ".join(license_str.split())
+    if not text:
         return []
-    return [LicenseChoice(license_id=license_str)]
+    canonical = canonical_spdx(text)
+    if canonical and is_spdx_id(canonical) and not canonical.startswith(CUSTOM_LICENSE_PREFIX):
+        return [LicenseChoice(license_id=canonical)]
+    if canonical:
+        return [LicenseChoice(expression=canonical)]
+    return [LicenseChoice(license_name=text)]
 
 
 def _collection_to_component(c: ScanCollection) -> Component:
@@ -586,6 +613,7 @@ def manifest_to_cyclonedx(
     bom = Bom(metadata=BomMetadata(tools_version=tools_version))
 
     # Add ansible-core as the first component
+    core_purl = ""
     if manifest.ansible_core_version:
         core_purl = _make_pypi_purl("ansible-core", manifest.ansible_core_version)
         bom.components.append(
@@ -597,6 +625,7 @@ def manifest_to_cyclonedx(
                 bom_ref=core_purl,
                 supplier=OrganizationalEntity(name="Red Hat"),
                 author="Red Hat",
+                licenses=_make_license_choice(_ANSIBLE_CORE_LICENSE),
                 properties=[Property(name="apme:source", value="pypi")],
             )
         )
@@ -605,6 +634,10 @@ def manifest_to_cyclonedx(
         bom.components.append(_collection_to_component(c))
 
     for p in packages:
+        # ansible-core is emitted above as the framework component; the venv's
+        # copy would otherwise repeat its bom-ref and make the BOM invalid.
+        if core_purl and _make_pypi_purl(p.name, p.version) == core_purl:
+            continue
         bom.components.append(_package_to_component(p))
 
     # Each component gets a dependency entry (no resolved dep graph yet)

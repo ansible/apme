@@ -56,6 +56,7 @@ from packaging.version import InvalidVersion, Version
 
 from apme_engine.cache import BoundedCache
 from apme_engine.config_env import get_env_int
+from apme_engine.licensing import join_licenses, license_from_collection_files, resolve_license
 from apme_engine.venv_manager.venv_collections import (
     _SAFE_VERSION_RE,
     LocalCollectionWheel,
@@ -1610,7 +1611,12 @@ def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
                 "name": meta["Name"] or "",
                 "version": meta["Version"] or "",
                 "license": meta.get("License", "") or "",
-                "supplier": meta.get("Author", "") or meta.get("Author-email", "") or "",
+                "license_expression": meta.get("License-Expression", "") or "",
+                "license_classifiers": meta.get_all("Classifier") or [],
+                "author": meta.get("Author", "") or "",
+                "author_email": meta.get("Author-email", "") or "",
+                "maintainer": meta.get("Maintainer", "") or "",
+                "maintainer_email": meta.get("Maintainer-email", "") or "",
                 "is_galaxy_collection_wrapper": (
                     "Generator: ansible-collection-proxy" in wheel_metadata.splitlines()
                 ),
@@ -1637,11 +1643,61 @@ def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
         return []
 
     return [
-        (e["name"], e.get("version", ""), e.get("license", ""), e.get("supplier", ""))
+        (
+            e["name"],
+            str(e.get("version", "")),
+            _package_license(e),
+            _package_supplier(e),
+        )
         for e in entries
         if isinstance(e, dict) and "name" in e
         if isinstance(e["name"], str) and not e.get("is_galaxy_collection_wrapper", False)
     ]
+
+
+def _package_license(entry: Mapping[str, object]) -> str:
+    """Resolve a package license from its core metadata fields.
+
+    Reads PEP 639 ``License-Expression``, the deprecated ``License`` field and
+    Trove ``License ::`` classifiers (see :mod:`apme_engine.licensing`), so
+    packages such as ``ansible-core`` — which only publish a classifier — are
+    no longer reported as unlicensed.
+
+    Args:
+        entry: One distribution record emitted by the venv script.
+
+    Returns:
+        SPDX identifier/expression or free-text license name; ``""`` if absent.
+    """
+    resolved = resolve_license(
+        expression=str(entry.get("license_expression") or ""),
+        text=str(entry.get("license") or ""),
+        classifiers=entry.get("license_classifiers"),
+    )
+    if resolved:
+        return resolved
+    # Backwards compatibility with pre-resolved records (and test fixtures).
+    return str(entry.get("license") or "")
+
+
+def _package_supplier(entry: Mapping[str, object]) -> str:
+    """Resolve a package supplier from its core metadata fields.
+
+    Falls back from ``Author``/``Author-email`` to
+    ``Maintainer``/``Maintainer-email`` as most modern packages (Jinja2,
+    MarkupSafe) only publish a maintainer.
+
+    Args:
+        entry: One distribution record emitted by the venv script.
+
+    Returns:
+        Supplier string; ``""`` if absent.
+    """
+    for key in ("author", "author_email", "maintainer", "maintainer_email"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return str(entry.get("supplier") or "")
 
 
 def get_dependency_tree(venv_dir: Path) -> str:
@@ -1678,6 +1734,27 @@ def get_dependency_tree(venv_dir: Path) -> str:
     return result.stdout.strip()
 
 
+def _metadata_text(value: object, default: str = "") -> str:
+    """Flatten a metadata field that may be a string or a list of strings.
+
+    ``galaxy.yml`` permits a bare string where the schema expects a list, and
+    ``", ".join("ab")`` would otherwise split it into single characters.
+
+    Args:
+        value: Raw metadata value.
+        default: Value returned when *value* is empty or of another type.
+
+    Returns:
+        Comma-joined non-empty entries, or *default*.
+    """
+    if isinstance(value, str):
+        return value.strip() or default
+    if isinstance(value, (list, tuple)):
+        joined = ", ".join(str(item).strip() for item in value if str(item).strip())
+        return joined or default
+    return default
+
+
 def _read_collection_metadata(coll_dir: Path, namespace: str) -> tuple[str, str]:
     """Read license and supplier from a collection's metadata files.
 
@@ -1695,8 +1772,8 @@ def _read_collection_metadata(coll_dir: Path, namespace: str) -> tuple[str, str]
     if manifest_file.is_file():
         try:
             info = json.loads(manifest_file.read_text()).get("collection_info", {})
-            license_val = ", ".join(info.get("license", [])) or ""
-            supplier = ", ".join(info.get("authors", [])) or info.get("namespace", namespace) or ""
+            license_val = _collection_license(info, coll_dir)
+            supplier = _metadata_text(info.get("authors")) or _metadata_text(info.get("namespace"), namespace)
             return (license_val, supplier)
         except (json.JSONDecodeError, OSError):
             pass
@@ -1710,14 +1787,51 @@ def _read_collection_metadata(coll_dir: Path, namespace: str) -> tuple[str, str]
         else:
             try:
                 galaxy = yaml.safe_load(galaxy_file.read_text()) or {}
-                raw_license = galaxy.get("license", [])
-                license_val = ", ".join(raw_license) if isinstance(raw_license, list) else str(raw_license or "")
-                supplier = ", ".join(galaxy.get("authors", [])) or galaxy.get("namespace", namespace) or ""
+                license_val = _collection_license(galaxy, coll_dir)
+                supplier = _metadata_text(galaxy.get("authors")) or _metadata_text(galaxy.get("namespace"), namespace)
                 return (license_val, supplier)
             except (OSError, yaml.YAMLError):
                 pass
 
-    return ("", "")
+    return license_from_collection_files(coll_dir), ""
+
+
+def _collection_license(info: Mapping[str, object], coll_dir: Path) -> str:
+    """Resolve a collection's license from its metadata or license files.
+
+    A non-empty ``license`` list is authoritative even when its values are free
+    text: the author's declared license must not be replaced by a file that
+    happens to have an SPDX name, or a collection declaring
+    ``license: ["Commercial license"]`` alongside ``LICENSES/MIT.txt`` would be
+    reported as MIT and lose its legal-review warning.  Most collections in the
+    ``ansible`` package now declare ``license: []`` with ``license_file:
+    COPYING`` (REUSE/SPDX style), so only an empty list falls back to the
+    on-disk ``license_file`` and ``LICENSES/`` directory.
+
+    A malformed ``license`` value (a number, a mapping, ...) is ignored rather
+    than raised: one broken manifest must not abort the whole installed-metadata
+    scan.
+
+    Args:
+        info: ``collection_info`` (MANIFEST.json) or parsed galaxy.yml mapping.
+        coll_dir: Installed collection directory.
+
+    Returns:
+        SPDX identifier/expression, free-text license name, or ``""``.
+    """
+    raw_license = info.get("license")
+    if isinstance(raw_license, str):
+        values: list[str] = [raw_license]
+    elif isinstance(raw_license, (list, tuple)):
+        values = [value for value in raw_license if isinstance(value, str)]
+    else:
+        values = []
+    license_val = join_licenses(values)
+    if license_val:
+        return license_val
+    raw_file = info.get("license_file")
+    license_file = raw_file if isinstance(raw_file, str) else ""
+    return license_from_collection_files(coll_dir, license_file)
 
 
 def list_installed_collections(venv_dir: Path) -> list[tuple[str, str, str, str]]:

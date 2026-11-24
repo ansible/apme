@@ -651,7 +651,7 @@
         "type": "object"
       },
       "CollectionRefSchema": {
-        "description": "A collection discovered in a project's session venv.\n\nAttributes:\n    fqcn: Fully-qualified collection name.\n    version: Installed version string.\n    source: Origin \u2014 galaxy, local, or git.\n    license: SPDX license identifier from collection metadata.\n    supplier: Author or namespace from collection metadata.",
+        "description": "A collection discovered in a project's session venv.\n\nAttributes:\n    fqcn: Fully-qualified collection name.\n    version: Installed version string.\n    source: Origin \u2014 galaxy, local, or git.\n    license: SPDX license identifier or name from collection metadata.\n    supplier: Author or namespace from collection metadata.\n    license_status: Open-source classification for legal-risk display.",
         "properties": {
           "fqcn": {
             "title": "Fqcn",
@@ -660,6 +660,16 @@
           "license": {
             "default": "",
             "title": "License",
+            "type": "string"
+          },
+          "license_status": {
+            "default": "unknown",
+            "enum": [
+              "open-source",
+              "proprietary",
+              "unknown"
+            ],
+            "title": "License Status",
             "type": "string"
           },
           "source": {
@@ -2211,11 +2221,21 @@
         "type": "object"
       },
       "PythonPackageRefSchema": {
-        "description": "A Python package discovered in a project's session venv.\n\nAttributes:\n    name: PyPI package name.\n    version: Installed version string.\n    license: License identifier from package metadata.\n    supplier: Author from package metadata.",
+        "description": "A Python package discovered in a project's session venv.\n\nAttributes:\n    name: PyPI package name.\n    version: Installed version string.\n    license: SPDX license identifier or name from package metadata.\n    supplier: Author/maintainer from package metadata.\n    license_status: Open-source classification for legal-risk display.",
         "properties": {
           "license": {
             "default": "",
             "title": "License",
+            "type": "string"
+          },
+          "license_status": {
+            "default": "unknown",
+            "enum": [
+              "open-source",
+              "proprietary",
+              "unknown"
+            ],
+            "title": "License Status",
             "type": "string"
           },
           "name": {

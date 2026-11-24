@@ -28,6 +28,7 @@ from sqlalchemy import select
 
 from apme_engine.graph.audit_metadata import sanitize_audit_metadata_value
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
+from apme_engine.licensing import classify_license
 from apme_gateway._galaxy_proxy_sync import get_sync_status
 from apme_gateway.api.schemas import (
     ActiveOperationSummary,
@@ -989,11 +990,24 @@ async def project_dependencies_endpoint(project_id: str) -> ProjectDependencies:
     return ProjectDependencies(
         ansible_core_version=manifest.ansible_core_version if manifest else "",
         collections=[
-            CollectionRefSchema(fqcn=c.fqcn, version=c.version, source=c.source, license=c.license, supplier=c.supplier)
+            CollectionRefSchema(
+                fqcn=c.fqcn,
+                version=c.version,
+                source=c.source,
+                license=c.license,
+                supplier=c.supplier,
+                license_status=classify_license(c.license),
+            )
             for c in collections
         ],
         python_packages=[
-            PythonPackageRefSchema(name=p.name, version=p.version, license=p.license, supplier=p.supplier)
+            PythonPackageRefSchema(
+                name=p.name,
+                version=p.version,
+                license=p.license,
+                supplier=p.supplier,
+                license_status=classify_license(p.license),
+            )
             for p in packages
         ],
         requirements_files=_parse_requirements_files(manifest),

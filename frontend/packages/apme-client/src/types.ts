@@ -253,12 +253,22 @@ export interface ProjectRanking {
 
 // ── Dependencies types (ADR-040) ─────────────────────────────────────
 
+/**
+ * Legal-risk classification of a dependency license, computed by the gateway.
+ *
+ * `proprietary` marks positively non-open-source licenses (including custom
+ * `LicenseRef-` references) so the UI can flag them in red; `unknown` covers
+ * missing or unrecognized metadata and is not a risk verdict.
+ */
+export type LicenseStatus = "open-source" | "proprietary" | "unknown";
+
 export interface CollectionRef {
   fqcn: string;
   version: string;
   source: string;
   license?: string;
   supplier?: string;
+  license_status?: LicenseStatus;
 }
 
 export interface PythonPackageRef {
@@ -266,6 +276,7 @@ export interface PythonPackageRef {
   version: string;
   license?: string;
   supplier?: string;
+  license_status?: LicenseStatus;
 }
 
 export interface ProjectDependencies {
