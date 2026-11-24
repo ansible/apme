@@ -333,3 +333,57 @@ def test_manifest_to_cyclonedx_purl_format() -> None:
     assert purls["ansible-core"] == "pkg:pypi/ansible-core@2.16.0"
     assert purls["cisco.ios"] == "pkg:generic/cisco.ios@2.0.0?repository_url=https://galaxy.ansible.com"
     assert purls["ruamel.yaml"] == "pkg:pypi/ruamel-yaml@0.18.0"
+
+
+def test_manifest_to_cyclonedx_license_forms() -> None:
+    """License values emit id, expression, or name per CycloneDX 1.5 schema."""
+    from apme_gateway.api.sbom import manifest_to_cyclonedx  # noqa: PLC0415
+
+    manifest = ScanManifest(
+        scan_id="test",
+        ansible_core_version="2.19.0",
+        requirements_files_json="[]",
+        dependency_tree="",
+    )
+    coll = ScanCollection(
+        scan_id="test", fqcn="acme.tools", version="1.0.0", source="specified", license="ISC License", supplier="Acme"
+    )
+    expr_pkg = ScanPythonPackage(
+        scan_id="test", name="cryptography", version="43.0.0", license="Apache-2.0 OR BSD-3-Clause", supplier=""
+    )
+    proprietary_pkg = ScanPythonPackage(
+        scan_id="test", name="acme-agent", version="2.1.0", license="LicenseRef-Acme-Commercial", supplier="Acme"
+    )
+    result = manifest_to_cyclonedx(manifest, [coll], [expr_pkg, proprietary_pkg], tools_version="0.1.0")
+    components = {c["name"]: c for c in result["components"]}
+
+    # Free text is not a valid SPDX id, so it must be a license name.
+    assert components["acme.tools"]["licenses"] == [{"license": {"name": "ISC License"}}]
+    # Compound expressions use the CycloneDX "expression" form.
+    assert components["cryptography"]["licenses"] == [{"expression": "Apache-2.0 OR BSD-3-Clause"}]
+    # LicenseRef- is valid in an SPDX expression but is not in the CycloneDX
+    # license.id enumeration, so it must not be emitted as an id.
+    assert components["acme-agent"]["licenses"] == [{"expression": "LicenseRef-Acme-Commercial"}]
+    # ansible-core publishes no license metadata; the component states it.
+    assert components["ansible-core"]["licenses"] == [{"license": {"id": "GPL-3.0-or-later"}}]
+
+
+def test_manifest_to_cyclonedx_dedupes_ansible_core() -> None:
+    """The venv's ansible-core must not repeat the framework component's bom-ref."""
+    from apme_gateway.api.sbom import manifest_to_cyclonedx  # noqa: PLC0415
+
+    manifest = ScanManifest(
+        scan_id="test",
+        ansible_core_version="2.19.0",
+        requirements_files_json="[]",
+        dependency_tree="",
+    )
+    core_pkg = ScanPythonPackage(
+        scan_id="test", name="ansible-core", version="2.19.0", license="GPL-3.0-or-later", supplier="Ansible Project"
+    )
+    other_pkg = ScanPythonPackage(scan_id="test", name="jinja2", version="3.1.4", license="", supplier="Pallets")
+    result = manifest_to_cyclonedx(manifest, [], [core_pkg, other_pkg], tools_version="0.1.0")
+
+    names = [c["name"] for c in result["components"]]
+    assert names.count("ansible-core") == 1
+    assert "jinja2" in names

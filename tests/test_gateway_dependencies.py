@@ -235,6 +235,44 @@ async def test_project_dependencies_endpoint(client: AsyncClient) -> None:
     assert "ansible-core v2.16.3" in data["dependency_tree"]
 
 
+async def test_project_dependencies_license_status(client: AsyncClient) -> None:
+    """Dependency refs carry an open-source classification for the UI.
+
+    The UI paints ``proprietary`` licenses red so non-open-source dependencies
+    get legal review before adoption; ``unknown`` is a metadata gap only.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _seed_project_with_manifest()
+    async with get_session() as db:
+        from sqlalchemy import update
+
+        await db.execute(
+            update(ScanCollection).where(ScanCollection.fqcn == "community.general").values(license="GPL-3.0-or-later")
+        )
+        await db.execute(
+            update(ScanCollection)
+            .where(ScanCollection.fqcn == "ansible.netcommon")
+            .values(license="LicenseRef-Acme-Commercial")
+        )
+        await db.execute(update(ScanPythonPackage).where(ScanPythonPackage.name == "jmespath").values(license="MIT"))
+        await db.commit()
+
+    resp = await client.get("/api/v1/projects/proj-1/dependencies")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert {c["fqcn"]: c["license_status"] for c in data["collections"]} == {
+        "community.general": "open-source",
+        "ansible.netcommon": "proprietary",
+    }
+    assert {p["name"]: p["license_status"] for p in data["python_packages"]} == {
+        "jmespath": "open-source",
+        "netaddr": "unknown",
+    }
+
+
 async def test_project_dependencies_by_name(client: AsyncClient) -> None:
     """GET /projects/{name}/dependencies resolves by project name.
 

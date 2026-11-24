@@ -205,6 +205,57 @@ it("keeps dependency inventory visible when refresh fails", async () => {
   expect(screen.getByText("ansible.posix")).toBeTruthy();
 });
 
+it("flags a non-open-source dependency license for legal review", async () => {
+  const fetch = vi.fn(async () =>
+    json({
+      ...deps,
+      collections: [
+        {
+          fqcn: "acme.tools",
+          version: "1.0.0",
+          source: "galaxy",
+          license: "LicenseRef-Acme-Commercial",
+          supplier: "Acme",
+          license_status: "proprietary",
+        },
+        {
+          fqcn: "ansible.posix",
+          version: "2.1",
+          source: "galaxy",
+          license: "GPL-3.0-or-later",
+          supplier: "Ansible",
+          license_status: "open-source",
+        },
+      ],
+      python_packages: [
+        {
+          name: "internal-agent",
+          version: "0.4",
+          license: "",
+          supplier: "Acme",
+          license_status: "unknown",
+        },
+      ],
+    }),
+  );
+  render(
+    <BUIProvider>
+      <ApmeProjectDependencies projectId="p1" adapter={adapter(fetch)} />
+    </BUIProvider>,
+  );
+
+  // Proprietary licenses are highlighted and explain why.
+  const flagged = await screen.findByTitle(/not open source/i);
+  expect(flagged.textContent).toBe("LicenseRef-Acme-Commercial");
+  expect(flagged.style.color).not.toBe("");
+
+  // Open-source licenses keep the default text color.
+  expect(screen.getByText("GPL-3.0-or-later").style.color).toBe("");
+  // A missing license is not a legal verdict, so it stays neutral.
+  const unrecorded = screen.getByText("Not recorded");
+  expect(unrecorded.style.color).toBe("");
+});
+
 it("keeps run details visible when refresh fails", async () => {
   const fetch = vi
     .fn()

@@ -220,6 +220,9 @@ It uses tabs to organize functionality:
 - Ansible core version
 - Collection table (FQCN, version, source) — clickable to collection detail
 - Python package table — clickable to package detail
+- License and supplier columns (ADR-040); a license the gateway classifies as
+  `proprietary` renders in red with a legal-review tooltip, while
+  `open-source` and `unknown` (`Not recorded`) stay in the default text color
 - Dependency graph with APME-branded PNG/SVG downloads
 - Requirements file list
 - SBOM download button (CycloneDX JSON)

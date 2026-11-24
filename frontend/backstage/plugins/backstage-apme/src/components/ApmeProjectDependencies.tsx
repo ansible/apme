@@ -14,7 +14,10 @@ import {
 } from "@backstage/ui";
 import { getProjectDependencies } from "@apme/client";
 import type { ApmeApiAdapter } from "@apme/client/transport";
-import { dependencySourceColor } from "@apme/ui-workflow/colors";
+import {
+  dependencySourceColor,
+  licenseStatusColor,
+} from "@apme/ui-workflow/colors";
 import { DataStatus, PageControls } from "./DataStatus";
 import { DependencyDiagram } from "./DependencyDiagram";
 import { useLoad } from "./useLoad";
@@ -29,6 +32,29 @@ export interface ApmeProjectDependenciesProps {
 
 export function ApmeProjectDependencies(props: ApmeProjectDependenciesProps) {
   return <ApmeProjectDependenciesContent key={props.projectId} {...props} />;
+}
+
+/**
+ * License cell that flags non-open-source dependencies in red.
+ *
+ * Legal review is required before adopting a dependency whose license the
+ * gateway classified as proprietary; unknown/unrecorded licenses stay neutral
+ * because they are a metadata gap rather than a verdict.
+ */
+function LicenseCell(props: { license?: string; licenseStatus?: string }) {
+  const label = props.license || "Not recorded";
+  const color = licenseStatusColor(props.licenseStatus);
+  if (!color) {
+    return <span>{label}</span>;
+  }
+  return (
+    <span
+      style={{ color, fontWeight: 600 }}
+      title="This dependency is not open source. Review its license with legal before use."
+    >
+      {label}
+    </span>
+  );
 }
 
 function ApmeProjectDependenciesContent({
@@ -133,7 +159,12 @@ function ApmeProjectDependenciesContent({
                             {item.source}
                           </span>
                         </Cell>
-                        <Cell>{item.license || "Not recorded"}</Cell>
+                        <Cell>
+                          <LicenseCell
+                            license={item.license}
+                            licenseStatus={item.license_status}
+                          />
+                        </Cell>
                         <Cell>{item.supplier || "Not recorded"}</Cell>
                         <Cell>{renderIssues("collection", item.fqcn)}</Cell>
                       </Row>
@@ -176,7 +207,12 @@ function ApmeProjectDependenciesContent({
                       <Row id={item.id}>
                         <Cell>{item.name}</Cell>
                         <Cell>{item.version}</Cell>
-                        <Cell>{item.license || "Not recorded"}</Cell>
+                        <Cell>
+                          <LicenseCell
+                            license={item.license}
+                            licenseStatus={item.license_status}
+                          />
+                        </Cell>
                         <Cell>{item.supplier || "Not recorded"}</Cell>
                         <Cell>{renderIssues("python", item.name)}</Cell>
                       </Row>

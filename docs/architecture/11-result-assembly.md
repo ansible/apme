@@ -222,6 +222,109 @@ This ensures the engine scan path is never bottlenecked by persistence.
 - `requirements_files` — paths to discovered requirements files
 - `dependency_tree` — raw `uv pip tree` output
 
+### License resolution
+
+Packages and collections publish license data in inconsistent ways, so
+`src/apme_engine/licensing.py` centralises the rules instead of reading a
+single metadata field:
+
+- Python packages: PEP 639 `License-Expression` -> an SPDX-shaped `License`
+  value -> a recognised free-text name (`ISC License`) -> a recognised license
+  body -> Trove `License ::` classifiers. `ansible-core` publishes none of the
+  first four fields and is resolved from its GPLv3+ classifier. A short value
+  carrying a restrictive marker (`Commercial Apache License version 2.0`) is
+  kept verbatim instead of being mapped to the license name it resembles, and
+  a classifier without an unambiguous SPDX id (`BSD License`,
+  `Other/Proprietary License`) is reported by its human-readable name rather
+  than dropped.
+- Collections: a non-empty `MANIFEST.json`/`galaxy.yml` `license` list is
+  authoritative. A list of SPDX identifiers is joined with `OR` (a choice),
+  while a list that is not fully SPDX is joined with `AND`: a consumer is bound
+  by every declared value, and a comma-joined `MIT, SSPL-1.0, Custom terms`
+  would let the `MIT` hint make the whole list look open source. Only when the
+  list is empty does the resolver fall back to an SPDX-named `license_file`,
+  then to SPDX-named files in `LICENSES/` (REUSE layout, used by `community.general`,
+  `amazon.aws`, `ansible.posix`, ... which all declare `license: []`), then to
+  the body of `license_file`. `LICENSES/` entries name the licenses used by
+  files in the collection, not alternatives a consumer may choose between, so
+  they are joined with `AND`. Collection metadata is untrusted: only regular
+  files whose resolved path stays inside the collection directory are read,
+  with a bounded prefix per file. An SPDX-named `license_file` is only trusted
+  once that file is verified inside the collection — a `license_file: MIT.txt`
+  that is not there must not mask a `LICENSES/SSPL-1.0.txt` sibling. A
+  `LICENSES/` listing larger than the scan limit is not summarized at all — a
+  truncated list could omit the only restricted license and leave an
+  open-source sibling looking like the whole collection — so the value stays
+  `unknown` and asks for review, and the directory is enumerated incrementally
+  so a huge listing cannot be materialised just to be rejected. Only lone
+  identifiers are accepted from file names: an expression-shaped
+  `MIT OR ISC.txt` does not establish how its alternatives relate, and joining
+  it into `MIT OR ISC AND SSPL-1.0` would let operator precedence pick the
+  permissive branch, so it marks the listing unverified as well. So does an
+  entry that names no license at all: `MIT.txt` beside `Commercial
+  License.txt` yields an unverified listing rather than a lone `MIT`, because
+  skipping the unrecognised entry would drop a restricted sibling.
+- A value naming several licenses reaches classification whole. Name and body
+  detection match a substring (`apache license ... version 2.0`), so resolving
+  `Apache License version 2.0 AND SSPL-1.0` would store `Apache-2.0` and drop
+  the restricted operand before it is evaluated. Operand splitting is confined
+  to short values, or to operator-joined lists whose operands are all short, so
+  a license body ("TERMS AND CONDITIONS") is never read as a list.
+- The same restriction scan applies to a package `License` field that carries a
+  full body: the body is longer than the short-name marker limit, so only the
+  supplemental scan over a recognized body keeps `MIT with Commons Clause`.
+- A license file larger than the read window is unverified rather than
+  detected from its first 64 KiB: one extra byte is read to tell a complete
+  file from a truncated prefix, because a restriction can sit past the window.
+- A bare file name is display text, not a declaration: an absent or unreadable
+  `license_file` keeps its name (`MIT.txt`) but stays `unknown`, because the
+  `mit` hint would otherwise report an unverified file as open source. SPDX
+  identity is decided before that check, so a declared custom reference
+  (`LicenseRef-Acme.EULA`) is still flagged rather than read as a file name.
+- License bodies are matched on their title near the start of the file, after a
+  scan for restrictions that are *added to* a base license (`Commons Clause`):
+  such a notice is kept as `MIT with Commons Clause` instead of being reduced to
+  the `MIT` grant below it. The generic proprietary markers are deliberately
+  not applied to bodies — BSD boilerplate says "All rights reserved" and GPL
+  text mentions "commercial". A full GPLv3 `COPYING` names the Affero GPL in
+  section 13 and its "How to Apply"
+  appendix contains "any later version", so a body-wide search mislabels it
+  `AGPL-3.0-or-later`; a bare license body therefore yields the `-only`
+  variant, and `-or-later` has to come from metadata.
+
+The same module classifies each value as `open-source`, `proprietary`, or
+`unknown`; the REST API exposes that as `license_status` so the UI can flag
+non-open-source dependencies in red for legal review. Only positive evidence
+of a non-open-source license counts as `proprietary`, and restrictive markers
+are checked before license-name matching so an explicit restriction is never
+overwritten by a permissive signature. SPDX expressions are evaluated as a
+parse tree with `AND` binding tighter than `OR`: an `OR` is `open-source` as
+soon as one alternative is, an `AND` is `proprietary` as soon as one required
+component is and `open-source` only when every component is known open source,
+and a `WITH` exception keeps its base license's verdict. An unclassified
+component leaves the verdict `unknown` (neutral) rather than guessing, and
+open-source hints match whole words so `mit` cannot match inside "Limited".
+A restriction that is not an SPDX license of its own (`MIT with Commons
+Clause`) is recognised through the marker list rather than the leading
+open-source name, and a short value mixing licenses without being valid SPDX
+(`MIT and FooBar-9.9`) is decided operand by operand — one matching
+open-source name never decides the whole value, a restricted operand makes the
+whole value `proprietary`, and each operand's SPDX identity is resolved before
+free-text hints so `LicenseRef-MIT` is not read as `MIT`. Only short values are
+split; a license body is recognised by its title instead, and a recognised
+license *name* is checked before the split so `GNU General Public License v3
+or later (GPLv3+)` is not read as a compound. Classification canonicalizes
+expressions up to a larger bound than storage does, so padding a value past
+the storage limit cannot degrade it into a hint match and hide a restricted
+component; the authoritative PEP 639 `License-Expression` field uses that same
+bound when it is stored, while `License` free text keeps the smaller storage
+bound so a license body is not mistaken for an identifier — except that a
+`License` value which is not body-shaped still gets the bounded expression
+parse, so a long declared expression is not dropped in favour of a permissive
+classifier. Deprecated `X+` identifiers are normalized to `X-or-later` during
+canonicalization, because `packaging` keeps the deprecated spelling, which is
+neither in the open-source identifier set nor a valid CycloneDX `license.id`.
+
 ## Key Source Files
 
 | File | Key types/functions |
