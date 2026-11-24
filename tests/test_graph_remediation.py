@@ -31,7 +31,10 @@ from apme_engine.graph.scanner import (
 from apme_engine.graph.types import RemediationResolution, RuleScope
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
+    SpliceOutcome,
+    SpliceResult,
     splice_modifications,
+    splice_with_outcome,
 )
 from apme_engine.remediation.registry import TransformRegistry
 
@@ -476,6 +479,51 @@ class TestGraphRemediationEngine:
         transformed = [s for s in node.progression if s.phase == "transformed"]
         assert len(transformed) >= 1
         assert all(s.source == "deterministic" for s in transformed)
+
+    async def test_passes_share_one_timeline_across_remediate_calls(self) -> None:
+        """A later remediate call records its passes past the graph's horizon.
+
+        Pass numbers used to restart at 1 on every ``remediate`` call,
+        so a Gate 2 declined edit recorded at its own pass 1 compared
+        equal to a Gate 1 clearance stamped at pass 1 and wrongly
+        reopened it. Each call must offset its passes past the highest
+        pass the graph has ever recorded, keeping edits and clearances
+        on one shared timeline, while each report's pass count stays
+        relative to its own run.
+        """
+        graph = ContentGraph()
+        first = _make_node("site.yml/plays[0]/tasks[0]", module="apt")
+        graph.add_node(first)
+        rules: list[GraphRule] = [_FQCNRule()]
+        registry = _build_registry_with_fqcn()
+
+        engine = GraphRemediationEngine(registry, graph, rules, max_passes=5)
+        report = await engine.remediate()
+        assert report.fixed == 1
+        assert report.passes == 1
+        assert [s.pass_number for s in first.progression if s.source == "deterministic"] == [1]
+        assert [v["fixed_in_pass"] for v in graph.query_violations(status="fixed")] == [1]
+        assert graph.pass_horizon == 5
+
+        # Gate 2 runs on the same graph with a fresh finding: its edit and
+        # clearance must be stamped past every pass recorded so far.
+        second = _make_node("site.yml/plays[0]/tasks[1]", module="apt", line_start=8, line_end=11)
+        graph.add_node(second)
+        report2 = await engine.remediate()
+        # The report's fixed count is cumulative over the ledger: both
+        # runs' findings are fixed, each stamped on its own run's passes.
+        assert report2.fixed == 2
+        assert report2.passes == 1
+        assert [s.pass_number for s in second.progression if s.source == "deterministic"] == [6]
+        assert {v["fixed_in_pass"] for v in graph.query_violations(status="fixed")} == {1, 6}
+        assert graph.pass_horizon == 10
+
+        # The horizon rides along serialization and is re-derived from the
+        # recorded passes of payloads written before it existed.
+        assert ContentGraph.from_dict(graph.to_dict()).pass_horizon == 10
+        legacy = graph.to_dict()
+        del legacy["pass_horizon"]
+        assert ContentGraph.from_dict(legacy).pass_horizon == 6
 
     async def test_clean_state_after_rescan(self) -> None:
         """After convergence, ledger shows the violation as fixed."""
@@ -1560,7 +1608,7 @@ class TestSpliceModifications:
         )
 
     def test_missing_original_skipped(self) -> None:
-        """Nodes whose file is not in originals are silently skipped."""
+        """Nodes whose file is not in originals are skipped with a warning."""
         graph = ContentGraph()
         node = _make_node(file_path="/unknown/path.yml")
         graph.add_node(node)
@@ -1571,6 +1619,309 @@ class TestSpliceModifications:
 
         patches = splice_modifications(graph, {})
         assert patches == []
+        # An empty patch list alone does not imply success — the skip
+        # must be surfaced on the result object.
+        assert isinstance(patches, SpliceResult)
+        assert patches.unpatched == ["/unknown/path.yml"]
+        assert patches.unpatched_count == 1
+
+    def test_missing_original_outcome_and_tuple(self) -> None:
+        """Outcome and tuple wrappers surface the same unpatched entry."""
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        outcome = splice_with_outcome(graph, {})
+        assert isinstance(outcome, SpliceOutcome)
+        assert outcome.patches == []
+        assert outcome.unpatched == ["/unknown/path.yml"]
+        assert outcome.unpatched_count == 1
+
+        outcome2 = splice_with_outcome(graph, {})
+        assert outcome2.patches == []
+        assert outcome2.unpatched == ["/unknown/path.yml"]
+
+    def test_empty_patches_does_not_imply_success(self) -> None:
+        """`result == []` must not be read as success without .unpatched."""
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        result = splice_modifications(graph, {})
+        assert result == []  # list-equality holds for the empty result
+        assert result.unpatched != []  # ...but the modification did NOT land
+        assert result.unpatched_count == 1
+
+    def test_missing_original_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A modified node with no originals entry logs a warning (never silent).
+
+        Args:
+            caplog: Pytest log capture fixture.
+        """
+        import logging
+
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        with caplog.at_level(logging.WARNING, logger="apme.remediation.graph"):
+            patches = splice_modifications(graph, {})
+        assert patches == []
+        assert patches.unpatched == ["/unknown/path.yml"]
+        assert patches.unpatched_count == 1
+        assert any("/unknown/path.yml" in r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
+
+    def test_missing_original_strict_raises(self) -> None:
+        """strict=True raises ValueError listing unpatched files."""
+        import pytest
+
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        with pytest.raises(ValueError, match="/unknown/path.yml"):
+            splice_modifications(graph, {}, strict=True)
+
+    def test_contributors_name_only_the_nodes_whose_edits_landed(self) -> None:
+        """``contributors`` excludes a sibling whose edit is not in the patch.
+
+        Two nodes share one file: only the first changes content. The file still
+        produces a patch, so a caller keying "landed" off the patched file path
+        alone would treat the unchanged sibling's edit as present too.
+        """
+        graph = ContentGraph()
+        # The original is two four-line tasks: 1-4 and 5-8.
+        landed = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        untouched = _make_node("site.yml/plays[0]/tasks[1]", line_start=5, line_end=8)
+        graph.add_node(landed)
+        graph.add_node(untouched)
+        landed.record_state(0, "scanned")
+        landed.update_from_yaml(_TASK_YAML_FQCN)
+        landed.record_state(1, "transformed")
+        untouched.record_state(0, "scanned")
+        untouched.record_state(1, "transformed")
+        graph.approve_pending()
+
+        original = _TASK_YAML_APT + _TASK_YAML_APT
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": original})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        # Only the first task's module is qualified; the second is untouched.
+        assert outcome.patches[0].patched == _TASK_YAML_FQCN + _TASK_YAML_APT
+        assert outcome.contributors == {"/workspace/site.yml": {landed.node_id}}
+
+    def test_contributors_exclude_an_edit_that_rewrites_the_same_bytes(self) -> None:
+        """A replacement equal to the source bytes does not count as landed.
+
+        A legacy node's fallback baseline can hold ``ansible.builtin.apt`` while
+        both the approved snapshot and the file hold ``apt``, so the splice
+        queues a replacement that writes the line already there. Crediting that
+        owner would promote a finding the source still has.
+        """
+        graph = ContentGraph()
+        qualified = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        noop = _make_node(
+            "site.yml/plays[0]/tasks[1]",
+            yaml_lines=_TASK_YAML_FQCN,
+            line_start=5,
+            line_end=8,
+        )
+        graph.add_node(qualified)
+        graph.add_node(noop)
+        qualified.record_state(0, "scanned")
+        qualified.update_from_yaml(_TASK_YAML_FQCN)
+        qualified.record_state(1, "transformed")
+
+        # The second node's scan baseline holds a qualified module while the
+        # approved snapshot holds ``apt`` — which is what the file has too, so
+        # its queued replacement rewrites the same bytes.
+        noop.record_state(0, "scanned")
+        noop.update_from_yaml(_TASK_YAML_APT)
+        noop.record_state(1, "transformed")
+        graph.approve_pending()
+
+        original = _TASK_YAML_APT + _TASK_YAML_APT
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": original})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        assert outcome.patches[0].patched == _TASK_YAML_FQCN + _TASK_YAML_APT
+        assert outcome.contributors == {"/workspace/site.yml": {qualified.node_id}}
+
+    def test_contributors_include_every_owner_of_the_same_applied_edit(self) -> None:
+        """Two distinct owners proposing one changing edit are both credited.
+
+        A task and its module node cover the same source span and both propose
+        the same qualification. The merged splice applies the replacement once,
+        but both owners proposed a fix that is in the output, so neither may be
+        dropped — and the patch must not carry the replacement twice.
+        """
+        graph = ContentGraph()
+        task = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        module = _make_node("site.yml/plays[0]/tasks[0]/module", line_start=1, line_end=4)
+        graph.add_node(task)
+        graph.add_node(module)
+        assert task.node_id != module.node_id
+        for node in (task, module):
+            node.record_state(0, "scanned")
+            node.update_from_yaml(_TASK_YAML_FQCN)
+            node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": _TASK_YAML_APT})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        assert outcome.patches[0].patched == _TASK_YAML_FQCN
+        assert outcome.contributors == {"/workspace/site.yml": {task.node_id, module.node_id}}
+
+    def test_contributors_exclude_a_node_without_a_source_edit(self) -> None:
+        """A snapshot change that produces no line edit lands for no node.
+
+        Dropping a trailing newline changes the snapshot hash but not a single
+        source line, so the node must not be reported as a contributor of the
+        patch a sibling produced in the same file.
+        """
+        graph = ContentGraph()
+        edited = _make_node("site.yml/plays[0]/tasks[0]", line_start=1, line_end=4)
+        newline_only = _make_node(
+            "site.yml/plays[0]/tasks[1]",
+            module="copy",
+            yaml_lines=_TASK_YAML_COPY,
+            line_start=5,
+            line_end=8,
+        )
+        graph.add_node(edited)
+        graph.add_node(newline_only)
+        edited.record_state(0, "scanned")
+        edited.update_from_yaml(_TASK_YAML_FQCN)
+        edited.record_state(1, "transformed")
+        newline_only.record_state(0, "scanned")
+        newline_only.yaml_lines = _TASK_YAML_COPY.rstrip("\n")
+        newline_only.record_state(1, "transformed")
+        graph.approve_pending()
+
+        original = _TASK_YAML_APT + _TASK_YAML_COPY
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": original})
+
+        assert [patch.path for patch in outcome.patches] == ["/workspace/site.yml"]
+        assert outcome.contributors == {"/workspace/site.yml": {edited.node_id}}
+
+    def test_contributors_omit_a_file_that_normalises_to_its_original(self) -> None:
+        """An edit set that leaves the bytes unchanged lands for no node."""
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.record_state(1, "transformed")  # no content change at all
+        graph.approve_pending()
+
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": _TASK_YAML_APT})
+
+        assert outcome.patches == []
+        assert outcome.contributors == {}
+
+    def test_baseline_less_strict_raises(self) -> None:
+        """strict=True raises for legacy nodes without a recorded baseline."""
+        import pytest
+
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        with pytest.raises(ValueError, match="/workspace/site.yml"):
+            splice_modifications(graph, {"/workspace/site.yml": self._ORIGINAL}, strict=True)
+
+    def test_baseline_less_non_strict_splices_fallback(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Non-strict keeps the best-effort progression[0] fallback for legacy nodes.
+
+        Args:
+            caplog: Pytest log capture fixture.
+
+        Returns:
+            None.
+        """
+        import logging
+
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        with caplog.at_level(logging.WARNING, logger="apme.remediation.graph"):
+            patches = splice_modifications(graph, {"/workspace/site.yml": self._ORIGINAL})
+        assert len(patches) == 1
+        assert "ansible.builtin.apt" in patches[0].patched
+        # The fallback diff may be truncated: the file must ALSO be
+        # flagged so ApprovalAck never reports unpatched_count == 0.
+        assert patches.unpatched == ["/workspace/site.yml"]
+        assert patches.unpatched_count == 1
+        assert any(
+            "approximate baseline" in r.getMessage() and "/workspace/site.yml" in r.getMessage()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
+    def test_baseline_less_outcome_and_tuple_flag_approximate(self) -> None:
+        """Outcome and tuple wrappers flag the approximate-baseline file too."""
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": self._ORIGINAL})
+        assert len(outcome.patches) == 1
+        assert outcome.unpatched == ["/workspace/site.yml"]
+        assert outcome.unpatched_count == 1
+
+        outcome2 = splice_with_outcome(graph, {"/workspace/site.yml": self._ORIGINAL})
+        assert len(outcome2.patches) == 1
+        assert outcome2.unpatched == ["/workspace/site.yml"]
+
+    def test_baseline_less_strict_outcome_raises(self) -> None:
+        """strict=True raises through the outcome core as well."""
+        import pytest
+
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        with pytest.raises(ValueError, match="/workspace/site.yml"):
+            splice_with_outcome(graph, {"/workspace/site.yml": self._ORIGINAL}, strict=True)
+        with pytest.raises(ValueError, match="/workspace/site.yml"):
+            splice_modifications(graph, {"/workspace/site.yml": self._ORIGINAL}, strict=True)
 
     def test_unchanged_content_no_patch(self) -> None:
         """If progression exists but content hash is unchanged, no patch."""
@@ -1583,6 +1934,24 @@ class TestSpliceModifications:
 
         patches = splice_modifications(graph, {"/workspace/site.yml": self._ORIGINAL})
         assert patches == []
+
+    def test_unchanged_legacy_content_does_not_fail_strict_splice(self) -> None:
+        """Strict mode rejects changed legacy nodes, not unchanged content."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.record_state(1, "scanned")
+        node._baseline = None  # simulate a legacy payload without baseline tracking
+
+        outcome = splice_with_outcome(
+            graph,
+            {"/workspace/site.yml": self._ORIGINAL},
+            strict=True,
+        )
+
+        assert outcome.patches == []
+        assert outcome.unpatched == []
 
     def test_unapproved_entries_not_spliced(self) -> None:
         """Unapproved progression entries are ignored by splice."""
@@ -1736,6 +2105,142 @@ class TestAnsibleNodeLookup:
 
         assert build_node_lookup(b"") == {}
         assert build_node_lookup(b"{}") == {}
+
+
+# ---------------------------------------------------------------------------
+# Graph engine per-node cancellation (N23)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphEngineCancellation:
+    """CancelledError propagates; RuntimeError is captured, others complete."""
+
+    async def test_cancelled_error_propagates(self) -> None:
+        """A per-node CancelledError aborts the AI phase instead of being swallowed."""
+        import asyncio
+
+        from apme_engine.remediation.ai_context import AINodeContext
+        from apme_engine.remediation.ai_provider import AINodeFix
+
+        graph = ContentGraph()
+        graph.add_node(_make_node("site.yml/plays[0]/tasks[0]", module="ansible.builtin.command"))
+        graph.add_node(
+            _make_node(
+                "site.yml/plays[0]/tasks[1]",
+                module="ansible.builtin.command",
+                yaml_lines="- name: Other\n  ansible.builtin.command: whoami\n",
+                line_start=7,
+                line_end=10,
+            )
+        )
+
+        class _CancellingProvider:
+            async def propose_node_fix(self, context: AINodeContext, **_kw: object) -> AINodeFix | None:
+                if context.node_id.endswith("tasks[0]"):
+                    raise asyncio.CancelledError
+                return AINodeFix(
+                    fixed_snippet="- name: Other\n  ansible.builtin.command: whoami\n  changed_when: false\n",
+                    rule_ids=["L013"],
+                )
+
+        engine = GraphRemediationEngine(
+            TransformRegistry(),
+            graph,
+            [],
+            ai_provider=_CancellingProvider(),
+        )
+        tier2: list[ViolationDict] = [
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[0]",
+                "file": "/workspace/site.yml",
+                "line": 3,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[1]",
+                "file": "/workspace/site.yml",
+                "line": 7,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+        ]
+        with pytest.raises(asyncio.CancelledError):
+            await engine._apply_ai_transforms(graph, tier2, 1, {})
+
+    async def test_runtime_error_captured_others_complete(self) -> None:
+        """A per-node RuntimeError is captured; sibling nodes still get fixes."""
+        from apme_engine.remediation.ai_context import AINodeContext
+        from apme_engine.remediation.ai_provider import AINodeFix
+
+        graph = ContentGraph()
+        graph.add_node(_make_node("site.yml/plays[0]/tasks[0]", module="ansible.builtin.command"))
+        good_yaml = "- name: Other\n  ansible.builtin.command: whoami\n  changed_when: false\n"
+        graph.add_node(
+            _make_node(
+                "site.yml/plays[0]/tasks[1]",
+                module="ansible.builtin.command",
+                yaml_lines="- name: Other\n  ansible.builtin.command: whoami\n",
+                line_start=7,
+                line_end=10,
+            )
+        )
+
+        class _FlakyProvider:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def propose_node_fix(self, context: AINodeContext, **_kw: object) -> AINodeFix | None:
+                self.calls.append(context.node_id)
+                if context.node_id.endswith("tasks[0]"):
+                    raise RuntimeError("provider boom")
+                return AINodeFix(fixed_snippet=good_yaml, rule_ids=["L013"])
+
+        provider = _FlakyProvider()
+        engine = GraphRemediationEngine(
+            TransformRegistry(),
+            graph,
+            [],
+            ai_provider=provider,
+        )
+        tier2: list[ViolationDict] = [
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[0]",
+                "file": "/workspace/site.yml",
+                "line": 3,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[1]",
+                "file": "/workspace/site.yml",
+                "line": 7,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+        ]
+        proposals = await engine._apply_ai_transforms(graph, tier2, 1, {})
+        # Failing node yields no proposal; healthy sibling completes.
+        assert sorted(provider.calls) == [
+            "site.yml/plays[0]/tasks[0]",
+            "site.yml/plays[0]/tasks[1]",
+        ]
+        assert [p.node_id for p in proposals] == ["site.yml/plays[0]/tasks[1]"]
+        node = graph.get_node("site.yml/plays[0]/tasks[1]")
+        assert node is not None
+        assert "changed_when" in (node.yaml_lines or "")
 
 
 def test_splicing_retains_early_fixes_after_progression_rollover() -> None:

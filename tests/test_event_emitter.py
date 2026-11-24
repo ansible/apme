@@ -193,6 +193,7 @@ async def _clear_sinks() -> AsyncIterator[None]:
     """
     event_emitter._sinks.clear()
     event_emitter._rule_catalog_registered = False
+    event_emitter._pending_catalog = None
     if event_emitter._rule_retry_task is not None:
         event_emitter._rule_retry_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -201,6 +202,7 @@ async def _clear_sinks() -> AsyncIterator[None]:
     yield
     event_emitter._sinks.clear()
     event_emitter._rule_catalog_registered = False
+    event_emitter._pending_catalog = None
     if event_emitter._rule_retry_task is not None:
         event_emitter._rule_retry_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -301,11 +303,30 @@ async def test_grpc_sink_uses_fast_fail_when_unavailable() -> None:
 
 
 async def test_grpc_sink_skips_when_stub_is_none() -> None:
-    """Events are silently dropped when stub has not been initialized."""
+    """Events are dropped, counted, and logged when stub is not initialized."""
     sink = GrpcReportingSink("localhost:99999")
-    sink._stub = None
+    mock_stub = AsyncMock()
+    mock_stub.ReportFixCompleted.return_value = ReportAck()
+    sink._stub = mock_stub
+    sink._available = True
 
+    # Sanity: with a stub, delivery happens.
     await sink.on_fix_completed(_fix_event())
+    mock_stub.ReportFixCompleted.assert_awaited_once()
+    assert sink._dropped_events == 0
+
+    # Detach the stub: delivery must be skipped without calling the old stub.
+    mock_stub.reset_mock()
+    sink._stub = None
+    dropped_before = sink._dropped_events
+    with patch("apme_engine.daemon.sinks.grpc_reporting.logger") as mock_logger:
+        await sink.on_fix_completed(_fix_event())
+
+    mock_stub.ReportFixCompleted.assert_not_called()
+    assert sink._dropped_events == dropped_before + 1
+    mock_logger.warning.assert_called_once()
+    warning_args = mock_logger.warning.call_args[0][0]
+    assert "Dropping FixCompletedEvent" in warning_args
 
 
 async def test_grpc_sink_sends_when_available() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest.mock
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Protocol, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -13,7 +14,23 @@ from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
 from galaxy_proxy.proxy import server as proxy_server
+from galaxy_proxy.proxy.cache import ProxyCache
 from galaxy_proxy.proxy.server import _safe_server_label, create_app
+
+
+class _SyncCall(Protocol):
+    """Callable receiving arbitrary positional and keyword arguments."""
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        """Call the wrapped function.
+
+        Args:
+            *args: Positional arguments forwarded to the function.
+            **kwargs: Keyword arguments forwarded to the function.
+
+        Returns:
+            Whatever the wrapped function returns.
+        """
 
 
 @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
@@ -147,6 +164,36 @@ async def test_python_wheel_response_closes_upstream_before_first_read() -> None
         await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
     assert not upstream.is_stream_consumed
     assert upstream.is_closed
+
+
+def test_response_middleware_redacts_release_scope_id(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unsuccessful release still must not log the live scope capability.
+
+    Args:
+        tmp_path: Temporary directory for the proxy cache.
+        caplog: Captured log records.
+    """
+    application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
+    scope_id = "B" * 32
+
+    with (
+        caplog.at_level("INFO", logger="galaxy_proxy.proxy.server"),
+        TestClient(application) as client,
+    ):
+        response = client.delete(f"/admin/session-scopes/{scope_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {"released": False}
+    # Only the proxy's own records matter: the ``httpx`` client logs the request
+    # URL at INFO when a run enables that logger, and that line is outside the
+    # app's middleware (and outside its control), so asserting on the whole
+    # capture buffer made this test depend on the ambient log level.
+    proxy_log = "\n".join(record.getMessage() for record in caplog.records if record.name.startswith("galaxy_proxy."))
+    assert scope_id not in proxy_log
+    assert "/admin/session-scopes/[redacted]" in proxy_log
 
 
 @pytest.fixture()  # type: ignore[untyped-decorator]
@@ -315,6 +362,32 @@ class TestServeWheel:
         assert resp.status_code == 200
         assert resp.content == whl_data
         assert resp.headers["content-disposition"] == f"attachment; filename={whl_name}"
+
+    def test_generation_fence_rejects_another_source(self, tmp_path: Path) -> None:
+        """A wheel prepared for an older source generation is not served.
+
+        The shared cache names wheels by filename, and a configuration change
+        clears it, so the same ``<ns>-<name>-<version>`` filename can later be
+        resolved from the new source. A caller that prepared the wheel fences the
+        fetch with the generation it prepared under and must fail instead of
+        installing the other source's artifact.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cache_dir = tmp_path / "cache"
+        wheels_dir = cache_dir / "wheels"
+        wheels_dir.mkdir(parents=True)
+        whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+        application = create_app(cache_dir=cache_dir)
+        (wheels_dir / whl_name).write_bytes(b"PK\x03\x04fake-wheel-contents")
+        with TestClient(application) as client:
+            current = client.get(f"/wheels/{whl_name}?generation=0")
+            stale = client.get(f"/wheels/{whl_name}?generation=99")
+            unfenced = client.get(f"/wheels/{whl_name}")
+        assert current.status_code == 200
+        assert stale.status_code == 409
+        assert unfenced.status_code == 200
 
     def test_invalid_filename_rejected(self, app: TestClient) -> None:
         """Invalid wheel filenames are rejected.
@@ -595,6 +668,35 @@ class TestConvertTarballs:
         data = resp.json()
         assert len(data["converted"]) == 1
         assert data["failed"] == []
+
+    def test_convert_rejects_result_after_config_change(self, tmp_path: Path) -> None:
+        """A configuration update during conversion invalidates the response.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        application = create_app(cache_dir=tmp_path / "cache")
+
+        tarball_dir = tmp_path / "tarballs"
+        tarball_dir.mkdir()
+        (tarball_dir / "ansible-posix-1.5.4.tar.gz").write_bytes(b"fake-tarball")
+
+        whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+        original_put = ProxyCache.put_wheel
+
+        def put_and_rebind(cache: ProxyCache, filename: str, data: bytes) -> Path:
+            written = original_put(cache, filename, data)
+            application.state.galaxy_config_generation += 1
+            return written
+
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(whl_name, b"PK\x03\x04fake-wheel")),
+            patch.object(ProxyCache, "put_wheel", put_and_rebind),
+        ):
+            resp = client.post("/convert-tarballs", params={"tarball_dir": str(tarball_dir)})
+
+        assert resp.status_code == 409
 
     def test_convert_nonexistent_dir(self, tmp_path: Path) -> None:
         """Nonexistent directory returns 400.
@@ -997,3 +1099,107 @@ class TestCollectionDependencyFailsScans:
         err = CollectionDependencyError(["ansible.netcommon"])
         assert "1 required collection(s)" in str(err)
         assert "ansible.netcommon" in str(err)
+
+
+class TestWheelHashOrdering:
+    """The project page must not advertise a digest from a replaced wheel."""
+
+    def test_digest_snapshot_survives_a_concurrent_wheel_replacement(self, tmp_path: Path) -> None:
+        """A wheel swapped mid-hash must be re-hashed, not served from cache.
+
+        ``_wheel_hash_hex`` records ``(digest, identity)`` per wheel. A
+        concurrent ``/convert-tarballs`` can replace the file and store the
+        new pairing while a project-page request is suspended. Comparing the
+        post-await stat against the *live* map then matches the new identity
+        and returns the retained digest of the old wheel, which pip rejects
+        because the advertised ``#sha256=`` is not the file it downloads. The
+        identity must be snapshotted together with the digest.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        import asyncio
+        import hashlib
+
+        cache_dir = tmp_path / "cache"
+        wheels_dir = cache_dir / "wheels"
+        wheels_dir.mkdir(parents=True)
+        whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+        wheel_path = wheels_dir / whl_name
+        old_bytes = b"PK\x03\x04old-wheel"
+        new_bytes = b"PK\x03\x04replacement-wheel-with-different-length"
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+        wheel_path.write_bytes(old_bytes)
+
+        with TestClient(application) as client:
+            stale_digest = hashlib.sha256(old_bytes).hexdigest()
+            # Prime the digest cache: the project page hashes the wheel and
+            # remembers (digest, identity) for it.
+            primed = client.get("/simple/ansible-collection-ansible-posix/")
+            assert primed.status_code == 200
+            assert f"sha256={stale_digest}" in primed.text
+            assert application.state.wheel_hashes[whl_name] == stale_digest
+
+            real_to_thread = asyncio.to_thread
+            swapped = False
+
+            def _swap_then_thread(func: object, *args: object, **kwargs: object) -> object:
+                nonlocal swapped
+                if not swapped and getattr(func, "__name__", "") == "wheel_path":
+                    swapped = True
+                    # Simulate /convert-tarballs landing between this call's
+                    # cache read and its post-await stat comparison.
+                    wheel_path.write_bytes(new_bytes)
+                    st = wheel_path.stat()
+                    application.state.wheel_hashes[whl_name] = hashlib.sha256(new_bytes).hexdigest()
+                    application.state.wheel_hash_stats[whl_name] = (
+                        st.st_dev,
+                        st.st_ino,
+                        st.st_mtime_ns,
+                        st.st_size,
+                    )
+                return real_to_thread(cast("_SyncCall", func), *args, **kwargs)
+
+            with patch.object(asyncio, "to_thread", _swap_then_thread):
+                resp = client.get("/simple/ansible-collection-ansible-posix/")
+
+        assert swapped
+        assert resp.status_code == 200
+        assert f"sha256={hashlib.sha256(new_bytes).hexdigest()}" in resp.text
+        assert f"sha256={stale_digest}" not in resp.text
+
+    def test_project_page_rejects_a_stale_generation(self, tmp_path: Path) -> None:
+        """A config change during the page build must 409, not advertise old hashes.
+
+        The page awaits the wheel listing and then once per wheel for its hash.
+        A configuration update can bind a new generation in that window, so the
+        links would advertise hashes resolved against the previous source.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cache_dir = tmp_path / "cache"
+        wheels_dir = cache_dir / "wheels"
+        wheels_dir.mkdir(parents=True)
+        whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+        wheel_path = wheels_dir / whl_name
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+        wheel_path.write_bytes(b"PK\x03\x04fake-wheel")
+        real_list = proxy_server._list_cached_wheels
+        bumped = False
+
+        def _bump_generation(cache: ProxyCache, namespace: str, name: str) -> list[str]:
+            nonlocal bumped
+            if not bumped:
+                bumped = True
+                application.state.galaxy_config_generation += 1
+            return real_list(cache, namespace, name)
+
+        with (
+            TestClient(application) as client,
+            patch.object(proxy_server, "_list_cached_wheels", _bump_generation),
+        ):
+            resp = client.get("/simple/ansible-collection-ansible-posix/")
+
+        assert bumped
+        assert resp.status_code == 409

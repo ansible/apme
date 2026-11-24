@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -1111,3 +1111,32 @@ def test_create_project_branch_validator_rejects_none_result() -> None:
             repo_url="https://github.com/org/repo.git",
             branch="main",
         )
+
+
+async def test_blank_project_token_falls_back_to_global(client: AsyncClient) -> None:
+    """A whitespace-only project token does not mask the global token.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    await _seed_project()
+    async with get_session() as db:
+        proj = await db.get(Project, "proj-1")
+        assert proj is not None
+        proj.scm_token = "   "
+        proj.last_scanned_commit = "a" * 40
+        await db.commit()
+
+    captured: list[str | None] = []
+
+    async def _fake_fetch(_url: str, _branch: str, scm_token: str | None = None, **_kw: object) -> str:
+        captured.append(scm_token)
+        return "b" * 40
+
+    with (
+        patch("apme_gateway.scan.driver.fetch_remote_head", new=_fake_fetch),
+        patch("apme_gateway.config.load_config", return_value=MagicMock(scm_token="global-token")),
+    ):
+        resp = await client.get("/api/v1/projects/proj-1")
+    assert resp.status_code == 200
+    assert captured == ["global-token"], captured

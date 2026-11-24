@@ -36,6 +36,7 @@ from apme.v1.engine_pb2 import (
     SessionResult,
     Tier1Summary,
 )
+from apme_engine.daemon import session as daemon_session_module
 from apme_engine.daemon.session import (
     _DEFAULT_TTL,
     _MAX_LIFETIME,
@@ -45,6 +46,8 @@ from apme_engine.daemon.session import (
     SessionStore,
 )
 from apme_engine.engine.models import ViolationDict
+from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+from apme_engine.remediation.graph_engine import SpliceOutcome
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -203,6 +206,26 @@ async def test_pipeline_explicit_native_skip_does_not_call_native(
 # ---------------------------------------------------------------------------
 # Part 1: SessionState unit tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+def _disable_create_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable session creation rate-limit for legacy burst tests (N17).
+
+    Session creation throttling is opt-in; tests create bursts without
+    regard for the ambient APME_SESSION_CREATE_INTERVAL_S (a developer
+    shell may export it, and ``_effective_create_interval`` consults the
+    environment before these module constants — including the deprecated
+    APME_SESSION_MIN_CREATE_INTERVAL_S alias). Rate-limit behavior is
+    covered in test_session_admission_idle.py.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(daemon_session_module, "_CREATE_INTERVAL_S", 0.0)
+    monkeypatch.setattr(daemon_session_module, "_MIN_CREATE_INTERVAL_S", 0.0)
+    monkeypatch.setenv("APME_SESSION_CREATE_INTERVAL_S", "0")
+    monkeypatch.setenv("APME_SESSION_MIN_CREATE_INTERVAL_S", "0")
 
 
 class TestSessionState:
@@ -727,6 +750,28 @@ class TestWritePatchesToTempDir:
 
 class TestSessionApprovalGates:
     """Unit tests for multi-gate approval sequencing and proposal isolation."""
+
+    def test_gate1_approval_preserves_unpatched_without_pre_gate2_snapshot(self) -> None:
+        """The Gate 1 return value retains splice metadata without restoration.
+
+        Gate 1 has no pre-Gate-2 snapshot, so this exercises the path that
+        previously returned the plain patch list and lost ``unpatched``.
+        """
+        from apme_engine.daemon.engine_server import _apply_graph_approvals
+        from apme_engine.graph.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import SpliceResult
+
+        graph = ContentGraph()
+        session = SessionState(session_id="gate1-unpatched")
+        outcome = SpliceOutcome(patches=[], unpatched=["legacy.yml"])
+
+        with patch("apme_engine.remediation.graph_engine.splice_with_outcome", return_value=outcome):
+            _applied, _rejected, _approved, patches, _landed, _passes = _apply_graph_approvals(
+                session, graph, {}, set()
+            )
+
+        assert isinstance(patches, SpliceResult)
+        assert patches.unpatched == ["legacy.yml"]
 
     @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
     def _mock_native_for_upstream_transaction_tests(
@@ -1305,8 +1350,11 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", DummyEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[SourcePatch(path=relative, original=original, patched=flow, diff="")],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[SourcePatch(path=relative, original=original, patched=flow, diff="")],
+                    unpatched=[],
+                ),
             ),
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch.object(server.EngineServicer, "_session_build_result", result_event),
@@ -1391,7 +1439,7 @@ class TestSessionApprovalGates:
 
         def record_mutations(
             g: ContentGraph, decisions: tuple[tuple[str, str], ...], choices: frozenset[str]
-        ) -> tuple[set[str], set[str]]:
+        ) -> tuple[set[str], set[str], dict[str, int]]:
             mutation_threads.append(threading.get_ident())
             return apply_fn(g, decisions, choices)
 
@@ -1589,7 +1637,7 @@ class TestSessionApprovalGates:
             ),
         }
 
-        applied, rejected, _approved, patches = _apply_graph_approvals(
+        applied, rejected, _approved, patches, _landed, _passes = _apply_graph_approvals(
             session,
             graph,
             session.graph_originals,
@@ -1891,8 +1939,18 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: hi\n")],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[
+                        SplicedFilePatch(
+                            path="play.yml",
+                            original="",
+                            patched="- name: test\n  debug:\n    msg: hi\n",
+                            diff="",
+                        )
+                    ],
+                    unpatched=[],
+                ),
                 side_effect=SpliceConflictError("conflicting gate edits") if splice_conflict else None,
             ),
             patch(
@@ -2005,10 +2063,18 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[
-                    SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: GUTTED\n"),
-                ],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[
+                        SplicedFilePatch(
+                            path="play.yml",
+                            original="",
+                            patched="- name: test\n  debug:\n    msg: GUTTED\n",
+                            diff="",
+                        )
+                    ],
+                    unpatched=[],
+                ),
             ),
         ):
             events = [e async for e in servicer._session_run_ai_gate(session)]
@@ -2286,10 +2352,10 @@ class TestSessionApprovalGates:
 
 
 class TestGalaxyProxyConfigActivation:
-    """Tests for temporary Galaxy proxy config activation in daemon mode."""
+    """Tests for session-scoped Galaxy proxy config (no global mutation)."""
 
     async def test_sets_and_restores_ansible_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Session-scoped Galaxy config is exposed only for the wrapped operation.
+        """Session Galaxy config travels in the yielded env snapshot, not os.environ.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -2302,15 +2368,16 @@ class TestGalaxyProxyConfigActivation:
         servicer = EngineServicer()
         monkeypatch.setenv("ANSIBLE_CONFIG", "/tmp/original.cfg")
 
-        async with servicer._activate_galaxy_proxy_config(cfg):
-            assert os.environ["ANSIBLE_CONFIG"] == str(cfg)
+        async with servicer._activate_galaxy_proxy_config(cfg) as env:
+            assert env["ANSIBLE_CONFIG"] == str(cfg)
+            assert os.environ["ANSIBLE_CONFIG"] == "/tmp/original.cfg"
 
         assert os.environ["ANSIBLE_CONFIG"] == "/tmp/original.cfg"
 
     async def test_clears_ansible_config_when_unset_beforehand(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Temporary activation removes ``ANSIBLE_CONFIG`` afterward if it was unset.
+        """Snapshot carries the session config; global env stays unset.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -2323,8 +2390,9 @@ class TestGalaxyProxyConfigActivation:
         servicer = EngineServicer()
         monkeypatch.delenv("ANSIBLE_CONFIG", raising=False)
 
-        async with servicer._activate_galaxy_proxy_config(cfg):
-            assert os.environ["ANSIBLE_CONFIG"] == str(cfg)
+        async with servicer._activate_galaxy_proxy_config(cfg) as env:
+            assert env["ANSIBLE_CONFIG"] == str(cfg)
+            assert "ANSIBLE_CONFIG" not in os.environ
 
         assert "ANSIBLE_CONFIG" not in os.environ
 
@@ -2479,8 +2547,8 @@ class TestSessionGraphRemediate:
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=mock_patches,
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=mock_patches, unpatched=[]),
                 side_effect=SpliceConflictError("conflicting graph edits") if splice_conflict else None,
             ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -2554,6 +2622,1651 @@ class TestSessionGraphRemediate:
 
         assert play_file.read_text() == patched_content
 
+    def test_approval_reconciliation_keeps_unspliced_findings_unresolved(self, tmp_path: Path) -> None:
+        """Approved edits that produce no patch are not reconciled as fixed.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer, _reconcile_after_approval
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        node_id = "play.yml/plays[0]/tasks[0]"
+        baseline = "- name: Install\n  apt:\n    name: nginx\n"
+        patched = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n"
+
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+            file_path="play.yml",
+            yaml_lines=baseline,
+        )
+        node.line_start = 1
+        node.line_end = 3
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        graph.register_violations([{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}], 0)
+        node.yaml_lines = patched
+        node.record_state(1, "transformed", source="deterministic")
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=1, status="proposed")
+
+        session = SessionState(session_id="approval-unspliced", temp_dir=tmp_path)
+        session.content_graph = graph
+        # No original content for play.yml: splice_with_outcome cannot produce a
+        # patch, so the approved edit never reaches the source bytes.
+        session.graph_originals = {}
+        session.proposals = {
+            "t1-0000": Proposal(
+                id="t1-0000",
+                file="play.yml",
+                path=node_id,
+                rule_id="L001",
+                tier=1,
+                source="deterministic",
+            )
+        }
+
+        servicer = EngineServicer()
+        applied, patches = servicer._session_apply_approved(session, {"t1-0000"}, finalize=False)
+
+        assert applied == 1
+        assert list(patches or []) == []
+        assert session.report is not None
+        # ApprovalAck surfaces ``session.report.fixed`` — a skipped edit must
+        # not be counted there.
+        assert session.report.fixed == 0
+        assert session.report.fixed_violations == []
+        assert [v.rule_id for v in session.report.remaining_violations] == ["L001"]
+
+        # The ledger must agree: a finding whose bytes never changed cannot
+        # stay ``fixed``, or the Gate 2 report rebuild would re-report it as
+        # resolved from the ledger alone.
+        assert graph.query_violations(status="fixed") == []
+        assert [v["rule_id"] for v in graph.query_violations(status="open")] == ["L001"]
+
+        # A later rebuild with no new approvals keeps it unresolved.
+        _reconcile_after_approval(session, graph, set())
+        assert session.report.fixed == 0
+        assert [v.rule_id for v in session.report.remaining_violations] == ["L001"]
+
+        # A rescan of the patched in-memory text no longer sees L001. Without
+        # the ``patch_pending`` marker ``resolve_violations`` would certify it
+        # as fixed again even though the source still has the finding.
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=2) == 0
+        assert [v["rule_id"] for v in graph.query_violations(status="open")] == ["L001"]
+
+        # The marker survives serialization, so a rebuild from the wire form
+        # cannot lose the guard either.
+        restored = ContentGraph.from_dict(graph.to_dict()) if hasattr(ContentGraph, "from_dict") else None
+        if restored is not None:
+            assert restored.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=3) == 0
+
+        # A rescan still cannot resolve it while the marker stands...
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=4) == 0
+
+        # ...but once this node's own patch lands, the marker has done its job:
+        # the fix is in the bytes, so the ledger is promoted rather than left
+        # ``open`` (which would keep listing a repaired finding as remaining).
+        assert graph.resolve_patch_pending([node_id]) == 1
+        assert [v["rule_id"] for v in graph.query_violations(status="fixed")] == ["L001"]
+        assert graph.query_violations(status="open") == []
+        _reconcile_after_approval(session, graph, set())
+        assert session.report.fixed == 1
+        assert [v.rule_id for v in session.report.remaining_violations] == []
+
+    def test_approval_reconciliation_certifies_fixed_findings_per_node(self, tmp_path: Path) -> None:
+        """A sibling's patch in the same file must not keep a skipped node fixed.
+
+        Both nodes' proposals are approved and the file produced a patch, but
+        only one node's edit is in it (``SpliceOutcome.contributors`` names
+        that node alone). The skipped sibling's finding must follow the
+        skipped-edit path — ``edit_skipped``, manual review, kept out of the
+        fixed list, reopened in the ledger — while the landed node stays
+        fixed even though it shares the patched file.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import _reconcile_after_approval
+        from apme_engine.engine.models import RemediationClass
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        landed_id = "play.yml/plays[0]/tasks[0]"
+        skipped_id = "play.yml/plays[0]/tasks[1]"
+        graph = ContentGraph()
+        for node_id in (landed_id, skipped_id):
+            graph.add_node(
+                ContentNode(
+                    identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                    file_path="play.yml",
+                    yaml_lines="- name: Install\n  ansible.builtin.apt:\n    name: nginx\n",
+                )
+            )
+        graph.register_violations(
+            [
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": landed_id},
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": skipped_id},
+            ],
+            0,
+        )
+        for node_id in (landed_id, skipped_id):
+            assert (
+                graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=1, status="proposed")
+                == 1
+            )
+
+        session = SessionState(session_id="approval-sibling-skip", temp_dir=tmp_path)
+        session.content_graph = graph
+        # The file is NOT in ``unspliced_files`` — it produced a patch from
+        # the landed node's edit — so only node-level certification can
+        # catch the skipped sibling.
+        _reconcile_after_approval(
+            session,
+            graph,
+            set(),
+            approved_node_ids={landed_id, skipped_id},
+            unspliced_files=set(),
+            landed_nodes={landed_id},
+        )
+
+        assert session.report is not None
+        assert session.report.fixed == 1
+        assert [v.path for v in session.report.fixed_violations] == [landed_id]
+        assert [v.path for v in session.report.remaining_violations] == [skipped_id]
+        # The skipped finding is manual review and flagged as a skipped edit.
+        assert [v["path"] for v in session.remaining_manual] == [skipped_id]
+        assert session.remaining_manual[0]["edit_skipped"] is True
+        assert session.remaining_manual[0]["remediation_class"] == RemediationClass.MANUAL_REVIEW
+        # The ledger agrees: only the landed node's finding stays fixed, so a
+        # later report rebuild cannot resurrect the skipped one as resolved.
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [landed_id]
+        assert [v["path"] for v in graph.query_violations(status="open")] == [skipped_id]
+        # A rescan of the patched in-memory text cannot re-certify the
+        # skipped sibling while its patch_pending marker stands...
+        assert graph.resolve_violations(skipped_id, set(), fixed_by="deterministic", pass_number=2) == 0
+        # ...but once the sibling's own edit lands, the marker promotes it.
+        assert graph.resolve_patch_pending([skipped_id]) == 1
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [landed_id, skipped_id]
+
+    def test_unspliced_split_certifies_landed_nodes_not_patched_files(self) -> None:
+        """``_unspliced_fixed_violations`` keys off nodes, not patched files.
+
+        The file produced a patch (a sibling's edit is in it), so a file-level
+        check would keep every finding in it fixed. The split must key off
+        ``SpliceOutcome.contributors``: only the node whose own edit landed
+        stays fixed; the skipped sibling is reported unresolved with
+        ``edit_skipped`` and manual review.
+        """
+        from apme_engine.daemon.engine_server import _unspliced_fixed_violations
+        from apme_engine.engine.models import RemediationClass
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        landed_id = "play.yml/plays[0]/tasks[0]"
+        skipped_id = "play.yml/plays[0]/tasks[1]"
+        graph = ContentGraph()
+        for node_id in (landed_id, skipped_id):
+            graph.add_node(
+                ContentNode(
+                    identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                    file_path="play.yml",
+                    yaml_lines="- name: Install\n  ansible.builtin.apt:\n    name: nginx\n",
+                )
+            )
+
+        fixed: list[ViolationDict] = [
+            {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": landed_id},
+            {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": skipped_id},
+        ]
+        landed, unspliced = _unspliced_fixed_violations(fixed, graph, {landed_id})
+
+        assert [v["path"] for v in landed] == [landed_id]
+        assert [v["path"] for v in unspliced] == [skipped_id]
+        assert unspliced[0]["edit_skipped"] is True
+        assert unspliced[0]["remediation_class"] == RemediationClass.MANUAL_REVIEW
+        assert "edit_skipped" not in landed[0]
+        # A finding with no owning node cannot be tested against
+        # contributors and stays fixed (file-level findings are reconciled
+        # elsewhere).
+        landed, unspliced = _unspliced_fixed_violations(
+            [ViolationDict(rule_id="F001", message="file-level", file="play.yml")], graph, set()
+        )
+        assert [v["rule_id"] for v in landed] == ["F001"]
+        assert unspliced == []
+
+    def test_ancestor_edit_certifies_a_fixed_finding(self) -> None:
+        """A landed ancestor's edit certifies a child finding; a stranger's does not.
+
+        YAML inheritance flows down the ``CONTAINS`` chain: a play-level
+        ``module_defaults`` edit can supply the value a child task's finding
+        needed, and the rescan cleared that finding on the converged text.
+        Node-level certification must accept the ancestor's landed edit —
+        only the child's own node or its ancestors certify, never a node
+        from an unrelated play in the same file.
+        """
+        from apme_engine.daemon.engine_server import _unspliced_fixed_violations
+        from apme_engine.engine.models import RemediationClass
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            options={"module_defaults": {"ansible.builtin.file": {"mode": "0644"}}},
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            module="ansible.builtin.file",
+            module_options={"path": "/tmp/child"},
+            yaml_lines="- name: Child\n  ansible.builtin.file:\n    path: /tmp/child\n",
+        )
+        other_play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[1]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+        )
+        stranger = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[1]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            yaml_lines="- name: Stranger\n  ansible.builtin.file:\n    path: /tmp/stranger\n",
+        )
+        for node in (play, child, other_play, stranger):
+            graph.add_node(node)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        graph.add_edge(other_play.node_id, stranger.node_id, EdgeType.CONTAINS)
+
+        fixed: list[ViolationDict] = [
+            {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": child.node_id},
+            {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": stranger.node_id},
+        ]
+        # Only the play's edit landed: it supplies the child's fix through
+        # module_defaults inheritance, but nothing for the other play's task.
+        landed, unspliced = _unspliced_fixed_violations(fixed, graph, {play.node_id})
+
+        assert [v["path"] for v in landed] == [child.node_id]
+        assert [v["path"] for v in unspliced] == [stranger.node_id]
+        assert unspliced[0]["edit_skipped"] is True
+        assert unspliced[0]["remediation_class"] == RemediationClass.MANUAL_REVIEW
+        assert "edit_skipped" not in landed[0]
+
+    def test_approval_reconciliation_accepts_ancestor_supplied_fixes(self, tmp_path: Path) -> None:
+        """Reconciliation keeps a child finding fixed when its play's edit landed.
+
+        The play-level edit (``module_defaults``) landed while the child's
+        own node did not contribute a patch: the rescan cleared the child's
+        finding on the converged text, so inheritance — not a sibling —
+        supplied the fix and the finding stays fixed. A task under another
+        play in the same file keeps the skipped-edit path.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import _reconcile_after_approval
+        from apme_engine.engine.models import RemediationClass
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            options={"module_defaults": {"ansible.builtin.file": {"mode": "0644"}}},
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            yaml_lines="- name: Child\n  ansible.builtin.file:\n    path: /tmp/child\n",
+        )
+        other_play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[1]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+        )
+        stranger = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[1]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            yaml_lines="- name: Stranger\n  ansible.builtin.file:\n    path: /tmp/stranger\n",
+        )
+        for node in (play, child, other_play, stranger):
+            graph.add_node(node)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        graph.add_edge(other_play.node_id, stranger.node_id, EdgeType.CONTAINS)
+        graph.register_violations(
+            [
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": child.node_id},
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": stranger.node_id},
+            ],
+            0,
+        )
+        for node in (child, stranger):
+            assert graph.resolve_violations(node.node_id, set(), fixed_by="ai", pass_number=1, status="proposed") == 1
+
+        session = SessionState(session_id="approval-ancestor", temp_dir=tmp_path)
+        session.content_graph = graph
+        # The file produced a patch (the play's edit is in it) and both
+        # tasks' proposals were approved; only node-level certification
+        # with the ancestor rule can keep the child fixed.
+        _reconcile_after_approval(
+            session,
+            graph,
+            set(),
+            approved_node_ids={child.node_id, stranger.node_id},
+            unspliced_files=set(),
+            landed_nodes={play.node_id},
+        )
+
+        assert session.report is not None
+        assert session.report.fixed == 1
+        assert [v.path for v in session.report.fixed_violations] == [child.node_id]
+        assert [v.path for v in session.report.remaining_violations] == [stranger.node_id]
+        assert [v["path"] for v in session.remaining_manual] == [stranger.node_id]
+        assert session.remaining_manual[0]["edit_skipped"] is True
+        assert session.remaining_manual[0]["remediation_class"] == RemediationClass.MANUAL_REVIEW
+        # The ledger agrees: the inherited fix stays fixed, the stranger's
+        # finding is reopened (patch_pending) for a later landing edit.
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [child.node_id]
+        assert [v["path"] for v in graph.query_violations(status="open")] == [stranger.node_id]
+        assert graph.resolve_violations(stranger.node_id, set(), fixed_by="ai", pass_number=2) == 0
+        assert graph.resolve_patch_pending([stranger.node_id]) == 1
+
+    def test_unrelated_ancestor_edit_does_not_certify_own_edit_finding(self) -> None:
+        """A landed ancestor edit cannot certify a finding fixed by an unlanded own edit.
+
+        A task whose own approved edit never reached the output keeps its
+        finding open even when its parent play has an unrelated landed edit
+        (a name change): the fix may live in the task's own unlanded bytes,
+        so ancestor certification must not apply. The ancestor rule only
+        certifies nodes that carry no edit of their own.
+        """
+        from apme_engine.daemon.engine_server import _unspliced_fixed_violations
+        from apme_engine.engine.models import RemediationClass
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            yaml_lines="- name: Child\n  ansible.builtin.file:\n    path: /tmp/child\n",
+        )
+        graph.add_node(play)
+        graph.add_node(child)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        child.record_state(0, "scanned")
+        # The child carries its own (AI) edit; it never landed.
+        child.update_from_yaml('- name: Child\n  ansible.builtin.file:\n    path: /tmp/child\n    mode: "0644"\n')
+        child.record_state(1, "transformed", source="ai")
+
+        fixed: list[ViolationDict] = [
+            {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": child.node_id},
+        ]
+        # Only the play's unrelated edit landed (a rename, say).
+        landed, unspliced = _unspliced_fixed_violations(fixed, graph, {play.node_id})
+
+        assert landed == []
+        assert [v["path"] for v in unspliced] == [child.node_id]
+        assert unspliced[0]["edit_skipped"] is True
+        assert unspliced[0]["remediation_class"] == RemediationClass.MANUAL_REVIEW
+
+    def test_approved_edit_restoring_baseline_writes_scan_baseline(self, tmp_path: Path) -> None:
+        """An approved edit that restores the scan baseline commits the baseline bytes.
+
+        A Gate 2 candidate can restore a file to its scan baseline after
+        Gate 1 changed it. The cumulative splice produces no patch delta for
+        that file (its content equals the original), but the scan baseline
+        IS the committed result: the preview must write it instead of
+        keeping the pre-Gate-2 bytes, or the approval would count the edit
+        as applied while Gate 1's bytes stayed on disk.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        original = "- name: Task\n  debug: {}\n"
+        gate1_bytes = "- name: Task\n  ansible.builtin.debug: {}\n"
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path="tasks.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="tasks.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines=original,
+        )
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        # Gate 2 candidate: restore the node to its scan-baseline text.
+        node.update_from_yaml(original)
+        node.record_state(1, "transformed", source="ai")
+
+        session = SessionState(session_id="baseline-restore", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"tasks.yml": original}
+        # Gate 1 had already written its bytes; the pre-Gate-2 snapshot is
+        # what a broken preview would keep on disk.
+        session.working_files = {"tasks.yml": gate1_bytes.encode()}
+        session.pre_gate2_files = {"tasks.yml": gate1_bytes.encode()}
+        session.proposals = {"ai-0000": Proposal(id="ai-0000", path=node.node_id, file="tasks.yml", tier=2)}
+
+        preview = server._preview_graph_approvals(session, graph, session.graph_originals, {"ai-0000"})
+
+        key = server._working_files_key(tmp_path, "tasks.yml")
+        assert preview.files[key] == original.encode()
+        assert preview.files[key] != gate1_bytes.encode()
+        # The restoring edit lands no patch, but its change still reached
+        # the output (as the scan baseline), so it certifies its findings.
+        assert preview.patches == []
+        assert preview.landed_nodes == frozenset({node.node_id})
+
+    async def test_baseline_restoration_keeps_findings_fixed(self, tmp_path: Path) -> None:
+        """A finding fixed by restoring the scan baseline stays fixed.
+
+        Gate 1's rewrite can introduce a violation that was absent from the
+        scan baseline. When a Gate 2 candidate restores the node's
+        baseline text and the user approves it, the committed file carries
+        the clean baseline — the bytes the converged rescan cleared the
+        finding on. The cumulative splice emits no patch for the restored
+        file, so its node is absent from splice contributors, yet
+        reconciliation must certify it: the fix is in the committed bytes
+        and the finding must not be reopened as ``edit_skipped``.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        # Scan baseline: FQCN-clean.
+        original = "- name: Task\n  ansible.builtin.debug: {}\n"
+        # Gate 1 rewrote the module to its short name, introducing an
+        # FQCN violation that the scan baseline does not carry.
+        gate1_bytes = "- name: Task\n  debug: {}\n"
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path="tasks.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="tasks.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines=original,
+        )
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml("- name: Task\n  debug: {}")
+        node.record_state(1, "transformed", source="deterministic")
+        # Gate 2 candidate: restore the node to its scan-baseline text.
+        node.update_from_yaml(original)
+        node.record_state(2, "ai_transformed", source="ai")
+        # The Gate 1 rescan found the introduced FQCN violation; the
+        # converged pass-2 rescan (with the pending restoration) cleared it.
+        graph.register_violations(
+            [{"rule_id": "L001", "message": "Use FQCN", "file": "tasks.yml", "path": node.node_id}],
+            1,
+        )
+        assert graph.resolve_violations(node.node_id, set(), fixed_by="ai", pass_number=2, status="proposed") == 1
+
+        session = SessionState(session_id="baseline-restore-fixed", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"tasks.yml": original}
+        session.working_files = {"tasks.yml": gate1_bytes.encode()}
+        session.pre_gate2_files = {"tasks.yml": gate1_bytes.encode()}
+        session.proposals = {"ai-0000": Proposal(id="ai-0000", path=node.node_id, file="tasks.yml", tier=2)}
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, {"ai-0000"})]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 1
+        assert ack.unpatched_files == []
+        assert session.report is not None
+        assert session.report.fixed == 1
+        assert [v.path for v in session.report.fixed_violations] == [node.node_id]
+        assert not session.remaining_manual
+        # The ledger keeps the restored finding fixed as well.
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [node.node_id]
+
+    async def test_sibling_patch_keeps_baseline_restoration_certified(self, tmp_path: Path) -> None:
+        """A restoring node stays certified when a sibling still patches the file.
+
+        Restoration evidence is per node, not per file: when one task's
+        approved edit restores its scan baseline while a sibling's edit
+        keeps the file in the patched set, the restoring task contributes
+        no splice delta — the patch is built from the scan text, so its
+        baseline bytes are exactly what lands in the committed file — and
+        its finding must stay certified instead of being reopened as
+        ``edit_skipped``.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        # Scan baseline: task A is FQCN-clean; task B violates FQCN.
+        original = "- name: A\n  ansible.builtin.debug: {}\n- name: B\n  command: ls\n"
+        # Gate 1 rewrote task A's module to its short name, introducing an
+        # FQCN violation the scan baseline does not carry.
+        gate1_bytes = "- name: A\n  debug: {}\n- name: B\n  command: ls\n"
+        graph = ContentGraph()
+        task_a = ContentNode(
+            identity=NodeIdentity(path="tasks.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="tasks.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: A\n  ansible.builtin.debug: {}",
+        )
+        task_b = ContentNode(
+            identity=NodeIdentity(path="tasks.yml/tasks[1]", node_type=NodeType.TASK),
+            file_path="tasks.yml",
+            line_start=3,
+            line_end=4,
+            yaml_lines="- name: B\n  command: ls",
+        )
+        graph.add_node(task_a)
+        graph.add_node(task_b)
+        for node in (task_a, task_b):
+            node.record_state(0, "scanned")
+        # Gate 1's rewrite of task A introduced its FQCN violation.
+        task_a.update_from_yaml("- name: A\n  debug: {}")
+        task_a.record_state(1, "transformed", source="deterministic")
+        # Gate 2: task A's candidate restores its scan-baseline text (the
+        # clean module name), task B's keeps a real edit (an FQCN fix).
+        task_a.update_from_yaml("- name: A\n  ansible.builtin.debug: {}")
+        task_a.record_state(2, "ai_transformed", source="ai")
+        task_b.update_from_yaml("- name: B\n  ansible.builtin.command: ls")
+        task_b.record_state(2, "ai_transformed", source="ai")
+        # The Gate 1 rescan found the introduced violation on task A; the
+        # converged pass-2 rescan (with the pending restoration) cleared it.
+        graph.register_violations(
+            [{"rule_id": "L001", "message": "Use FQCN", "file": "tasks.yml", "path": task_a.node_id}],
+            1,
+        )
+        assert graph.resolve_violations(task_a.node_id, set(), fixed_by="ai", pass_number=2, status="proposed") == 1
+
+        session = SessionState(session_id="sibling-patch-restore", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"tasks.yml": original}
+        session.working_files = {"tasks.yml": gate1_bytes.encode()}
+        session.pre_gate2_files = {"tasks.yml": gate1_bytes.encode()}
+        session.proposals = {
+            "ai-0000": Proposal(id="ai-0000", path=task_a.node_id, file="tasks.yml", tier=2),
+            "ai-0001": Proposal(id="ai-0001", path=task_b.node_id, file="tasks.yml", tier=2),
+        }
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, {"ai-0000", "ai-0001"})]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 2
+        assert ack.unpatched_files == []
+        # The committed file carries the scan baseline for task A — the
+        # bytes its cleared finding needs — alongside task B's edit.
+        committed = session.working_files[server._working_files_key(tmp_path, "tasks.yml")]
+        assert b"ansible.builtin.debug: {}" in committed
+        assert b"ansible.builtin.command: ls" in committed
+        # The restoring node certifies alongside the splice contributor.
+        assert session.report is not None
+        assert session.report.fixed == 1
+        assert [v.path for v in session.report.fixed_violations] == [task_a.node_id]
+        assert not session.remaining_manual
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [task_a.node_id]
+
+    async def test_declined_ancestor_edit_blocks_own_edit_certification(self, tmp_path: Path) -> None:
+        """A landed own edit does not certify a finding cleared with a declined ancestor edit.
+
+        The rescan that cleared the finding ran on the converged text,
+        which included the ancestor's pending edit. When that edit is
+        declined, the committed bytes lack it, so the clearance may not
+        hold even though the node's own edit landed: the finding stays
+        unresolved instead of being reported fixed.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        original = "- name: Play\n  tasks:\n    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n"
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: Play\n  tasks:",
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=3,
+            line_end=5,
+            yaml_lines="    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n",
+        )
+        graph.add_node(play)
+        graph.add_node(child)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        for node in (play, child):
+            node.record_state(0, "scanned")
+        # The play's pending edit (a rename supplying context the clearance
+        # may rely on) will be declined; the child's edit (a mode addition)
+        # will land.
+        play.update_from_yaml("- name: Play Renamed\n  tasks:")
+        play.record_state(1, "transformed", source="ai")
+        child.update_from_yaml(
+            '    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n        mode: "0644"\n'
+        )
+        child.record_state(1, "transformed", source="ai")
+        graph.register_violations(
+            [{"rule_id": "L001", "message": "Needs mode", "file": "play.yml", "path": child.node_id}],
+            0,
+        )
+        assert graph.resolve_violations(child.node_id, set(), fixed_by="ai", pass_number=1, status="proposed") == 1
+
+        session = SessionState(session_id="declined-ancestor", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"play.yml": original}
+        session.working_files = {"play.yml": original.encode()}
+        session.pre_gate2_files = {"play.yml": original.encode()}
+        session.proposals = {
+            "ai-0000": Proposal(id="ai-0000", path=child.node_id, file="play.yml", tier=2),
+            "ai-0001": Proposal(id="ai-0001", path=play.node_id, file="play.yml", tier=2),
+        }
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, {"ai-0000"})]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 1
+        # The child's edit landed and the declined play edit did not.
+        committed = session.working_files[server._working_files_key(tmp_path, "play.yml")]
+        assert b'mode: "0644"' in committed
+        assert b"Play Renamed" not in committed
+        # The finding is NOT certified: its clearance was determined on the
+        # converged text that included the declined play edit, so it stays
+        # unresolved instead of being reported fixed.
+        assert session.report is not None
+        assert session.report.fixed == 0
+        assert [v.path for v in session.report.remaining_violations] == [child.node_id]
+        assert session.remaining_manual[0]["edit_skipped"] is True
+        assert graph.query_violations(status="fixed") == []
+
+    async def test_declined_gate2_edit_keeps_gate1_fix_certified(self, tmp_path: Path) -> None:
+        """Declining an unrelated Gate 2 edit keeps a Gate 1 fix certified.
+
+        A finding fixed by a Gate 1 (deterministic) transform was cleared
+        on text that predates the Gate 2 proposals, so its certification
+        cannot depend on them: when Gate 2 offers only a rename of the
+        play and the user declines it, the task's committed fix stands
+        and the finding stays fixed instead of being reopened as
+        ``edit_skipped``.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        original = "- name: Play\n  tasks:\n    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n"
+        gate1_bytes = (
+            "- name: Play\n"
+            "  tasks:\n"
+            "    - name: Child\n"
+            "      ansible.builtin.file:\n"
+            "        path: /tmp/child\n"
+            '        mode: "0644"\n'
+        )
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: Play\n  tasks:",
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=3,
+            line_end=5,
+            yaml_lines="    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n",
+        )
+        graph.add_node(play)
+        graph.add_node(child)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        for node in (play, child):
+            node.record_state(0, "scanned")
+        # Gate 1 fixed the task (required mode added) and is approved.
+        child.update_from_yaml(
+            '    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n        mode: "0644"\n'
+        )
+        child.record_state(1, "transformed", source="deterministic")
+        assert graph.approve_pending(child.node_id, source_filter="deterministic") == 2
+        # Gate 2 offers only a rename of the play (no child proposal).
+        play.update_from_yaml("- name: Play Renamed\n  tasks:")
+        play.record_state(2, "ai_transformed", source="ai")
+        graph.register_violations(
+            [{"rule_id": "L001", "message": "Needs mode", "file": "play.yml", "path": child.node_id}],
+            0,
+        )
+        assert (
+            graph.resolve_violations(child.node_id, set(), fixed_by="deterministic", pass_number=1, status="fixed") == 1
+        )
+
+        session = SessionState(session_id="gate1-fix-survives", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"play.yml": original}
+        session.working_files = {"play.yml": gate1_bytes.encode()}
+        session.pre_gate2_files = {"play.yml": gate1_bytes.encode()}
+        session.proposals = {
+            "ai-0000": Proposal(id="ai-0000", path=play.node_id, file="play.yml", tier=2),
+        }
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, set())]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 0
+        # The Gate 1 fix is in the committed bytes; the declined rename is not.
+        committed = session.working_files[server._working_files_key(tmp_path, "play.yml")]
+        assert b'mode: "0644"' in committed
+        assert b"Play Renamed" not in committed
+        # The Gate 1 finding keeps its certification: its clearance
+        # predates the declined Gate 2 edit, so it stays reported fixed.
+        assert session.report is not None
+        assert session.report.fixed == 1
+        assert not session.remaining_manual
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [child.node_id]
+
+    async def test_declined_same_pass_ancestor_edit_reopens_gate1_clearance(self, tmp_path: Path) -> None:
+        """A Gate 1 clearance supplied by a same-pass declined edit reopens.
+
+        Interactive Gate 1 applies every deterministic transform of a
+        pass and runs one rescan on the converged text, so a task finding
+        can clear only because a play edit from that pass supplied the
+        inherited context. When the user accepts the task and declines
+        the play, the task edit lands but the play's does not: the
+        clearance was determined on text carrying the declined edit, so
+        the finding stays unresolved instead of being certified through
+        the task's own landed edit.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        original = "- name: Play\n  tasks:\n    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n"
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: Play\n  tasks:",
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=3,
+            line_end=5,
+            yaml_lines="    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n",
+        )
+        graph.add_node(play)
+        graph.add_node(child)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        for node in (play, child):
+            node.record_state(0, "scanned")
+        # Interactive Gate 1, one pass: both transforms pend until the
+        # approval gate. The play's edit supplies inherited context the
+        # clearance may rely on; the child's edit adds a mode.
+        play.update_from_yaml("- name: Play Renamed\n  tasks:")
+        play.record_state(1, "transformed", source="deterministic")
+        child.update_from_yaml(
+            '    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n        mode: "0644"\n'
+        )
+        child.record_state(1, "transformed", source="deterministic")
+        graph.register_violations(
+            [{"rule_id": "L001", "message": "Needs inherited context", "file": "play.yml", "path": child.node_id}],
+            0,
+        )
+        # The single Gate 1 rescan ran on the converged pass-1 text (both
+        # pending edits) and cleared the finding.
+        assert (
+            graph.resolve_violations(
+                child.node_id, set(), fixed_by="deterministic", pass_number=1, status="pending_review"
+            )
+            == 1
+        )
+
+        session = SessionState(session_id="same-pass-decline", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"play.yml": original}
+        session.working_files = {"play.yml": original.encode()}
+        session.pre_gate2_files = {"play.yml": original.encode()}
+        session.proposals = {
+            "t1-0000": Proposal(id="t1-0000", path=child.node_id, file="play.yml", tier=1),
+            "t1-0001": Proposal(id="t1-0001", path=play.node_id, file="play.yml", tier=1),
+        }
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, {"t1-0000"})]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 1
+        # The child's edit landed; the declined play edit did not.
+        committed = session.working_files[server._working_files_key(tmp_path, "play.yml")]
+        assert b'mode: "0644"' in committed
+        assert b"Play Renamed" not in committed
+        # The clearance was determined on converged text carrying the
+        # declined play edit, so it is not certified by the child's own
+        # landed edit: the finding stays unresolved.
+        assert session.report is not None
+        assert session.report.fixed == 0
+        assert [v.path for v in session.report.remaining_violations] == [child.node_id]
+        assert session.remaining_manual[0]["edit_skipped"] is True
+        assert graph.query_violations(status="fixed") == []
+
+    async def test_declined_gate2_edit_keeps_gate1_clearance_across_real_runs(self, tmp_path: Path) -> None:
+        """A Gate 2 decline cannot reopen a Gate 1 fix from an earlier run.
+
+        Gate 1 clears a task finding at its pass 1 and the user approves
+        the task's edit. Gate 2 then offers a play rename in its own first
+        pass; pass numbers used to restart at 1 on every remediate call,
+        so declining the rename compared equal to the Gate 1 clearance
+        (both at pass 1) and wrongly reopened the task finding even
+        though its fix is in the committed bytes. The second run's passes
+        must stay past the first run's on the graph's shared timeline,
+        which this test drives through two real remediate calls.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from ruamel.yaml.comments import CommentedMap
+
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+        from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
+        from apme_engine.remediation.graph_engine import GraphRemediationEngine
+        from apme_engine.remediation.registry import TransformRegistry
+
+        original = "- name: Play\n  tasks:\n    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n"
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: Play\n  tasks:",
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=3,
+            line_end=5,
+            module="ansible.builtin.file",
+            yaml_lines="    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n",
+            indent_depth=4,
+        )
+        graph.add_node(play)
+        graph.add_node(child)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+
+        class _ModeRule(GraphRule):
+            """Flags file tasks that do not pin a mode."""
+
+            def __init__(self) -> None:
+                super().__init__(rule_id="X001", description="file task needs mode", enabled=True, precedence=1)
+
+            def match(self, graph: ContentGraph, node_id: str) -> bool:
+                node = graph.get_node(node_id)
+                if node is None or node.node_type != NodeType.TASK or node.module != "ansible.builtin.file":
+                    return False
+                return "mode:" not in (node.yaml_lines or "")
+
+            def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
+                node = graph.get_node(node_id)
+                if node is None:
+                    return None
+                return GraphRuleResult(
+                    rule=self.get_metadata(),
+                    verdict=True,
+                    node_id=node_id,
+                    file=(node.file_path, node.line_start or 0),
+                    detail={"message": "file task needs mode"},
+                )
+
+        def _add_mode(task: CommentedMap, violation: ViolationDict) -> bool:
+            module = task.get("ansible.builtin.file")
+            if isinstance(module, dict) and "mode" not in module:
+                module["mode"] = "0644"
+                return True
+            return False
+
+        mode_registry = TransformRegistry()
+        mode_registry.register("X001", node=_add_mode)
+
+        # Gate 1: interactive run — the task's fix pends for approval and
+        # its clearance is stamped inside the first run's passes.
+        engine1 = GraphRemediationEngine(mode_registry, graph, [_ModeRule()], max_passes=5)
+        report1 = await engine1.remediate(interactive=True)
+        assert report1.tier1_proposals and report1.tier1_proposals[0].node_id == child.node_id
+        assert [v["fixed_in_pass"] for v in graph.query_violations(status="pending_review")] == [1]
+
+        session = SessionState(session_id="shared-timeline", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"play.yml": original}
+        session.working_files = {"play.yml": original.encode()}
+        session.pre_gate2_files = {"play.yml": original.encode()}
+        session.proposals = {
+            "t1-0000": Proposal(id="t1-0000", path=child.node_id, file="play.yml", tier=1),
+        }
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, {"t1-0000"})]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 1
+        committed1 = session.working_files[server._working_files_key(tmp_path, "play.yml")]
+        assert b'mode: "0644"' in committed1
+        assert session.report is not None
+        assert session.report.fixed == 1
+
+        class _RenameRule(GraphRule):
+            """Flags the play's original name."""
+
+            def __init__(self) -> None:
+                super().__init__(rule_id="X002", description="play name is generic", enabled=True, precedence=1)
+
+            def match(self, graph: ContentGraph, node_id: str) -> bool:
+                node = graph.get_node(node_id)
+                return (
+                    node is not None and node.node_type == NodeType.PLAY and "- name: Play\n" in (node.yaml_lines or "")
+                )
+
+            def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
+                node = graph.get_node(node_id)
+                if node is None:
+                    return None
+                return GraphRuleResult(
+                    rule=self.get_metadata(),
+                    verdict=True,
+                    node_id=node_id,
+                    file=(node.file_path, node.line_start or 0),
+                    detail={"message": "play name is generic"},
+                )
+
+        def _rename_play(play_map: CommentedMap, violation: ViolationDict) -> bool:
+            if play_map.get("name") == "Play":
+                play_map["name"] = "Play Renamed"
+                return True
+            return False
+
+        rename_registry = TransformRegistry()
+        rename_registry.register("X002", node=_rename_play)
+
+        # Gate 2: a second run on the same graph offers the play rename.
+        # Its edit must be stamped past every pass the first run recorded.
+        engine2 = GraphRemediationEngine(rename_registry, graph, [_RenameRule()], max_passes=5)
+        report2 = await engine2.remediate(interactive=True)
+        assert report2.tier1_proposals and report2.tier1_proposals[0].node_id == play.node_id
+        assert [s.pass_number for s in play.progression if s.source == "deterministic"] == [6]
+
+        session.pre_gate2_files = {"play.yml": committed1}
+        session.proposals = {
+            "t1-0001": Proposal(id="t1-0001", path=play.node_id, file="play.yml", tier=1),
+        }
+        session.report = FixReport()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, set())]
+
+        ack2 = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack2.applied_count == 0
+        committed2 = session.working_files[server._working_files_key(tmp_path, "play.yml")]
+        assert b'mode: "0644"' in committed2
+        assert b"Play Renamed" not in committed2
+        # The Gate 1 clearance predates the declined Gate 2 edit on the
+        # shared timeline, so the task's fix keeps its certification.
+        assert session.report is not None
+        assert session.report.fixed == 1
+        assert [v.path for v in session.report.fixed_violations] == [child.node_id]
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [child.node_id]
+        # The declined rename finding itself stays listed for review.
+        assert [v["path"] for v in session.remaining_manual] == [play.node_id]
+
+    async def test_child_pending_review_follows_ancestor_approval(self, tmp_path: Path) -> None:
+        """A child finding cleared by an ancestor edit follows its approval.
+
+        A play-level Gate 1 edit can clear a child task's finding through
+        YAML inheritance; the clearance lands in ``pending_review`` on the
+        child, which carries no Tier 1 proposal of its own, so the
+        per-node decision sweep never settles it. Approving the play must
+        settle the child's row as fixed — its fix is in the committed
+        bytes — instead of leaving it in a status no report query reads,
+        which dropped the finding from both the fixed and the remaining
+        list.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        original = "- name: Play\n  tasks:\n    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n"
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: Play\n  tasks:",
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=3,
+            line_end=5,
+            yaml_lines="    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n",
+        )
+        graph.add_node(play)
+        graph.add_node(child)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        for node in (play, child):
+            node.record_state(0, "scanned")
+        # The play's pending Gate 1 edit (a rename supplying context the
+        # clearance may rely on) will be approved; the child has no edit
+        # of its own — its text still matches its scan baseline.
+        play.update_from_yaml("- name: Play Renamed\n  tasks:")
+        play.record_state(1, "transformed", source="deterministic")
+        graph.register_violations(
+            [{"rule_id": "X001", "message": "Needs inherited context", "file": "play.yml", "path": child.node_id}],
+            0,
+        )
+        # The Gate 1 rescan cleared the child's finding on the converged
+        # text, so it pends on the child instead of following the play's
+        # proposal.
+        assert (
+            graph.resolve_violations(
+                child.node_id, set(), fixed_by="deterministic", pass_number=1, status="pending_review"
+            )
+            == 1
+        )
+
+        session = SessionState(session_id="inherited-approval", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"play.yml": original}
+        session.working_files = {"play.yml": original.encode()}
+        session.pre_gate2_files = {"play.yml": original.encode()}
+        session.proposals = {
+            "t1-0000": Proposal(id="t1-0000", path=play.node_id, file="play.yml", tier=1),
+        }
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, {"t1-0000"})]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 1
+        committed = session.working_files[server._working_files_key(tmp_path, "play.yml")]
+        assert b"Play Renamed" in committed
+        # The child's finding follows the ancestor's approval: its fix is
+        # in the committed bytes, so it is reported fixed instead of
+        # vanishing from both report lists.
+        assert session.report is not None
+        assert session.report.fixed == 1
+        assert [v.path for v in session.report.fixed_violations] == [child.node_id]
+        assert not session.remaining_manual
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [child.node_id]
+        assert graph.query_violations(status="pending_review") == []
+
+    async def test_child_pending_review_stays_listed_when_ancestor_declined(self, tmp_path: Path) -> None:
+        """A child finding cleared by a declined ancestor edit stays listed.
+
+        The same inherited clearance, but the play's edit is declined:
+        the bytes that cleared the child's finding never reach the
+        output, so the finding must stay listed as unresolved instead of
+        being dropped from both the fixed and the remaining list.
+
+        Args:
+            tmp_path: Session working directory.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        original = "- name: Play\n  tasks:\n    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n"
+        graph = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: Play\n  tasks:",
+        )
+        child = ContentNode(
+            identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=3,
+            line_end=5,
+            yaml_lines="    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n",
+        )
+        graph.add_node(play)
+        graph.add_node(child)
+        graph.add_edge(play.node_id, child.node_id, EdgeType.CONTAINS)
+        for node in (play, child):
+            node.record_state(0, "scanned")
+        play.update_from_yaml("- name: Play Renamed\n  tasks:")
+        play.record_state(1, "transformed", source="deterministic")
+        graph.register_violations(
+            [{"rule_id": "X001", "message": "Needs inherited context", "file": "play.yml", "path": child.node_id}],
+            0,
+        )
+        assert (
+            graph.resolve_violations(
+                child.node_id, set(), fixed_by="deterministic", pass_number=1, status="pending_review"
+            )
+            == 1
+        )
+
+        session = SessionState(session_id="inherited-decline", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        session.graph_originals = {"play.yml": original}
+        session.working_files = {"play.yml": original.encode()}
+        session.pre_gate2_files = {"play.yml": original.encode()}
+        session.proposals = {
+            "t1-0000": Proposal(id="t1-0000", path=play.node_id, file="play.yml", tier=1),
+        }
+        session.report = FixReport()
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        with (
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            events = [event async for event in servicer._session_handle_approval(session, set())]
+
+        ack = next(e for e in events if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 0
+        committed = session.working_files[server._working_files_key(tmp_path, "play.yml")]
+        assert b"Play Renamed" not in committed
+        # The child's clearance never landed: the finding stays unresolved
+        # and visible instead of disappearing from both report lists.
+        assert session.report is not None
+        assert session.report.fixed == 0
+        assert [v.path for v in session.report.remaining_violations] == [child.node_id]
+        assert [v["path"] for v in session.remaining_manual] == [child.node_id]
+        assert graph.query_violations(status="fixed") == []
+        assert graph.query_violations(status="pending_review") == []
+
+    async def test_exact_token_replay_preserves_unpatched_files(self, tmp_path: Path) -> None:
+        """An exact-token retry replays the committed ack's unpatched files.
+
+        The first approval leaves a file unpatched and says so on its ack.
+        A client retrying with the same token and choices gets the replay
+        acknowledgement: the unpatched files must ride along instead of
+        silently flattening to zero.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        original = "- name: Task\n  debug: {}\n"
+        graph = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path="tasks.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="tasks.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines=original,
+        )
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(original.replace("debug:", "ansible.builtin.debug:"))
+        node.record_state(1, "transformed", source="deterministic")
+
+        session = SessionState(session_id="replay-unpatched", status=1)
+        session.temp_dir = tmp_path
+        session.content_graph = graph
+        # No baseline for tasks.yml: the splice skips the file and the ack
+        # must surface it as unpatched — on the first approval and on the
+        # exact-token replay alike.
+        session.graph_originals = {}
+        session.working_files = {}
+        session.proposals = {"t1-0000": Proposal(id="t1-0000", path=node.node_id, file="tasks.yml", tier=1)}
+        session.awaiting_tier1_gate = True
+        session.fix_options = FixOptions(enable_ai=False)
+
+        servicer = server.EngineServicer()
+        token = server._current_approval_token(session)
+        with patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock):
+            first = [event async for event in servicer._session_handle_approval(session, {"t1-0000"})]
+        ack = next(e for e in first if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 1
+        assert ack.unpatched_files == ["tasks.yml"]
+        assert session.approval_decisions[token] == frozenset({"t1-0000"})
+
+        replay = [
+            event async for event in servicer._session_handle_approval(session, {"t1-0000"}, approval_token=token)
+        ]
+        assert not any(event.HasField("error") for event in replay)
+        replay_ack = next(e for e in replay if e.HasField("approval_ack")).approval_ack
+        assert replay_ack.applied_count == 0
+        assert replay_ack.unpatched_count == 1
+        assert replay_ack.unpatched_files == ["tasks.yml"]
+        assert session.approval_unpatched[token] == ["tasks.yml"]
+
+    async def test_exact_token_retry_finishes_pending_reassessment(self) -> None:
+        """An exact-token retry finishes a failed post-commit reassessment.
+
+        The approval commits its bytes and graph changes, then the
+        post-commit file reassessment fails (the Native validator is
+        unreachable, say). The decision is recorded when the approval
+        commits, so retrying with the same token and choices replays the
+        acknowledgement after finishing the pending reassessment —
+        instead of re-applying the approval — and the client still
+        receives the committed decision's skipped files.
+        """
+        from apme_engine.daemon import engine_server as server
+        from apme_engine.daemon.engine_server import EngineServicer, RequiredValidatorDependencyError
+        from apme_engine.remediation.graph_engine import SpliceResult
+
+        session = SessionState(session_id="retry-reassessment", status=1)
+        session.report = FixReport()
+        session.file_violations = [{"rule_id": "L115", "path": "$.old", "message": "old"}]
+        session.proposals = {"p1": Proposal(id="p1", file="tasks.yml")}
+        session.fix_options = FixOptions(enable_ai=False)
+        token = server._current_approval_token(session)
+
+        attempts = 0
+
+        async def reassess(current: SessionState) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RequiredValidatorDependencyError("unavailable")
+            current.file_violations = [{"rule_id": "L116", "path": "$.new", "message": "new"}]
+
+        refresh = AsyncMock(side_effect=reassess)
+        servicer = EngineServicer()
+        with (
+            patch.object(
+                EngineServicer,
+                "_session_apply_approved",
+                return_value=(1, SpliceResult(patches=[], unpatched=["legacy.yml"])),
+            ) as apply_mock,
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", refresh),
+            patch("apme_engine.daemon.engine_server.emit_fix_completed", new_callable=AsyncMock),
+        ):
+            with pytest.raises(RequiredValidatorDependencyError):
+                _ = [event async for event in servicer._session_handle_approval(session, {"p1"}, approval_token=token)]
+            # The decision was recorded when the approval committed, before
+            # the reassessment failed.
+            assert session.approval_decisions[token] == frozenset({"p1"})
+            assert session.approval_unpatched[token] == ["legacy.yml"]
+            assert session.pending_file_reassessment == "complete"
+
+            retry = [event async for event in servicer._session_handle_approval(session, {"p1"}, approval_token=token)]
+
+        assert not any(event.HasField("error") for event in retry)
+        ack = next(e for e in retry if e.HasField("approval_ack")).approval_ack
+        assert ack.applied_count == 0
+        assert ack.status == 3
+        assert ack.unpatched_files == ["legacy.yml"]
+        # The pending reassessment finished before the acknowledgement.
+        assert refresh.await_count == 2
+        assert not session.pending_file_reassessment
+        assert session.status == 3
+        # The approval was not applied a second time.
+        assert apply_mock.call_count == 1
+        assert [v.message for v in retry[-1].result.remaining_violations] == ["new"]
+
+    def test_only_the_nodes_whose_edits_landed_are_promoted(self, tmp_path: Path) -> None:
+        """One node landing does not resolve a sibling's still-pending finding.
+
+        ``landed_nodes`` comes from ``SpliceOutcome.contributors``, so a node
+        that shares a patched file but whose own edit did not land keeps its
+        ``patch_pending`` marker and stays open.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import _reconcile_after_approval
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        landed_id = "play.yml/plays[0]/tasks[0]"
+        pending_id = "play.yml/plays[0]/tasks[1]"
+        graph = ContentGraph()
+        for node_id in (landed_id, pending_id):
+            node = ContentNode(
+                identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                file_path="play.yml",
+                yaml_lines="- name: Install\n  ansible.builtin.apt:\n    name: nginx\n",
+            )
+            node.line_start = 1
+            node.line_end = 3
+            graph.add_node(node)
+        graph.register_violations(
+            [
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": landed_id},
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": pending_id},
+            ],
+            0,
+        )
+        for node_id in (landed_id, pending_id):
+            assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=1) == 1
+        assert (
+            graph.reopen_fixed_violations(
+                [
+                    {"rule_id": "L001", "file": "play.yml", "path": landed_id},
+                    {"rule_id": "L001", "file": "play.yml", "path": pending_id},
+                ]
+            )
+            == 2
+        )
+
+        session = SessionState(session_id="approval-landed", temp_dir=tmp_path)
+        session.content_graph = graph
+        _reconcile_after_approval(session, graph, set(), landed_nodes={landed_id})
+
+        assert session.report is not None
+        assert [v.path for v in session.report.fixed_violations] == [landed_id]
+        assert [v.path for v in session.report.remaining_violations] == [pending_id]
+        assert [v["path"] for v in graph.query_violations(status="open")] == [pending_id]
+        # The sibling still cannot be re-resolved by a rescan of the patched text.
+        assert graph.resolve_violations(pending_id, set(), fixed_by="deterministic", pass_number=2) == 0
+
+    def test_a_rescan_that_still_reports_a_finding_cancels_its_promotion(self) -> None:
+        """A newer report of the finding must not be hidden by a sibling patch.
+
+        ``patch_pending`` means "the graph text no longer shows this, the file
+        still does". A rescan that reports it again disproves that, so the
+        marker is dropped and a later splice of another edit on the same node
+        cannot promote the record to ``fixed``.
+        """
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        node_id = "play.yml/plays[0]/tasks[0]"
+        graph = ContentGraph()
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                file_path="play.yml",
+                yaml_lines="- name: Install\n  apt:\n    name: nginx\n",
+            )
+        )
+        graph.register_violations([{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}], 0)
+        assert graph.resolve_violations(node_id, set(), fixed_by="deterministic", pass_number=1) == 1
+        assert (
+            graph.reopen_fixed_violations(
+                [{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}]
+            )
+            == 1
+        )
+
+        # A later pass reports L001 again: the bytes still contain it.
+        graph.register_violations([{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "path": node_id}], 2)
+
+        assert graph.resolve_patch_pending([node_id]) == 0
+        assert [v["rule_id"] for v in graph.query_violations(status="open")] == ["L001"]
+        assert graph.query_violations(status="fixed") == []
+
+    def test_decline_invalidated_clearance_waits_for_a_fresh_assessment(self, tmp_path: Path) -> None:
+        """A clearance a declined edit invalidated is not retry-promotable.
+
+        A finding whose fix reached the bytes but whose clearance may have
+        been supplied by a declined ancestor edit is reopened with the
+        ``decline_invalidated`` marker. Landing the node's own edit again in
+        a later round proves nothing about the declined bytes, so — unlike a
+        plain unspliced fix — the record must not be promoted then: only a
+        fresh assessment of current text (a rescan that no longer reports
+        the finding) can re-certify it.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import _reconcile_after_approval
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeType
+
+        play_id = "play.yml/plays[0]"
+        child_id = "play.yml/plays[0]/tasks[0]"
+        graph = ContentGraph()
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=play_id, node_type=NodeType.PLAY),
+                file_path="play.yml",
+                yaml_lines="- name: Play\n  tasks:",
+            )
+        )
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=child_id, node_type=NodeType.TASK),
+                file_path="play.yml",
+                yaml_lines="    - name: Child\n      ansible.builtin.file:\n        path: /tmp/child\n",
+            )
+        )
+        graph.add_edge(play_id, child_id, EdgeType.CONTAINS)
+        graph.register_violations(
+            [{"rule_id": "L001", "message": "Needs inherited context", "file": "play.yml", "path": child_id}],
+            0,
+        )
+        assert graph.resolve_violations(child_id, set(), fixed_by="deterministic", pass_number=1) == 1
+        # The play edit that may have supplied the clearance was declined,
+        # so reconciliation withdraws the certification.
+        assert (
+            graph.reopen_fixed_violations(
+                [{"rule_id": "L001", "file": "play.yml", "path": child_id}], invalidated_by_decline=True
+            )
+            == 1
+        )
+
+        session = SessionState(session_id="decline-invalidated", temp_dir=tmp_path)
+        session.content_graph = graph
+        # A later round lands the child's own edit again (the rejection map
+        # of that round no longer contains the Gate 1 decline): the record
+        # must not be promoted by the landing.
+        _reconcile_after_approval(session, graph, set(), landed_nodes={child_id})
+        assert session.report is not None
+        assert session.report.fixed == 0
+        assert [v.path for v in session.report.remaining_violations] == [child_id]
+        assert [v["path"] for v in graph.query_violations(status="open")] == [child_id]
+        assert graph.query_violations(status="fixed") == []
+        assert graph.resolve_patch_pending([child_id]) == 0
+
+        # The marker survives serialization, so a rebuild from the wire form
+        # cannot lose the guard either.
+        restored = ContentGraph.from_dict(graph.to_dict())
+        assert restored.resolve_patch_pending([child_id]) == 0
+
+        # A rescan of current text that no longer reports the finding is the
+        # fresh assessment the record waits for: it re-certifies the record.
+        assert graph.resolve_violations(child_id, set(), fixed_by="deterministic", pass_number=3) == 1
+        assert [v["path"] for v in graph.query_violations(status="fixed")] == [child_id]
+
+        # A rescan that reports the finding again clears the marker instead:
+        # the finding is confirmed present and a later pass may re-fix it.
+        assert (
+            graph.reopen_fixed_violations(
+                [{"rule_id": "L001", "file": "play.yml", "path": child_id}], invalidated_by_decline=True
+            )
+            == 1
+        )
+        graph.register_violations(
+            [{"rule_id": "L001", "message": "Needs inherited context", "file": "play.yml", "path": child_id}], 4
+        )
+        assert graph.resolve_patch_pending([child_id]) == 0
+        assert graph.resolve_violations(child_id, set(), fixed_by="deterministic", pass_number=5) == 1
+
+    @pytest.mark.parametrize("produces_patch", [False, True])  # type: ignore[untyped-decorator]
+    async def test_skipped_splice_does_not_report_findings_fixed(self, tmp_path: Path, produces_patch: bool) -> None:
+        """Only findings whose edits reached the bytes count as fixed.
+
+        A file listed in ``SpliceOutcome.unpatched`` that produced no patch
+        still holds its original source, so its findings stay unresolved and
+        are marked ``edit_skipped``. An approximate-baseline file (also in
+        ``unpatched``) did produce a patch, so its findings stay fixed — the
+        truncation is reported separately.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            produces_patch: Whether the skipped-class file still produced a
+                best-effort patch (approximate-baseline case).
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = EngineServicer.__new__(EngineServicer)
+
+        yaml_content = "- name: Install\n  apt:\n    name: nginx\n    state: present\n"
+        patched_content = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n    state: present\n"
+        play_file = tmp_path / "play.yml"
+        play_file.write_text(yaml_content)
+
+        node_id = "play.yml/plays[0]/tasks[0]"
+        graph = ContentGraph()
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_id, node_type=NodeType.TASK),
+                file_path=str(play_file),
+                yaml_lines=yaml_content,
+            )
+        )
+
+        session = SessionState(session_id="test-graph-skipped")
+        session.working_files = {"play.yml": yaml_content.encode()}
+        session.original_files = dict(session.working_files)
+
+        mock_report = GraphFixReport(
+            passes=1,
+            fixed=1,
+            nodes_modified=1,
+            fixed_violations=[
+                {"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "line": 2, "path": node_id}
+            ],
+        )
+        patches = (
+            [
+                EngineFilePatch(
+                    path=str(play_file),
+                    original=yaml_content,
+                    patched=patched_content,
+                    diff="",
+                    rule_ids=["L001"],
+                )
+            ]
+            if produces_patch
+            else []
+        )
+        # An approximate-baseline file that still produced a patch lists its
+        # contributing node in ``SpliceOutcome.contributors`` — that is what
+        # certifies its findings as fixed, not the patch's existence.
+        contributors = {str(play_file): {node_id}} if produces_patch else {}
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        async def async_scan_fn(_paths: list[str]) -> list[ViolationDict]:
+            return []
+
+        with (
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                # The file is in ``unpatched`` either way; only the patch
+                # decides whether its edits reached the source.
+                return_value=SpliceOutcome(patches=patches, unpatched=[str(play_file)], contributors=contributors),
+            ),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-graph-skipped",
+                registry=MagicMock(),
+                scan_fn=async_scan_fn,
+                captured_graph=[graph],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        report = next(e for e in events if e.HasField("tier1_complete")).tier1_complete.report
+        assert report is not None
+        if produces_patch:
+            assert report.fixed == 1
+            assert [v.rule_id for v in report.fixed_violations] == ["L001"]
+            assert report.remaining_violations == []
+        else:
+            assert report.fixed == 0
+            assert report.fixed_violations == []
+            assert [v.rule_id for v in report.remaining_violations] == ["L001"]
+
     async def test_no_violations_yields_clean_report(self, tmp_path: Path) -> None:
         """No violations → no patches, clean report with passes=1, fixed=0.
 
@@ -2583,7 +4296,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -2640,7 +4356,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -2709,7 +4428,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
@@ -2798,7 +4520,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -2918,7 +4643,10 @@ class TestSessionRescanBridge:
                 "apme_engine.remediation.graph_engine.GraphRemediationEngine",
                 side_effect=capture_gre_init,
             ),
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=mock_patches, unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
             patch(
                 "apme_engine.daemon.engine_server._refresh_session_file_violations", new_callable=AsyncMock
@@ -3118,7 +4846,10 @@ class TestSessionRescanBridge:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", side_effect=mock_load_graph_rules),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport())
@@ -3240,6 +4971,60 @@ async def _mock_session_process_with_proposals(
 
 class TestFixSessionRPC:
     """Integration tests for FixSession RPC on the servicer."""
+
+    async def test_venv_guard_exhaustion_maps_to_unavailable(self) -> None:
+        """Exhausted lock contention is retryable and distinct from worker failure."""
+        from apme_engine.daemon.engine_server import EngineServicer, _VenvWriteGuardTimeout
+
+        async def _guard_busy(
+            self: EngineServicer,
+            session: SessionState,
+            scan_id: str,
+        ) -> AsyncIterator[SessionEvent]:
+            del self, session, scan_id
+            raise _VenvWriteGuardTimeout("busy")
+            yield SessionEvent()  # pragma: no cover
+
+        servicer = EngineServicer()
+        stream = AsyncCommandStream()
+        ctx = FakeGrpcContext()
+        stream.send(SessionCommand(upload=ScanChunk(scan_id="guard-busy", last=True)))
+        with (
+            patch.object(EngineServicer, "_session_process", _guard_busy),
+            pytest.raises(_AbortSignal) as exc_info,
+        ):
+            async for _event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                pass
+
+        assert exc_info.value.code.name == "UNAVAILABLE"
+        assert "retry the scan" in exc_info.value.details
+
+    async def test_venv_read_guard_timeout_maps_to_unavailable(self) -> None:
+        """Read-guard contention is surfaced as a retryable gRPC status."""
+        from apme_engine.daemon.engine_server import EngineServicer, _VenvReadGuardTimeout
+
+        async def _guard_busy(
+            self: EngineServicer,
+            session: SessionState,
+            scan_id: str,
+        ) -> AsyncIterator[SessionEvent]:
+            del self, session, scan_id
+            raise _VenvReadGuardTimeout("read guard busy")
+            yield SessionEvent()  # pragma: no cover
+
+        servicer = EngineServicer()
+        stream = AsyncCommandStream()
+        ctx = FakeGrpcContext()
+        stream.send(SessionCommand(upload=ScanChunk(scan_id="read-guard-busy", last=True)))
+        with (
+            patch.object(EngineServicer, "_session_process", _guard_busy),
+            pytest.raises(_AbortSignal) as exc_info,
+        ):
+            async for _event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                pass
+
+        assert exc_info.value.code.name == "UNAVAILABLE"
+        assert "retry the scan" in exc_info.value.details
 
     async def test_session_created_on_first_upload(self) -> None:
         """First upload yields SessionCreated with ID and positive TTL."""

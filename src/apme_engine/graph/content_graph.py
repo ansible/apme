@@ -16,7 +16,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import inspect
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -269,6 +269,15 @@ class ViolationRecord:
         discovered_in_pass: Convergence pass that first detected it.
         ai_reason: Why the AI could not fix this violation (``ai_abstained`` only).
         ai_suggestion: Manual remediation guidance from the AI (``ai_abstained`` only).
+        patch_pending: The fix for this finding never reached the source bytes.
+            Kept until the edit lands so a rescan of the patched in-memory text
+            (which no longer contains the finding) cannot resolve it again.
+        decline_invalidated: The fix reached the bytes, but the clearance was
+            invalidated because a declined edit recorded at or before the
+            clearing pass may have supplied it. Landing the node's own edit
+            again must not re-certify such a clearance: only a fresh
+            assessment (a rescan of current text) can, so promotion through
+            :meth:`resolve_patch_pending` is blocked for these records.
     """
 
     key: ViolationKey
@@ -279,6 +288,8 @@ class ViolationRecord:
     discovered_in_pass: int = 0
     ai_reason: str | None = None
     ai_suggestion: str | None = None
+    patch_pending: bool = False
+    decline_invalidated: bool = False
 
 
 def _violation_key(v: ViolationDict) -> ViolationKey:
@@ -480,6 +491,16 @@ class ContentNode:
     # Progression (ADR-044 Phase 3) — temporal YAML state tracking
     state: NodeState | None = None
     progression: list[NodeState] = field(default_factory=list)
+    # Monotonic sequence for NodeState ids — independent of
+    # ``len(progression)`` so ids never reuse after eviction at
+    # ``MAX_PROGRESSION``.  Serialized explicitly (see ``_node_to_dict``).
+    _state_seq: int = 0
+    # Immutable scan baseline: the first snapshot ever recorded.  Retained
+    # outside the capped ``progression`` window so ``progression[0]`` is
+    # never mistaken for the original after eviction.  Use
+    # :meth:`baseline_state` instead of ``progression[0]`` when the
+    # original content is needed.
+    _baseline: NodeState | None = None
 
     # Violation ledger — single source of truth for violation lifecycle
     violation_ledger: dict[ViolationKey, ViolationRecord] = field(default_factory=dict)
@@ -513,6 +534,48 @@ class ContentNode:
 
     MAX_PROGRESSION: ClassVar[int] = 20
 
+    def baseline_state(self) -> NodeState | None:
+        """Return the immutable scan baseline for this node.
+
+        The baseline is the first snapshot ever recorded via
+        :meth:`record_state` and is retained even after the capped
+        ``progression`` window evicts old entries.  Falls back to
+        ``progression[0]`` for nodes constructed before baseline
+        tracking (e.g. legacy deserialized payloads).
+
+        Limitation: the ``progression[0]`` fallback is only the true
+        baseline when no eviction has occurred. For a legacy node whose
+        window already evicted entries before ``_baseline`` existed,
+        ``progression[0]`` is a later snapshot, so diffs against it
+        under-report the real change. Such nodes stay baseline-less
+        (``record_state`` sets ``_baseline`` only on an empty
+        progression), so ``has_recorded_baseline`` stays False and
+        strict splicing rejects them. New nodes always set ``_baseline``
+        on their first snapshot and are unaffected.
+
+        Returns:
+            The baseline ``NodeState``, or ``None`` when the node has
+            no snapshots yet.
+        """
+        if self._baseline is not None:
+            return self._baseline
+        if self.progression:
+            return self.progression[0]
+        return None
+
+    def has_recorded_baseline(self) -> bool:
+        """Return whether a true scan baseline was recorded.
+
+        Distinguishes nodes with a retained ``_baseline`` snapshot from
+        legacy nodes that only have the :meth:`baseline_state`
+        ``progression[0]`` fallback (which may post-date evicted history
+        and under-report the real change).
+
+        Returns:
+            True when :meth:`record_state` captured a baseline snapshot.
+        """
+        return self._baseline is not None
+
     def record_state(
         self,
         pass_number: int,
@@ -529,8 +592,10 @@ class ContentNode:
 
         If progression already contains ``MAX_PROGRESSION`` entries the
         oldest intermediate entry is dropped to prevent unbounded growth.
-        The original baseline and last approved snapshot are retained for source
-        splicing and rollback.
+        The scan baseline (first snapshot) is retained in ``_baseline``
+        outside the capped window, the last approved snapshot is kept for
+        source splicing and rollback, and ``NodeState.id`` uses a monotonic
+        ``_state_seq`` counter so ids never reuse after eviction.
 
         Args:
             pass_number: Convergence pass (0 = initial scan).
@@ -542,7 +607,8 @@ class ContentNode:
         Returns:
             The newly created ``NodeState``.
         """
-        seq = len(self.progression)
+        seq = self._state_seq
+        self._state_seq += 1
         ns = NodeState(
             id=f"{self.node_id}@{seq}",
             pass_number=pass_number,
@@ -552,6 +618,8 @@ class ContentNode:
             timestamp=datetime.now(UTC).isoformat(),
             source=source,
         )
+        if self._baseline is None and not self.progression:
+            self._baseline = ns
         if len(self.progression) >= self.MAX_PROGRESSION:
             last_approved = next(
                 (index for index in range(len(self.progression) - 1, -1, -1) if self.progression[index].approved),
@@ -601,6 +669,29 @@ class ContentGraph:
         self.g: nx.MultiDiGraph = nx.MultiDiGraph()
         self._dirty_nodes: set[str] = set()
         self._execution_successors_cache: dict[str, set[str]] | None = None
+        self._pass_horizon: int = 0
+
+    @property
+    def pass_horizon(self) -> int:
+        """Highest convergence pass number this graph has ever recorded.
+
+        ``GraphRemediationEngine.remediate`` used to restart at pass 1 on
+        every call, so a clearance stamped in one remediation run compared
+        equal to a declined edit from a later run and was wrongly reopened.
+        The engine now offsets every run's passes past this horizon, keeping
+        pass ordering meaningful across Gate 1 and Gate 2 calls that share
+        one graph. Serialization preserves the horizon; payloads written
+        before it existed derive it from the passes they still carry.
+        """
+        return self._pass_horizon
+
+    def advance_pass_horizon(self, pass_number: int) -> None:
+        """Raise the recorded pass horizon to at least ``pass_number``.
+
+        Args:
+            pass_number: Pass number the horizon must cover.
+        """
+        self._pass_horizon = max(self._pass_horizon, pass_number)
 
     # -- Serialization (ADR-044 Phase 2 switchover) -------------------------
 
@@ -643,6 +734,7 @@ class ContentGraph:
             "nodes": nodes,
             "edges": edges,
             "execution_edges": self.execution_edges(),
+            "pass_horizon": self._pass_horizon,
         }
 
     @classmethod
@@ -676,6 +768,19 @@ class ContentGraph:
                 tgt = str(raw_edge["target"])
                 attrs = {k: v for k, v in raw_edge.items() if k not in ("source", "target")}
                 graph.g.add_edge(src, tgt, **attrs)
+
+            horizon = int(cast(int, d.get("pass_horizon", 0)))
+            for nid in graph.g.nodes:
+                loaded = graph.get_node(nid)
+                if loaded is None:
+                    continue
+                for state in loaded.progression:
+                    horizon = max(horizon, state.pass_number)
+                for record in loaded.violation_ledger.values():
+                    horizon = max(horizon, record.discovered_in_pass)
+                    if record.fixed_in_pass is not None:
+                        horizon = max(horizon, record.fixed_in_pass)
+            graph._pass_horizon = horizon
 
         except ValueError:
             raise
@@ -880,8 +985,16 @@ class ContentGraph:
                 existing.violation = v
                 existing.fixed_by = None
                 existing.fixed_in_pass = None
+                existing.patch_pending = False
+                existing.decline_invalidated = False
             else:
                 existing.violation = v
+                # This pass still reports the finding, so the bytes were not
+                # fixed: a queued patch that has not reached the file (or did
+                # not address this finding) must not later promote the record
+                # to ``fixed`` just because a sibling edit on the node landed.
+                existing.patch_pending = False
+                existing.decline_invalidated = False
 
     def resolve_violations(
         self,
@@ -929,6 +1042,13 @@ class ContentGraph:
         for record in node.violation_ledger.values():
             if record.status != "open":
                 continue
+            if record.patch_pending and not record.decline_invalidated:
+                # A queued patch that has not reached the file must not be
+                # certified from in-memory text. A decline-invalidated
+                # clearance is the exception: its own bytes may be fine, and a
+                # rescan of current text that no longer shows the finding is
+                # exactly the fresh assessment it waits for.
+                continue
             rule_id = record.key[1]
             if rule_id in unassessed_rule_ids:
                 continue
@@ -938,6 +1058,8 @@ class ContentGraph:
                 record.status = status
                 record.fixed_by = fixed_by
                 record.fixed_in_pass = pass_number
+                record.patch_pending = False
+                record.decline_invalidated = False
                 count += 1
         return count
 
@@ -1017,6 +1139,12 @@ class ContentGraph:
                 if clear_attribution:
                     record.fixed_by = None
                     record.fixed_in_pass = None
+                if to_status == "fixed":
+                    # An approval promoted this finding, so its edit is part of
+                    # the patch being spliced now. If the splice fails,
+                    # ``reopen_fixed_violations`` restores the marker.
+                    record.patch_pending = False
+                    record.decline_invalidated = False
                 count += 1
         return count
 
@@ -1045,6 +1173,46 @@ class ContentGraph:
             Number of violations declined.
         """
         return self._transition_violations(node_id, "pending_review", "declined", clear_attribution=True)
+
+    def settle_pending_review(self, certify: Callable[[ViolationRecord], bool]) -> tuple[int, int]:
+        """Settle leftover ``pending_review`` rows with a per-row test.
+
+        A finding cleared on a child node by an *ancestor's* Gate 1 edit
+        lands in ``pending_review`` on a node that carries no proposal of
+        its own, so the per-node approve/decline sweep never reaches it.
+        This settles every remaining ``pending_review`` row through the
+        caller's certification test: certified rows promote to ``fixed``
+        (the edit that supplied their fix is in the output bytes), the
+        rest reopen as ``declined`` so reports keep listing them.
+
+        Certified rows keep ``fixed_by``/``fixed_in_pass`` attribution;
+        declined rows clear it, matching :meth:`decline_pending_review`.
+
+        Args:
+            certify: Per-record test deciding promotion. Receives the
+                ledger record; callers typically certify through edit
+                landing and pass ordering on the record's node.
+
+        Returns:
+            ``(promoted, declined)`` counts of settled rows.
+        """
+        promoted = 0
+        declined = 0
+        for node in self.nodes():
+            for record in node.violation_ledger.values():
+                if record.status != "pending_review" or record.patch_pending:
+                    continue
+                if certify(record):
+                    record.status = "fixed"
+                    record.patch_pending = False
+                    record.decline_invalidated = False
+                    promoted += 1
+                else:
+                    record.status = "declined"
+                    record.fixed_by = None
+                    record.fixed_in_pass = None
+                    declined += 1
+        return promoted, declined
 
     def approve_proposed(self, node_id: str) -> int:
         """Promote ``proposed`` violations to ``fixed`` on a node.
@@ -1101,6 +1269,92 @@ class ContentGraph:
                 count += 1
         return count
 
+    def reopen_fixed_violations(self, violations: list[ViolationDict], *, invalidated_by_decline: bool = False) -> int:
+        """Transition matching ``fixed`` ledger entries back to ``open``.
+
+        Used in two situations that need different recovery paths. When an
+        approved edit produced no patch (the splice could not be applied to
+        the file), the finding's bytes never changed; the record is marked
+        ``patch_pending`` so the edit landing later can promote it again
+        (:meth:`resolve_patch_pending`). When the fix reached the bytes but a
+        declined edit recorded at or before the clearing pass may have
+        supplied the clearance, promotion on a later landing would repeat
+        the invalidated certification, so ``invalidated_by_decline`` marks
+        the record as requiring a fresh assessment instead: only a rescan
+        of current text (which re-reports the finding, or clears it through
+        :meth:`resolve_violations`) can re-certify it.
+
+        The ledger is the single source of truth for resolution, so demoting
+        the finding only in one report would let the next report rebuild
+        (Gate 2) query it as ``fixed`` again. Attribution is cleared because
+        the certification is withdrawn and a later pass may re-attribute it.
+
+        Args:
+            violations: Violation dicts identifying ledger rows (``path`` + rule).
+            invalidated_by_decline: Whether a declined edit, not missing
+                bytes, invalidated the clearance.
+
+        Returns:
+            Number of violations reopened.
+        """
+        count = 0
+        for v in violations:
+            node_id = str(v.get("path", ""))
+            node = self.get_node(node_id)
+            if node is None:
+                continue
+            record = node.violation_ledger.get(_violation_key(v))
+            if record is not None and record.status == "fixed":
+                record.status = "open"
+                record.fixed_by = None
+                record.fixed_in_pass = None
+                record.patch_pending = True
+                record.decline_invalidated = invalidated_by_decline
+                count += 1
+        return count
+
+    def resolve_patch_pending(self, node_ids: Iterable[str]) -> int:
+        """Promote reopened findings whose patch has now reached the bytes.
+
+        A finding is marked ``patch_pending`` when an approved edit produced no
+        patch: the graph text no longer shows it, but the file still does. When
+        a later approval splices *that node's* edits into the output, the marker
+        has served its purpose and leaving the record ``open`` would contradict
+        the bytes the caller just received — the report would still list a
+        finding whose fix is in the file, and its next graph pass would resolve
+        it again. Promoting it here keeps the ledger (the source of truth for
+        report rebuilds) and the returned report in agreement.
+
+        Only a marker still standing at promotion time is honoured: a rescan
+        that reports the finding again clears it in ``register_violations``, so
+        a newer confirmation of the finding is never hidden by a sibling patch
+        landing on the same node. A ``decline_invalidated`` marker is never
+        honoured here: a clearance withdrawn because a declined edit may have
+        supplied it needs a fresh assessment, and the node's edit landing
+        again proves nothing about those withdrawn bytes.
+
+        Callers must pass only nodes whose own edits were spliced, not every
+        node in a patched file: a sibling skipped for a missing baseline still
+        has its finding in the file.
+
+        Args:
+            node_ids: Graph nodes whose patched edits landed.
+
+        Returns:
+            Number of ledger records promoted to ``fixed``.
+        """
+        count = 0
+        for node_id in node_ids:
+            node = self.get_node(node_id)
+            if node is None:
+                continue
+            for record in node.violation_ledger.values():
+                if record.patch_pending and not record.decline_invalidated:
+                    record.patch_pending = False
+                    record.status = "fixed"
+                    count += 1
+        return count
+
     def query_violations(
         self,
         *,
@@ -1140,6 +1394,7 @@ class ContentGraph:
                 if fixed_by is not None and record.fixed_by != fixed_by:
                     continue
                 vdict = dict(record.violation)
+                vdict["fixed_in_pass"] = record.fixed_in_pass
                 mapped = _status_resolution.get(record.status)
                 if mapped is not None and not (record.status == "proposed" and record.fixed_by == "deterministic"):
                     vdict["remediation_resolution"] = mapped
@@ -1249,7 +1504,9 @@ class ContentGraph:
         self.decline_pending_review(node_id)
 
         if first_unapproved == 0:
-            baseline = node.progression[0]
+            baseline = node.baseline_state()
+            if baseline is None:
+                return True
             node.progression[:] = [baseline]
             node.state = baseline
             node.update_from_yaml(baseline.yaml_lines)
@@ -2033,6 +2290,10 @@ def _violation_record_to_dict(rec: ViolationRecord) -> dict[str, object]:
         d["ai_reason"] = rec.ai_reason
     if rec.ai_suggestion is not None:
         d["ai_suggestion"] = rec.ai_suggestion
+    if rec.patch_pending:
+        d["patch_pending"] = True
+    if rec.decline_invalidated:
+        d["decline_invalidated"] = True
     return d
 
 
@@ -2069,6 +2330,8 @@ def _violation_record_from_dict(d: dict[str, object]) -> ViolationRecord:
         discovered_in_pass=int(cast(int, d.get("discovered_in_pass", 0))),
         ai_reason=str(d["ai_reason"]) if "ai_reason" in d else None,
         ai_suggestion=str(d["ai_suggestion"]) if "ai_suggestion" in d else None,
+        patch_pending=bool(d.get("patch_pending", False)),
+        decline_invalidated=bool(d.get("decline_invalidated", False)),
     )
 
 
@@ -2096,6 +2359,9 @@ def _node_to_dict(node: ContentNode, *, slim: bool = False) -> dict[str, object]
         d[fname] = getattr(node, fname)
 
     if not slim:
+        d["state_seq"] = node._state_seq
+        if node._baseline is not None:
+            d["baseline"] = _node_state_to_dict(node._baseline)
         if node.state is not None:
             d["state"] = _node_state_to_dict(node.state)
         if node.progression:
@@ -2130,6 +2396,13 @@ def _node_from_dict(d: dict[str, object]) -> ContentNode:
 
     node = ContentNode(**kwargs)  # type: ignore[arg-type]
 
+    raw_seq = d.get("state_seq")
+    if isinstance(raw_seq, int) and not isinstance(raw_seq, bool) and raw_seq >= 0:
+        node._state_seq = raw_seq
+    raw_baseline = d.get("baseline")
+    if isinstance(raw_baseline, dict):
+        node._baseline = _node_state_from_dict(cast(dict[str, object], raw_baseline))
+
     raw_state = d.get("state")
     deserialized_state: NodeState | None = None
     if isinstance(raw_state, dict):
@@ -2152,8 +2425,44 @@ def _node_from_dict(d: dict[str, object]) -> ContentNode:
                 deserialized_progression[i] = replace(entry, id=f"{nid}@{i}")
         node.progression = deserialized_progression
         node.state = deserialized_progression[-1]
+        # No backfill for pre-baseline payloads (no "baseline" key): the
+        # progression[0] fallback may post-date evicted history, so leaving
+        # _baseline None keeps has_recorded_baseline() False and lets the
+        # strict splice guard raise instead of emitting a short diff.
+        # Backfill only when the payload carries baseline keys (a "baseline"
+        # entry that failed to parse above) — never for legacy formats.
+        if node._baseline is None and "baseline" in d:
+            node._baseline = deserialized_progression[0]
+        if not isinstance(raw_seq, int) or isinstance(raw_seq, bool):
+            # Derive a safe seq greater than any id suffix seen.
+            max_suffix = -1
+            for entry in deserialized_progression:
+                try:
+                    suffix = int(entry.id.rsplit("@", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+                max_suffix = max(max_suffix, suffix)
+            node._state_seq = max(max_suffix + 1, len(deserialized_progression))
     elif deserialized_state is not None:
         node.state = deserialized_state
+
+    # Always reconcile _state_seq against @N suffixes already present: a
+    # valid-but-stale raw_seq (serialized before later snapshots were
+    # recorded) must not reuse an id. Clamp up to max(raw_seq,
+    # max_suffix + 1). The invalid-raw branch above already derived a safe
+    # seq; max() keeps that guarantee when suffixes exceed it.
+    if isinstance(raw_seq, int) and not isinstance(raw_seq, bool) and raw_seq >= 0:
+        max_suffix = -1
+        candidates: list[NodeState | None] = [node._baseline, node.state, *node.progression]
+        for cand in candidates:
+            if cand is None or not cand.id:
+                continue
+            try:
+                suffix = int(cand.id.rsplit("@", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            max_suffix = max(max_suffix, suffix)
+        node._state_seq = max(raw_seq, max_suffix + 1)
 
     # Restore violation ledger.
     raw_ledger = d.get("violation_ledger")

@@ -542,3 +542,42 @@ async def test_report_fix_completed_stream_rejects_missing_scan_id() -> None:
         grpc.StatusCode.INVALID_ARGUMENT,
         "FixCompletedChunk stream missing scan_id header",
     )
+
+
+async def test_published_patch_set_survives_fix_replay() -> None:
+    """A branch-backed scan keeps the patch bytes that were pushed (#7).
+
+    A late or duplicated completion event must not rewrite the published
+    patch set: the submit replay hashes the stored rows, so a rewrite would
+    make it compare new bytes with themselves.
+    """
+    servicer = ReportingServicer()
+    ctx = _mock_context()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-published",
+        session_id="sess-published",
+        project_path="/proj",
+        source="cli",
+        patches=[engine_pb2.FilePatch(path="a.yml", original=b"x: 1\n", patched=b"x: 2\n")],
+    )
+    await servicer.ReportFixCompleted(event, ctx)
+
+    async with get_session() as db:
+        scan = await q.get_scan(db, "scan-published")
+        assert scan is not None
+        scan.branch_name = "apme/remediate-published"
+        scan.commit_sha = "sha-published"
+        await db.commit()
+
+    replay = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-published",
+        session_id="sess-published",
+        project_path="/proj",
+        source="cli",
+        patches=[engine_pb2.FilePatch(path="a.yml", original=b"x: 1\n", patched=b"x: 3\n")],
+    )
+    await servicer.ReportFixCompleted(replay, ctx)
+
+    async with get_session() as db:
+        patched = await q.get_patched_files(db, "scan-published")
+    assert [pf.content for pf in patched] == [b"x: 2\n"]

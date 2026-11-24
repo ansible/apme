@@ -283,8 +283,8 @@ class TestGitleaksServicer:
         servicer = GitleaksValidatorServicer()
         request = validate_pb2.ValidateRequest(files=[], request_id="gl-1")
         resp = await servicer.Validate(request, None)  # type: ignore[arg-type]
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
-        assert resp.request_id == "gl-1"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 0
+        assert resp.request_id == "gl-1"
 
     async def test_validate_with_files(self) -> None:
         """Validate with file content returns violations from gitleaks."""
@@ -311,9 +311,9 @@ class TestGitleaksServicer:
         with patch("apme_engine.daemon.gitleaks_validator_server.run_gitleaks_nodes", return_value=fake_violations):
             resp = await servicer.Validate(request, None)  # type: ignore[arg-type]
 
-        assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == "SEC:aws-access-key-id"  # type: ignore[attr-defined]
-        assert resp.request_id == "gl-2"  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1
+        assert resp.violations[0].rule_id == "SEC:aws-access-key-id"
+        assert resp.request_id == "gl-2"
 
     async def test_health_binary_present(self) -> None:
         """Health with gitleaks binary returns ok and version."""

@@ -125,11 +125,11 @@ async def test_native_rpc_rejects_expanded_excerpts_before_proto_conversion() ->
     ):
         response = await native_validator_server.NativeValidatorServicer().Validate(request, None)  # type: ignore[arg-type]
     convert.assert_not_called()
-    assert response.request_id == "excerpt-expansion"  # type: ignore[attr-defined]
-    assert len(response.violations) == 1  # type: ignore[attr-defined]
-    assert response.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
-    assert response.violations[0].severity == common_pb2.SEVERITY_ERROR  # type: ignore[attr-defined]
-    assert response.violations[0].original_yaml == ""  # type: ignore[attr-defined]
+    assert response.request_id == "excerpt-expansion"
+    assert len(response.violations) == 1
+    assert response.violations[0].rule_id == RULE_VALIDATOR_FAILURE
+    assert response.violations[0].severity == common_pb2.SEVERITY_ERROR
+    assert response.violations[0].original_yaml == ""
     assert response.ByteSize() < 8192  # type: ignore[attr-defined]
     assert "private-source-value" not in str(response)
 
@@ -811,10 +811,10 @@ async def test_l115_native_rpc_checks_files_without_graph() -> None:
         files=[common_pb2.File(path=CONFIG, content=b"provisioner: [\n")],
     )
     response = await NativeValidatorServicer().Validate(request, None)  # type: ignore[arg-type]
-    assert response.request_id == "molecule-config-only"  # type: ignore[attr-defined]
-    assert response.diagnostics.files_received == 1  # type: ignore[attr-defined]
-    assert response.diagnostics.violations_found == 1  # type: ignore[attr-defined]
-    assert response.violations[0].rule_id == "L115"  # type: ignore[attr-defined]
+    assert response.request_id == "molecule-config-only"
+    assert response.diagnostics.files_received == 1
+    assert response.diagnostics.violations_found == 1
+    assert response.violations[0].rule_id == "L115"
 
 
 def test_l115_l119_use_existing_rule_overrides() -> None:
@@ -1737,7 +1737,7 @@ async def test_native_rpc_reported_multi_scenario_pattern() -> None:
     )
     with patch("subprocess.run", side_effect=AssertionError("Static checks cannot execute project code")):
         response = await NativeValidatorServicer().Validate(request, None)  # type: ignore[arg-type]
-    findings = response.violations  # type: ignore[attr-defined]
+    findings = response.violations
     assert sum(finding.rule_id == "L116" for finding in findings) == 1
     assert sum(finding.rule_id == "L118" for finding in findings) == 6
     assert len(findings) == 7
@@ -1745,7 +1745,7 @@ async def test_native_rpc_reported_multi_scenario_pattern() -> None:
     assert "molecule/armbian-netboot/molecule.yml" in missing.message
     assert "optional" in missing.message
     assert all("Collection" in finding.message for finding in findings if finding.rule_id == "L118")
-    assert response.diagnostics.files_received == len(files)  # type: ignore[attr-defined]
+    assert response.diagnostics.files_received == len(files)
 
 
 @pytest.mark.parametrize("metadata", [b"namespace: example\nname: testing\n", b"namespace: [\n"])  # type: ignore[untyped-decorator]

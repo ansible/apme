@@ -63,6 +63,7 @@ class ScanChunk:
     project_root: str
     options: ScanOptions | None
     files: list[object]
+    dependency_files: list[object]
     last: bool
     fix_options: FixOptions | None
     def __init__(self, **kwargs: object) -> None: ...
@@ -87,6 +88,7 @@ class FormatRequest:
 
 class FormatResponse:
     logs: list[ProgressUpdate]
+    diffs: list[FileDiff]
     def __init__(self, **kwargs: object) -> None: ...
 
 class FileDiff:
@@ -240,6 +242,8 @@ class ApprovalAck:
     applied_count: int
     status: int
     ttl_seconds: int
+    unpatched_count: int
+    unpatched_files: list[str]
     def __init__(self, **kwargs: object) -> None: ...
 
 class SessionResult:

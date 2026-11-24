@@ -72,7 +72,7 @@ async def test_flow_map_findings_survive_native_engine_and_cli(
     response = await NativeValidatorServicer().Validate(request, None)  # type: ignore[arg-type]
     transported = validate_pb2.ValidateResponse()
     cast(Message, transported).ParseFromString(cast(Message, response).SerializeToString())
-    raw = [violation_proto_to_dict(finding) for finding in transported.violations]  # type: ignore[attr-defined]
+    raw = [violation_proto_to_dict(finding) for finding in transported.violations]
     assert len(raw) == 2
     assert {finding["rule_id"] for finding in raw} == {rule_id}
     assert {finding["path"] for finding in raw} == paths

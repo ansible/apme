@@ -845,6 +845,41 @@ async def get_session(db: AsyncSession, session_id: str) -> Session | None:
     return cast("Session | None", result.scalar_one_or_none())
 
 
+async def session_dependencies(
+    db: AsyncSession,
+    session_id: str,
+) -> tuple[ScanManifest | None, list[ScanCollection], list[ScanPythonPackage]]:
+    """Return the dependency manifest for a session's latest scan (additive).
+
+    Read-only helper for ``GET /api/v1/sessions/venvs/{id}`` — surfaces the
+    persisted ansible-core version/requirements view of Engine-owned venvs
+    without touching venv state (ADR-022 single-writer invariant).
+
+    Args:
+        db: Active async database session.
+        session_id: Deterministic session hash.
+
+    Returns:
+        Tuple of (manifest, collections, python_packages) for the latest
+        scan in the session, or ``(None, [], [])`` when no scan exists.
+    """
+    stmt = select(Scan.scan_id).where(Scan.session_id == session_id).order_by(Scan.created_at.desc()).limit(1)
+    result = await db.execute(stmt)
+    scan_id = cast("str | None", result.scalar_one_or_none())
+    if scan_id is None:
+        return None, [], []
+    manifest_stmt = select(ScanManifest).where(ScanManifest.scan_id == scan_id)
+    manifest_result = await db.execute(manifest_stmt)
+    manifest = manifest_result.scalar_one_or_none()
+    coll_stmt = select(ScanCollection).where(ScanCollection.scan_id == scan_id).order_by(ScanCollection.fqcn)
+    coll_result = await db.execute(coll_stmt)
+    collections = list(coll_result.scalars().all())
+    pkg_stmt = select(ScanPythonPackage).where(ScanPythonPackage.scan_id == scan_id).order_by(ScanPythonPackage.name)
+    pkg_result = await db.execute(pkg_stmt)
+    packages = list(pkg_result.scalars().all())
+    return manifest, collections, packages
+
+
 async def list_scans(
     db: AsyncSession,
     *,
@@ -891,6 +926,41 @@ async def get_scan(db: AsyncSession, scan_id: str) -> Scan | None:
             selectinload(Scan.logs),
             selectinload(Scan.patches),
         )
+    )
+    result = await db.execute(stmt)
+    return cast("Scan | None", result.scalar_one_or_none())
+
+
+async def get_scan_by_submit_token(
+    db: AsyncSession,
+    project_id: str,
+    token: str,
+) -> Scan | None:
+    """Return the most-recent scan carrying a project/token claim.
+
+    Project/token-scoped durable lookup for POST /submit idempotency replay
+    (#3): a retried ``/operate`` mints a fresh ``scan_id`` per attempt while
+    forwarding the same ``Idempotency-Key``, so checking only the current
+    scan row misses prior attempts. A row without ``branch_name`` represents
+    an incomplete prior claim and must not be treated as a cache miss; the
+    caller rejects that retry instead of repeating ambiguous SCM side effects.
+
+    Args:
+        db: Active async database session.
+        project_id: Owning project UUID.
+        token: Validated idempotency token.
+
+    Returns:
+        Most-recent matching Scan, including incomplete claims, or None on miss.
+    """
+    stmt = (
+        select(Scan)
+        .where(
+            Scan.project_id == project_id,
+            Scan.submit_token == token,
+        )
+        .order_by(Scan.created_at.desc())
+        .limit(1)
     )
     result = await db.execute(stmt)
     return cast("Scan | None", result.scalar_one_or_none())
@@ -2147,6 +2217,7 @@ async def record_scan_scm_publish(
     branch_name: str,
     commit_sha: str,
     pr_url: str | None = None,
+    only_if_unpublished: bool = False,
 ) -> ScmPublishRecord:
     """Record SCM publish metadata on an activity (ADR-050).
 
@@ -2163,18 +2234,27 @@ async def record_scan_scm_publish(
         commit_sha: SHA of the commit pushed to the branch.
         pr_url: Web URL of the created pull request, or ``None`` for
             a branch-only submit.
+        only_if_unpublished: Stamp only when the scan has no publish yet
+            (``WHERE branch_name IS NULL``). Replay bookkeeping uses this
+            so it cannot replace the branch/commit of a later publish on
+            the same scan; a published row is left untouched and reported
+            as ``found=False``.
 
     Returns:
         ``ScmPublishRecord`` with ``found`` False if the scan does not
-        exist; otherwise ``found`` True and ``pr_url`` set to the
-        value stored on the row (the existing URL if compare-and-set
-        declined, or the newly recorded URL).
+        exist (or was already published under *only_if_unpublished*);
+        otherwise ``found`` True and ``pr_url`` set to the value stored on
+        the row (the existing URL if compare-and-set declined, or the newly
+        recorded URL).
     """
     from apme_gateway.proposals.flush import flush_proposals_for_scan  # noqa: PLC0415
 
+    conditions = [Scan.scan_id == scan_id]
+    if only_if_unpublished:
+        conditions.append(Scan.branch_name.is_(None))
     stmt = (
         update(Scan)
-        .where(Scan.scan_id == scan_id)
+        .where(*conditions)
         .values(branch_name=branch_name, commit_sha=commit_sha)
         .returning(Scan.project_id, Scan.pr_url)
     )
