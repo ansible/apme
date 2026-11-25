@@ -1440,11 +1440,11 @@ def load_role(
                 )
             except TaskFormatError as e:
                 if skip_task_format_error:
-                    logger.debug(f"Task format error found; skip this taskfile {task_yaml_path}")
+                    logger.debug(f"Task format error found; skip this handler file {handler_yaml_path}")
                 else:
                     raise TaskFormatError(f"Task format error found: {e.args[0]}") from e
             except Exception:
-                logger.exception(f"error while loading the task file at {task_yaml_path}")
+                logger.exception(f"error while loading the handler file at {handler_yaml_path}")
             if not tf:
                 continue
             if load_children:
@@ -1582,9 +1582,11 @@ def load_roles(
                 skip_playbook_format_error=skip_playbook_format_error,
                 skip_task_format_error=skip_task_format_error,
                 include_test_contents=include_test_contents,
+                load_children=load_children,
             )
         except Exception:
             logger.exception(f"error while loading the role at {role_dir}")
+            continue
         if load_children:
             roles.append(r)
         else:

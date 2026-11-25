@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from apme_engine.engine import model_loader
 from apme_engine.engine.model_loader import (
     _safe_int,
     load_collection,
@@ -885,6 +886,69 @@ class TestLoadRoles:
         assert len(roles) == 1
         assert "helper" in str(roles[0])
         assert not any("requirements.yml" in str(r) for r in roles)
+
+    def test_failed_role_is_skipped_not_crash_or_duplicate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A role that fails to load is skipped without crashing or duplicating.
+
+        Regression test: ``load_roles`` previously referenced ``r`` after the
+        ``except`` block, so the first failing role raised ``UnboundLocalError``
+        and a later failure silently duplicated the previous role.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest fixture for patching ``load_role``.
+        """
+        for name in ("alpha", "beta", "gamma"):
+            tasks_dir = tmp_path / "roles" / name / "tasks"
+            tasks_dir.mkdir(parents=True)
+            (tasks_dir / "main.yml").write_text("---\n- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n")
+
+        real_load_role = model_loader.load_role
+
+        def flaky_load_role(path: str, **kwargs: object) -> Role:
+            if path.endswith("beta"):
+                raise RuntimeError("boom")
+            return real_load_role(path, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(model_loader, "load_role", flaky_load_role)
+
+        roles = load_roles(str(tmp_path), basedir=str(tmp_path), load_children=True)
+
+        assert len(roles) == 2
+        alpha, gamma = roles
+        assert isinstance(alpha, Role) and alpha.name == "alpha"
+        assert isinstance(gamma, Role) and gamma.name == "gamma"
+
+    def test_load_children_forwarded_to_load_role(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``load_roles`` forwards ``load_children`` so the paths-only fast path stays fast.
+
+        Regression test: the flag was never forwarded, so callers requesting
+        paths (``load_children=False``) still paid for full child trees.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest fixture for capturing ``load_role`` arguments.
+        """
+        tasks_dir = tmp_path / "roles" / "web" / "tasks"
+        tasks_dir.mkdir(parents=True)
+        (tasks_dir / "main.yml").write_text("---\n- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n")
+
+        captured: dict[str, object] = {}
+        real_load_role = model_loader.load_role
+
+        def spy_load_role(path: str, **kwargs: object) -> Role:
+            captured.update(kwargs)
+            return real_load_role(path, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(model_loader, "load_role", spy_load_role)
+
+        roles = load_roles(str(tmp_path), basedir=str(tmp_path), load_children=False)
+
+        assert len(roles) == 1
+        assert "web" in str(roles[0])
+        assert captured["load_children"] is False
 
 
 class TestLoadRoleArgumentSpecs:
