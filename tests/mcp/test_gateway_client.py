@@ -2,7 +2,6 @@ from __future__ import annotations
 
 # pytest's decorator is intentionally untyped in the installed test stubs.
 # mypy: disable-error-code="untyped-decorator"
-
 import httpx
 import pytest
 

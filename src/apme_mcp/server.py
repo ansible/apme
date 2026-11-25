@@ -44,7 +44,11 @@ async def create_project(  # noqa: DOC101,DOC103,DOC201
 ) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Create a repository-backed project; credentials are never returned."""
     payload: dict[str, Any] = {"name": name, "repo_url": repo_url, "branch": branch}
-    for key, value in (("scm_provider", scm_provider), ("scm_token", scm_token), ("requirements_token", requirements_token)):
+    for key, value in (
+        ("scm_provider", scm_provider),
+        ("scm_token", scm_token),
+        ("requirements_token", requirements_token),
+    ):
         if value is not None:
             payload[key] = value
     return await _call("POST", "/api/v1/projects", payload)
@@ -72,15 +76,21 @@ async def create_galaxy_server(  # noqa: DOC101,DOC103,DOC201
 
 
 @mcp.tool()
-async def start_project_scan(project_id: str, options: dict[str, Any] | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
+async def start_project_scan(
+    project_id: str, options: dict[str, Any] | None = None
+) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Start asynchronous check scan for a project."""
     return await _call("POST", project_path(project_id, "/operation"), {"action": "check", "options": options or {}})
 
 
 @mcp.tool()
-async def start_remediation(project_id: str, options: dict[str, Any] | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
+async def start_remediation(
+    project_id: str, options: dict[str, Any] | None = None
+) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Start asynchronous remediation; does not approve proposals."""
-    return await _call("POST", project_path(project_id, "/operation"), {"action": "remediate", "options": options or {}})
+    return await _call(
+        "POST", project_path(project_id, "/operation"), {"action": "remediate", "options": options or {}}
+    )
 
 
 @mcp.tool()
@@ -90,7 +100,9 @@ async def get_operation(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC201
 
 
 @mcp.tool()
-async def wait_for_operation(project_id: str, timeout_seconds: int = 30) -> Any:  # noqa: DOC101,DOC103,DOC201,DOC501,DOC503
+async def wait_for_operation(
+    project_id: str, timeout_seconds: int = 30
+) -> Any:  # noqa: DOC101,DOC103,DOC201,DOC501,DOC503
     """Wait on Gateway SSE until operation terminal or timeout; never cancels it."""
     if timeout_seconds < 1 or timeout_seconds > 600:
         raise ValueError("timeout_seconds must be between 1 and 600")
@@ -116,7 +128,10 @@ async def wait_for_operation(project_id: str, timeout_seconds: int = 30) -> Any:
                             except json.JSONDecodeError:
                                 payload = {"raw": raw}
                             if event_name in {"result", "status_changed"} and payload.get("status") in {
-                                "completed", "failed", "cancelled", "pr_submitted"
+                                "completed",
+                                "failed",
+                                "cancelled",
+                                "pr_submitted",
                             }:
                                 return {"event": event_name, "terminal": True, "operation": payload}
                             event_name = "message"
@@ -160,7 +175,11 @@ async def get_project_graph(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC2
 async def get_proposals(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Get current remediation proposals."""
     snapshot = await _call("GET", project_path(project_id, "/operation"))
-    return {"operation_id": snapshot.get("operation_id"), "status": snapshot.get("status"), "proposals": snapshot.get("proposals", [])}
+    return {
+        "operation_id": snapshot.get("operation_id"),
+        "status": snapshot.get("status"),
+        "proposals": snapshot.get("proposals", []),
+    }
 
 
 @mcp.tool()
@@ -170,7 +189,9 @@ async def begin_remediate(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC201
 
 
 @mcp.tool()
-async def approve_proposals(project_id: str, approved_ids: list[str], approval_gate_id: str | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
+async def approve_proposals(
+    project_id: str, approved_ids: list[str], approval_gate_id: str | None = None
+) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Approve exactly supplied proposal IDs; never auto-approves omitted proposals."""
     payload: dict[str, Any] = {"approved_ids": approved_ids}
     if approval_gate_id is not None:

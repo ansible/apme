@@ -1,4 +1,5 @@
 """Typed, credential-safe HTTP client for the APME Gateway REST API."""  # noqa: DOC101,DOC103,DOC201,DOC501,DOC503
+# ruff: noqa: D102,D105,D107
 
 from __future__ import annotations
 
@@ -32,7 +33,9 @@ class GatewayError(RuntimeError):
 class GatewayClient:
     """Small async client for existing versioned Gateway routes."""
 
-    def __init__(self, base_url: str | None = None, client: httpx.AsyncClient | None = None) -> None:  # noqa: DOC101,DOC103
+    def __init__(
+        self, base_url: str | None = None, client: httpx.AsyncClient | None = None
+    ) -> None:  # noqa: DOC101,DOC103
         configured_url = base_url or os.getenv("APME_GATEWAY_URL") or "http://127.0.0.1:8080"
         self.base_url = configured_url.rstrip("/")
         self._client = client
