@@ -391,7 +391,7 @@ class HealthStatus(BaseModel):  # type: ignore[misc]
     Attributes:
         status: Overall health (ok or degraded).
         database: Database connectivity status.
-        database_type: Human-readable database engine name (e.g. PostgreSQL, SQLite).
+        database_type: Human-readable database engine name (PostgreSQL).
         components: Health status of each upstream service.
     """
 
