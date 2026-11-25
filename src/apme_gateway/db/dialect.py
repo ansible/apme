@@ -1,4 +1,4 @@
-"""Dialect-specific SQLAlchemy helpers."""
+"""PostgreSQL-specific SQLAlchemy helpers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ _POSTGRESQL_IN_CLAUSE_CHUNK = 30_000
 
 
 def dialect_insert(engine: Engine, table: Any) -> Insert:
-    """Return the dialect-appropriate ``INSERT`` construct for *table*.
+    """Return the PostgreSQL ``INSERT`` construct for *table*.
 
     Args:
         engine: Bound SQLAlchemy engine.
@@ -25,7 +25,7 @@ def dialect_insert(engine: Engine, table: Any) -> Insert:
 
 
 def in_clause_chunk_size(engine: Engine) -> int:
-    """Return a safe ``IN`` clause size for the engine dialect.
+    """Return a safe ``IN`` clause size for PostgreSQL.
 
     Args:
         engine: Bound SQLAlchemy engine.

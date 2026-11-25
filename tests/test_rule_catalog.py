@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 from packaging.specifiers import SpecifierSet
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from apme.v1 import common_pb2, engine_pb2, reporting_pb2
 from apme_engine.daemon.engine_server import (
@@ -653,26 +653,6 @@ def _sample_rule(rule_id: str, *, ansible_core_version: str = "") -> reporting_p
         enabled=True,
         ansible_core_version=ansible_core_version,
     )
-
-
-def test_migrate_rules_table_adds_version_column_to_existing_catalog() -> None:
-    """The ADR-057 migration adds a defaulted column and safely reruns."""
-    engine = create_engine("sqlite:///:memory:")
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("CREATE TABLE rules (rule_id TEXT PRIMARY KEY)"))
-            conn.execute(text("INSERT INTO rules (rule_id) VALUES ('M001')"))
-
-            _migrate_rules_table(conn)
-            version = conn.execute(text("SELECT ansible_core_version FROM rules WHERE rule_id = 'M001'")).scalar_one()
-            assert version == ""
-
-            conn.execute(text("UPDATE rules SET ansible_core_version = '>=2.19' WHERE rule_id = 'M001'"))
-            _migrate_rules_table(conn)
-            version = conn.execute(text("SELECT ansible_core_version FROM rules WHERE rule_id = 'M001'")).scalar_one()
-            assert version == ">=2.19"
-    finally:
-        engine.dispose()
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

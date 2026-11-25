@@ -10,7 +10,6 @@ from typing import Any, NamedTuple, cast, overload
 
 from sqlalchemy import ColumnElement, Select, case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -2329,7 +2328,7 @@ async def insert_notification(
 ) -> Notification | None:
     """Insert a notification once per scan and type.
 
-    For scan-associated notifications, PostgreSQL and SQLite use the unique
+    For scan-associated notifications, PostgreSQL uses the unique
     ``(scan_id, type)`` index to make concurrent inserts idempotent. A ``None``
     result means a matching notification already exists or won a concurrent
     insert.
@@ -2363,10 +2362,8 @@ async def insert_notification(
         "read": False,
     }
 
-    dialect_name = db.get_bind().dialect.name
-    if scan_id is not None and dialect_name in {"postgresql", "sqlite"}:
-        insert_stmt = postgresql_insert(Notification) if dialect_name == "postgresql" else sqlite_insert(Notification)
-        statement = insert_stmt.values(**values)
+    if scan_id is not None:
+        statement = postgresql_insert(Notification).values(**values)
         if type == "scan_complete" and project_id is not None:
             statement = statement.on_conflict_do_update(
                 index_elements=[Notification.scan_id, Notification.type],

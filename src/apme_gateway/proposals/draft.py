@@ -337,7 +337,7 @@ def _preload_per_query_limit(chunk: int) -> int:
     """Max proposals per preload SELECT while reserving one bind for scan_id.
 
     Args:
-        chunk: SQLite IN-clause bind limit from ``get_in_clause_chunk_size``.
+        chunk: PostgreSQL IN-clause bind limit from ``get_in_clause_chunk_size``.
 
     Returns:
         Maximum proposals per preload batch (``(chunk - 1) // 2``).
