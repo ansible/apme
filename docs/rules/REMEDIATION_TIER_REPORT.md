@@ -7,11 +7,11 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 ## Summary
 
-| Tier | Count | % of 168 |
+| Tier | Count | % of 167 |
 |------|-------|--------|
 | Tier 1 — auto (has transform) | 25 | 15% |
-| Tier 2 — AI (task/block, no fixer) | 71 | 42% |
-| Tier 3 — manual | 72 | 43% |
+| Tier 2 — AI (task/block, no fixer) | 71 | 43% |
+| Tier 3 — manual | 71 | 43% |
 
 ### Promotion potential
 
@@ -28,7 +28,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | FQCN target or semantic equivalence needs review | 1 |
 | playbook scope | 11 |
 | collection scope | 15 |
-| role scope | 11 |
+| role scope | 10 |
 | play scope | 7 |
 | inventory scope | 4 |
 
@@ -145,7 +145,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | R115 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | SEC:* | critical | task | Task/block scope — AI can propose fix (Tier 2) |
 
-## Tier 3 — Manual (72 rules)
+## Tier 3 — Manual (71 rules)
 
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
@@ -176,7 +176,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L072 | OPA | info | task | Add backup: true | Info severity — informational, no auto-fix |
 | L073 | Native | low | playbook | Fix YAML indentation to 2 spaces | Scope 'playbook' — play/role/collection not AI-proposable |
 | L074 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
-| L075 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L077 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L079 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L080 | Native | low | task | Prefix internal vars with underscore | Project-level context required (cross-file or data-flow consumers) |
