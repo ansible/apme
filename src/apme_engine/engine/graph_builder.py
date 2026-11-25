@@ -1162,16 +1162,6 @@ class GraphBuilder:
             for fact_name in node.set_facts:
                 set_fact_producers[fact_name] = nid
 
-        for nid in self._graph.topological_order():
-            node = self._graph.get_node(nid)
-            if node is None:
-                continue
-            referenced_vars = _extract_variable_references(node)
-            for var_name in referenced_vars:
-                producer = registered.get(var_name) or set_fact_producers.get(var_name)
-                if producer and producer != nid:
-                    self._graph.add_edge(producer, nid, EdgeType.DATA_FLOW)
-
 
 # ---------------------------------------------------------------------------
 # Definition loading
