@@ -314,7 +314,7 @@ class TestLoadGraphRules:
         from pathlib import Path
 
         import apme_engine.graph.rules as rules_pkg
-        from apme_engine.engine.utils import load_classes_in_dir
+        from apme_engine.graph._loader import load_classes_in_dir
         from apme_engine.graph.rule_base import (
             GraphRule as GraphRuleBase,
         )

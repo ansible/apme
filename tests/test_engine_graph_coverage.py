@@ -1529,7 +1529,7 @@ class TestUtilsExtra:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.engine.utils import load_classes_in_dir
+        from apme_engine.graph._loader import load_classes_in_dir
 
         (tmp_path / "good.py").write_text(
             "from apme_engine.engine.models import RuleMetadata\nclass R1(RuleMetadata):\n"
