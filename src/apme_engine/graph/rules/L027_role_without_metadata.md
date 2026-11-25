@@ -7,7 +7,7 @@ scope: role
 
 ## Role without metadata (L027)
 
-Roles should have meta/main.yml with metadata. This rule checks RunTargetType.Role and cannot be tested with playbook YAML in the test harness.
+Roles should have meta/main.yml with metadata. This rule checks `ROLE` nodes in the ContentGraph and cannot be tested with playbook YAML in the test harness.
 
 ### Example: pass
 

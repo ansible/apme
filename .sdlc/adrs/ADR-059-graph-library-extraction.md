@@ -166,3 +166,4 @@ performance measurement.
 | 2026-09-22 | Agent | Status → Implemented — shared `apme_engine.graph` package extracted with rules, scanner, and severity modules |
 | 2026-09-22 | Agent | Status → Partially Implemented — graph package shipped; `L030_non_builtin_use_graph` and shared helpers still import `apme_engine.engine` at runtime |
 | 2026-10-05 | Agent | Status → Implemented — L030 retired (#377, PR #715); `tools/check_graph_boundary.py` passes with no per-rule engine-import pinholes |
+| 2026-11-25 | Agent | Migration tail closed (#486, #834) — removed the last re-export shims (`engine/audit_metadata.py`, `engine/sensitivity.py`) and the duplicate `engine/utils.py::load_classes_in_dir`; all consumers already imported the `graph/` modules |
