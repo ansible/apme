@@ -22,7 +22,7 @@ Rule IDs categorize the **type of check**, not the validator that runs it. The v
 | A | AAP-specific (platform compatibility, APIs) | A001–A099 |
 | SEC: | Secrets (Gitleaks) | Always **critical** severity per ADR-043 |
 
-**Note:** `src/apme_engine/validators/native/rules/rule_versions.json` includes entries for both previous (R301, R302, ...) and current (L026, L027, ...) IDs for the renumbered rules; the loader uses the current rule_id (L###) when looking up version info.
+**Note:** the historical tables below list both the previous IDs (R301, R302, ...) and the current IDs (L026, L027, ...) of the renumbered rules. Use the current `L###` ID when filtering or reporting.
 
 ## OPA (Rego) rules mapped from ansible-lint — L003-L025, R118
 

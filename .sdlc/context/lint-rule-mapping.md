@@ -15,7 +15,7 @@ Rule IDs categorize the **type of check**, not the validator that runs it. The v
 | **R** | Risk/security and advisory rules | Any validator can implement an R rule |
 | **P** | Policy/validation (legacy) | Superseded by L058/L059 |
 
-> **Note**: `src/apme_engine/validators/native/rules/rule_versions.json` includes entries for both previous (R301, R302, ...) and current (L026, L027, ...) IDs for the renumbered rules; the loader uses the current `rule_id` (L###) when looking up version info.
+> **Note**: the historical tables below list both the previous IDs (R301, R302, ...) and the current IDs (L026, L027, ...) of the renumbered rules. Use the current `L###` ID when filtering or reporting.
 
 ---
 

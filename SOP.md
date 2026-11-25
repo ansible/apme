@@ -123,7 +123,7 @@ See [AGENTS.md — Architectural Invariants](AGENTS.md#architectural-invariants)
 
 Rule ID prefixes: L = Lint, M = Modernize, R = Risk, P = Policy, SEC = Secrets, EXT- = Plugin. IDs are independent of the implementing validator. Choose between Native (complex Python logic), OPA (declarative structural checks), or Ansible (runtime version checks) based on what the rule needs.
 
-Each new rule requires: implementation, colocated markdown docs with YAML examples, colocated tests, `rule_versions.json` update, lint rule mapping update, and catalog regeneration.
+Each new rule requires: implementation, colocated markdown docs with YAML examples, colocated tests, lint rule mapping update, and catalog regeneration.
 
 ---
 

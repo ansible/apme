@@ -160,8 +160,7 @@ src/apme_engine/
 │   │   ├── __init__.py     Rule discovery, rules_dir helper
 │   │   ├── rules/          one GraphRule per rule + .md docs
 │   │   │   ├── *_graph.py  GraphRule implementations
-│   │   │   ├── *.md        Rule documentation with examples
-│   │   │   └── rule_versions.json
+│   │   │   └── *.md        Rule documentation with examples
 │   │   └── README.md
 │   ├── opa/
 │   │   ├── __init__.py     OPA validator
@@ -299,9 +298,7 @@ class RuleNameGraphRule(GraphRule):
 
 3. Create rule doc `src/apme_engine/validators/native/rules/L0XX_rule_name.md` (see [RULE_DOC_FORMAT.md](RULE_DOC_FORMAT.md)).
 
-4. Add the rule ID to `rule_versions.json`.
-
-5. Update `docs/rules/LINT_RULE_MAPPING.md` with the new entry.
+4. Update `docs/rules/LINT_RULE_MAPPING.md` with the new entry.
 
 ### OPA (Rego) rule
 
