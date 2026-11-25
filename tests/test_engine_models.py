@@ -37,16 +37,10 @@ from apme_engine.engine.models import (
     RiskAnnotation,
     RiskAnnotationList,
     RoleMetadata,
-    Rule,
     RuleMetadata,
-    RuleResult,
     RuleScope,
-    RunTarget,
-    RunTargetList,
     Severity,
-    SpecMutation,
     Task,
-    TaskCallsInTree,
     TaskFileMetadata,
     TaskFormatError,
     Variable,
@@ -249,49 +243,6 @@ class TestCallObject:
         assert co.depth == 2
         assert co.node_id == "0.1.2"
         assert co.called_from == "parent_key"
-
-
-class TestRunTarget:
-    """Tests for RunTarget file_info and annotation lookup."""
-
-    def test_file_info(self) -> None:
-        """Verifies file_info returns defined_in file and lines from spec."""
-        spec = Object(type="task")
-        spec.defined_in = "tasks/main.yml"  # type: ignore[attr-defined]
-        rt = RunTarget(spec=spec)
-        file, lines = rt.file_info()
-        assert file == "tasks/main.yml"
-        assert lines is None
-
-    def test_has_annotation_returns_false(self) -> None:
-        """Verifies has_annotation_by_condition returns False when no annotations."""
-        rt = RunTarget()
-        cond = AnnotationCondition()
-        assert rt.has_annotation_by_condition(cond) is False
-
-    def test_get_annotation_returns_none(self) -> None:
-        """Verifies get_annotation_by_condition returns None when no match."""
-        rt = RunTarget()
-        cond = AnnotationCondition()
-        assert rt.get_annotation_by_condition(cond) is None
-
-
-class TestRunTargetList:
-    """Tests for RunTargetList length, indexing, and iteration."""
-
-    def test_len_and_getitem(self) -> None:
-        """Verifies len and indexing work on RunTargetList items."""
-        items = [RunTarget(key="rt1"), RunTarget(key="rt2")]
-        rtl = RunTargetList(items=items)
-        assert len(rtl) == 2
-        assert rtl[0].key == "rt1"
-
-    def test_iteration(self) -> None:
-        """Verifies RunTargetList is iterable over items."""
-        items = [RunTarget(key="a"), RunTarget(key="b")]
-        rtl = RunTargetList(items=items)
-        keys = [rt.key for rt in rtl]
-        assert keys == ["a", "b"]
 
 
 class TestFile:
@@ -789,31 +740,6 @@ class TestBecomeInfo:
         assert info.enabled is False
 
 
-class TestRuleResult:
-    """Tests for RuleResult verdict normalization and detail get/set."""
-
-    def test_verdict_normalization(self) -> None:
-        """Verifies verdict normalizes 1 to True and 0 to False."""
-        rr = RuleResult(verdict=1)  # type: ignore[arg-type]
-        assert rr.verdict is True
-        rr2 = RuleResult(verdict=0)  # type: ignore[arg-type]
-        assert rr2.verdict is False
-
-    def test_set_value_and_get_detail(self) -> None:
-        """Verifies set_value adds to detail and get_detail returns it."""
-        rr = RuleResult(detail={"key1": "val1"})
-        rr.set_value("key2", "val2")
-        detail = rr.get_detail()
-        assert detail is not None
-        assert detail["key2"] == "val2"
-
-    def test_set_value_no_detail(self) -> None:
-        """Verifies set_value leaves detail None when started without detail."""
-        rr = RuleResult()
-        rr.set_value("key", "val")
-        assert rr.detail is None
-
-
 class TestRuleMetadata:
     """Tests for RuleMetadata defaults."""
 
@@ -829,14 +755,13 @@ class TestRuleMetadata:
         assert rm.scope == RuleScope.TASK
 
     def test_get_metadata_preserves_scope(self) -> None:
-        """Verifies Rule.get_metadata() copies the declared scope."""
+        """Verifies RuleMetadata.get_metadata() copies the declared scope."""
 
         @dataclass
-        class PlayRule(Rule):
+        class PlayRule(RuleMetadata):
             rule_id: str = "L042"
             description: str = "test"
             scope: str = RuleScope.PLAY
-            enabled: bool = True
 
         rule = PlayRule()
         meta = rule.get_metadata()
@@ -853,34 +778,13 @@ class TestRuleMetadata:
         ):
 
             @dataclass
-            class ScopedRule(Rule):
+            class ScopedRule(RuleMetadata):
                 rule_id: str = "TEST"
                 description: str = "test"
                 scope: str = scope_val
-                enabled: bool = True
 
             meta = ScopedRule().get_metadata()
             assert meta.scope == scope_val, f"Expected {scope_val}, got {meta.scope}"
-
-
-class TestSpecMutation:
-    """Tests for SpecMutation defaults."""
-
-    def test_defaults(self) -> None:
-        """Verifies SpecMutation default key and changes."""
-        sm = SpecMutation()
-        assert sm.key is None
-        assert sm.changes == []
-
-
-class TestTaskCallsInTree:
-    """Tests for TaskCallsInTree defaults."""
-
-    def test_defaults(self) -> None:
-        """Verifies TaskCallsInTree default root_key and taskcalls."""
-        tct = TaskCallsInTree()
-        assert tct.root_key == ""
-        assert tct.taskcalls == []
 
 
 class TestCollection:
