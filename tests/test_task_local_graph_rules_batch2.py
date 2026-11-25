@@ -1,4 +1,4 @@
-"""Unit tests for task-local graph rules batch 2 (L037, L038, L075, L080, L085, L100–L102, M027)."""
+"""Unit tests for task-local graph rules batch 2 (L037, L038, L080, L085, L100–L102, M027)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType,
 from apme_engine.graph.rule_base import GraphRule
 from apme_engine.graph.rules.L037_unresolved_module_graph import UnresolvedModuleGraphRule
 from apme_engine.graph.rules.L038_unresolved_role_graph import UnresolvedRoleGraphRule
-from apme_engine.graph.rules.L075_ansible_managed_graph import AnsibleManagedGraphRule
 from apme_engine.graph.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
 from apme_engine.graph.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
 from apme_engine.graph.rules.L100_var_naming_keyword_graph import VarNamingKeywordGraphRule
@@ -214,70 +213,6 @@ class TestL038UnresolvedRoleGraphRule:
         """
         g, tid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, tid)
-
-
-# ---------------------------------------------------------------------------
-# L075 — AnsibleManaged
-# ---------------------------------------------------------------------------
-
-
-class TestL075AnsibleManagedGraphRule:
-    """Tests for L075 AnsibleManagedGraphRule."""
-
-    @pytest.fixture  # type: ignore[untyped-decorator]
-    def rule(self) -> AnsibleManagedGraphRule:
-        """Create rule instance.
-
-        Returns:
-            Rule instance under test.
-        """
-        return AnsibleManagedGraphRule()
-
-    def test_violation_non_j2_src(self, rule: AnsibleManagedGraphRule) -> None:
-        """Template with non-.j2 src violates.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        mo: YAMLDict = {"src": "nginx.conf"}
-        g, tid = _make_task(module="ansible.builtin.template", module_options=mo)
-        assert rule.match(g, tid)
-        result = rule.process(g, tid)
-        assert result is not None
-        assert result.verdict is True
-
-    def test_no_violation_j2_src(self, rule: AnsibleManagedGraphRule) -> None:
-        """Template with .j2 src passes.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        mo: YAMLDict = {"src": "nginx.conf.j2"}
-        g, tid = _make_task(module="ansible.builtin.template", module_options=mo)
-        result = rule.process(g, tid)
-        assert result is not None
-        assert result.verdict is False
-
-    def test_skip_non_template(self, rule: AnsibleManagedGraphRule) -> None:
-        """Non-template modules do not match.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        g, tid = _make_task(module="ansible.builtin.copy")
-        assert not rule.match(g, tid)
-
-    def test_skip_jinja_src(self, rule: AnsibleManagedGraphRule) -> None:
-        """Jinja-templated src paths are skipped.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        mo: YAMLDict = {"src": "{{ template_name }}"}
-        g, tid = _make_task(module="ansible.builtin.template", module_options=mo)
-        result = rule.process(g, tid)
-        assert result is not None
-        assert result.verdict is False
 
 
 # ---------------------------------------------------------------------------

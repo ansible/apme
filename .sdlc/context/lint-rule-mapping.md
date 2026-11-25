@@ -206,7 +206,7 @@ These rules enforce recommendations from the automation-good-practices documenta
 |---------|------|-------------|
 | L073 | `L073_indentation.py` | YAML should use 2-space indentation |
 | L074 | `L074_no_dashes_in_role_name.py` | Role names should not contain dashes |
-| L075 | `L075_ansible_managed.py` | Templates should include ansible_managed comment |
+| L075 | `L075_ansible_managed.py` | **Removed**: shipped as a duplicate of the L082 `.j2` extension check; the ansible_managed comment check was never implemented |
 | L076 | `L076_ansible_facts_bracket.py` | Use ansible_facts bracket notation instead of injected fact variables |
 | L077 | `L077_role_arg_specs.py` | Roles should have meta/argument_specs.yml |
 | L078 | `L078_dot_notation.py` | Use bracket notation for dict key access in Jinja |
