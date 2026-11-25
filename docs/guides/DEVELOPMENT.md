@@ -145,23 +145,26 @@ src/apme_engine/
 ├── formatter.py            YAML formatter (format_content)
 ├── opa_client.py           OPA eval (Podman or local binary)
 │
-├── engine/                 project loader
+├── engine/                 project loader + ARI data model
 │   ├── scanner.py          AnsibleProjectLoader.load() pipeline
 │   ├── parser.py           YAML/Ansible content parser
-│   ├── models.py           SingleScan, TaskCall, RiskAnnotation, etc.
+│   ├── models.py           Load/Object model classes, annotations, metadata
 │   ├── findings.py         Finding/violation structures
-│   ├── content_graph.py    ContentGraph DAG model (ADR-044)
-│   ├── graph_scanner.py    GraphRule evaluation engine
+│   ├── graph_builder.py    ARI model objects → ContentGraph (ADR-044)
 │   └── graph_opa_payload.py  OPA hierarchy from ContentGraph
+│
+├── graph/                  Shared ContentGraph library (no engine deps, ADR-059)
+│   ├── content_graph.py    ContentGraph DAG model + node types
+│   ├── scanner.py          GraphRule evaluation engine
+│   ├── rule_base.py        GraphRule base class
+│   ├── _loader.py          load_classes_in_dir() rule discovery
+│   └── rules/              one GraphRule per rule + colocated .md docs
 │
 ├── validators/
 │   ├── base.py             Validator protocol + ScanContext
-│   ├── native/             GraphRule-based Python rules
-│   │   ├── __init__.py     Rule discovery, rules_dir helper
-│   │   ├── rules/          one GraphRule per rule + .md docs
-│   │   │   ├── *_graph.py  GraphRule implementations
-│   │   │   ├── *.md        Rule documentation with examples
-│   │   │   └── rule_versions.json
+│   ├── native/             Native validator (graph rules + static file rules)
+│   │   ├── __init__.py     Package marker
+│   │   ├── rules/          Molecule static file checks (M040) + rule .md docs
 │   │   └── README.md
 │   ├── opa/
 │   │   ├── __init__.py     OPA validator
@@ -299,9 +302,7 @@ class RuleNameGraphRule(GraphRule):
 
 3. Create rule doc `src/apme_engine/validators/native/rules/L0XX_rule_name.md` (see [RULE_DOC_FORMAT.md](RULE_DOC_FORMAT.md)).
 
-4. Add the rule ID to `rule_versions.json`.
-
-5. Update `docs/rules/LINT_RULE_MAPPING.md` with the new entry.
+4. Update `docs/rules/LINT_RULE_MAPPING.md` with the new entry.
 
 ### OPA (Rego) rule
 

@@ -1,8 +1,7 @@
 """GraphRule L086: play-level vars that should be in inventory.
 
 Graph-aware port of ``L086_play_vars_usage.py``.  Matches ``PLAY`` nodes
-directly (rather than relying on ``RunTargetType.Play``) and checks the
-``node.variables`` dict length.
+and checks the ``node.variables`` dict length.
 """
 
 from __future__ import annotations

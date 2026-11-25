@@ -1,8 +1,8 @@
 """OPA hierarchy payload from ContentGraph (ADR-044).
 
 Produces the established OPA hierarchy fields from a ``ContentGraph`` instead
-of ``AnsibleRunContext`` lists. It also carries task collection search order
-for the Ansible validator; OPA rules ignore that additive field.
+of the retired ``AnsibleRunContext`` lists. It also carries task collection
+search order for the Ansible validator; OPA rules ignore that additive field.
 
 Public API
 ----------
@@ -836,8 +836,9 @@ def content_node_to_opa_dict(
 ) -> YAMLDict:
     """Serialize a ``ContentNode`` to the OPA node dict format.
 
-    The output retains ``opa_payload.node_to_dict(RunTarget)`` fields and adds
-    collection search context for the Ansible validator's plugin resolution.
+    The output retains the fields of the retired ``opa_payload.node_to_dict``
+    run-target serializer and adds collection search context for the Ansible
+    validator's plugin resolution.
     Task defaults are separate root-to-task layers for each distinct positional
     context; explicit arguments remain unchanged. Without a graph, only the
     node's local defaults can be serialized. Policy-visible fields are atomic:

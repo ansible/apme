@@ -41,8 +41,6 @@ from apme_engine.engine.finder import (
 )
 from apme_engine.engine.models import (
     Annotation,
-    AnnotationCondition,
-    AnsibleRunContext,
     Arguments,
     AttributeCondition,
     BecomeInfo,
@@ -70,11 +68,7 @@ from apme_engine.engine.models import (
     RiskAnnotationList,
     Role,
     RoleInPlay,
-    RoleInPlayCall,
-    Rule,
-    RuleResult,
     Task,
-    TaskCall,
     TaskFile,
     Variable,
     VariableDict,
@@ -83,7 +77,6 @@ from apme_engine.engine.models import (
     YAMLValue,
     _convert_to_bool,
     _plain_table,
-    call_obj_from_spec,
     filter_annotations_by_type,
     get_annotations_after,
     search_risk_annotations,
@@ -668,74 +661,8 @@ class TestMutableContentExtra:
         assert mc.get_task_name() == "r"
 
 
-class TestTaskCallExtra:
-    """Tests for TaskCall annotations."""
-
-    def test_annotation_crud(self) -> None:
-        """Set/get/filter annotations by key and condition."""
-        tc = TaskCall(spec=Task(defined_in="f.yml", line_num_in_file=[1, 2]))
-        tc.set_annotation("k", "v", "R1")
-        tc.set_annotation("k", "v2", "R1")
-        assert tc.get_annotation("k") == "v2"
-        assert tc.get_annotation("missing", "d") == "d"
-        assert tc.get_annotation("k", None, rule_id="OTHER") is None
-        tc.annotations.append(RiskAnnotation(risk_type="cmd_exec", key="k"))
-        assert tc.get_annotation_by_type("risk_annotation")
-        assert tc.get_annotation_by_type_and_attr("risk_annotation", "risk_type", "cmd_exec")
-        cond = AnnotationCondition(type="cmd_exec")
-        assert tc.has_annotation_by_condition(cond) is True
-        assert tc.get_annotation_by_condition(cond) is not None
-        assert tc.has_annotation_by_condition(AnnotationCondition(type="zzz")) is False
-        assert tc.get_annotation_by_condition(AnnotationCondition(type="zzz")) is None
-        f, lines = tc.file_info()
-        assert f == "f.yml"
-        assert lines == "L1-2"
-        tc2 = TaskCall(spec=Task(defined_in="g.yml"))
-        assert tc2.file_info()[1] == "?"
-        assert tc2.resolved_name == ""
-        assert tc2.action_type == ""
-
-    def test_run_context(self) -> None:
-        """AnsibleRunContext iteration and helpers."""
-        t1 = TaskCall(key="k1", spec=Task(key="s1"))
-        t1.type = "taskcall"
-        t2 = TaskCall(key="k2", spec=Task(key="s2"))
-        t2.type = "taskcall"
-        ctx = AnsibleRunContext.from_targets([t1, t2], root_key="k1")
-        assert len(ctx) == 2
-        assert ctx[0].key == "k1"
-        assert list(iter(ctx))[0].key == "k1"
-        # Use fresh contexts for stateful-iterator helpers (RunTargetList
-        # iterator is stateful; find/before leave the shared index mid-list).
-        ctx_find = AnsibleRunContext.from_targets([t1, t2], root_key="k1")
-        assert ctx_find.find(t2) is t2
-        ctx_find2 = AnsibleRunContext.from_targets([t1, t2], root_key="k1")
-        assert ctx_find2.find(TaskCall(key="zzz")) is None
-        ctx_before = AnsibleRunContext.from_targets([t1, t2], root_key="k1")
-        assert len(ctx_before.before(t2).sequence.items) == 1
-        assert ctx.is_end(t2) is True
-        assert ctx.is_begin(t1) is True
-        assert ctx.is_begin(t2) is False
-        assert ctx.copy().root_key == "k1"
-        ctx_tasks = AnsibleRunContext.from_targets([t1, t2], root_key="k1")
-        assert ctx_tasks.taskcalls and ctx_tasks.tasks
-        assert isinstance(ctx_tasks.annotations, RiskAnnotationList)
-        assert isinstance(ctx_tasks.info, dict)
-        assert AnsibleRunContext.from_targets([], root_key="").info == {}
-        empty = AnsibleRunContext.from_targets([])
-        assert empty.is_end(t1) is False
-        assert empty.is_begin(t1) is False
-        assert empty.is_last_task(t1) is False
-        # from_tree branches
-        ol = ObjectList(items=[t1, Object(type="x", key="ox")])
-        c2 = AnsibleRunContext.from_tree(ol)
-        assert c2.root_key
-        assert AnsibleRunContext.from_tree(ObjectList()).root_key == ""
-        assert AnsibleRunContext.from_tree(ObjectList(), scan_metadata=None).scan_metadata == {}
-
-
 class TestStructuralModels:
-    """Tests for TaskFile/Role/Play/Playbook/Repository/call_obj."""
+    """Tests for TaskFile/Role/Play/Playbook/Repository models."""
 
     def test_children_and_targets(self) -> None:
         """children_to_key sorts and resolver_targets list."""
@@ -765,20 +692,6 @@ class TestStructuralModels:
         repo.set_key()
         repo.children_to_key()
         assert RoleInPlay().resolver_targets is None
-        assert RoleInPlayCall().type == "roleinplaycall"
-
-    def test_call_obj_from_spec(self) -> None:
-        """call_obj_from_spec maps each spec type."""
-        assert call_obj_from_spec(Playbook(key="playbook test"), None) is not None
-        assert call_obj_from_spec(Play(key="play test"), None) is not None
-        assert call_obj_from_spec(RoleInPlay(name="r", key="roleinplay test"), None) is not None
-        assert call_obj_from_spec(Role(key="role test"), None) is not None
-        assert call_obj_from_spec(TaskFile(key="taskfile test"), None) is not None
-        assert call_obj_from_spec(Task(key="task test"), None) is not None
-        assert call_obj_from_spec(Module(key="module test"), None) is not None
-        assert call_obj_from_spec(Repository(key="repository test"), None) is not None
-        assert call_obj_from_spec(Collection(), None) is None
-        assert call_obj_from_spec(Object(), None) is None
 
     def test_metadata_models(self) -> None:
         """Metadata from_* and equality."""
@@ -807,72 +720,6 @@ class TestStructuralModels:
         )
         assert agm is not None
         assert (agm == "x") is False
-
-    def test_rule_model(self) -> None:
-        """Rule validation, match/process/print helpers."""
-
-        @pytest.mark.skip(reason="placeholder")  # type: ignore[untyped-decorator]
-        def _unused() -> None:
-            """Unused."""
-
-        with pytest.raises(ValueError, match="rule_id"):
-            Rule(rule_id="", description="d")
-        with pytest.raises(ValueError, match="description"):
-            Rule(rule_id="R1", description="")
-        rr = RuleResult(detail={"a": 1})
-        assert rr.get_detail() == {"a": 1}
-        rr.set_value("b", 2)
-        assert rr.detail == {"a": 1, "b": 2}
-
-        @pytest.mark.skip(reason="placeholder")  # type: ignore[untyped-decorator]
-        def _unused2() -> None:
-            """Unused."""
-
-    def test_rule_base_methods(self) -> None:
-        """Base Rule match/process raise; print/to_json/error work."""
-
-        @pytest.fixture  # type: ignore[untyped-decorator]
-        def _f() -> None:
-            """Unused fixture.
-
-            Returns:
-                None.
-            """
-
-    def test_target_result_helpers(self) -> None:
-        """TargetResult filter and find helpers."""
-        from apme_engine.engine.models import ARIResult, NodeResult, TargetResult
-
-        t = Task(key="k", name="mytask")
-        tc = TaskCall(key="c1", spec=t)
-        nr = NodeResult(node=tc, rules=[RuleResult(verdict=True, matched=True)])
-        tr = TargetResult(target_type="playbook", target_name="p", nodes=[nr])
-        assert tr.tasks().nodes
-        assert tr.task("mytask") is not None
-        assert tr.task("missing") is None
-        assert tr.roles().nodes == []
-        assert tr.role("x") is None
-        assert tr.playbooks().nodes == []
-        assert tr.playbook("x") is None
-        assert tr.plays().nodes == []
-        assert tr.play("x") is None
-        assert tr.taskfiles().nodes == []
-        assert tr.taskfile("x") is None
-        assert tr.applied_rules()
-        assert tr.matched_rules()
-        ar = ARIResult(targets=[tr])
-        assert len(ar.playbooks().targets) == 1
-        assert ar.playbook(name="p") is not None
-        assert ar.playbook(path="/a/p") is not None
-        assert ar.playbook(yaml_str="zzz") is None
-        assert ar.roles().targets == []
-        assert ar.role("p") is None
-        assert ar.taskfiles().targets == []
-        assert ar.taskfile(name="p") is None
-        assert ar.find_target(name="p", target_type="playbook") is not None
-        assert ar.find_target(path="/a/p", target_type="playbook") is not None
-        assert ar.find_target(yaml_str="zzz", target_type="playbook") is None
-        assert ar.find_target() is None
 
 
 # ---------------------------------------------------------------------------
@@ -1682,14 +1529,15 @@ class TestUtilsExtra:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.engine.utils import load_classes_in_dir
+        from apme_engine.graph._loader import load_classes_in_dir
 
         (tmp_path / "good.py").write_text(
-            "from apme_engine.engine.models import Rule\nclass R1(Rule):\n rule_id='X'\n description='d'\n"
+            "from apme_engine.engine.models import RuleMetadata\nclass R1(RuleMetadata):\n"
+            " rule_id='X'\n description='d'\n"
         )
         (tmp_path / "bad.py").write_text("raise RuntimeError('boom')\n")
         (tmp_path / "skip_test.py").write_text("x=1\n")
-        from apme_engine.engine.models import Rule as _Rule
+        from apme_engine.engine.models import RuleMetadata as _Rule
 
         classes, errors = load_classes_in_dir(str(tmp_path), _Rule)
         assert any(c.__name__ == "R1" for c in classes)
@@ -1704,7 +1552,8 @@ class TestUtilsExtra:
         cls_dir = sub / "classes"
         cls_dir.mkdir()
         (cls_dir / "r2.py").write_text(
-            "from apme_engine.engine.models import Rule\nclass R2(Rule):\n rule_id='Y'\n description='d'\n"
+            "from apme_engine.engine.models import RuleMetadata\nclass R2(RuleMetadata):\n"
+            " rule_id='Y'\n description='d'\n"
         )
         dummy = sub / "dummy.py"
         dummy.write_text("x=1\n")

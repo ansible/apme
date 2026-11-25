@@ -1,9 +1,8 @@
 """GraphRule — base class for rules consuming ContentGraph (ADR-044, ADR-059).
 
-In Phase 2, all native rules are ported from ``Rule`` (which consumes
-``AnsibleRunContext``) to ``GraphRule`` (which consumes ``ContentGraph``
-directly).  This base class is built in Phase 1 so the interface is
-stable before porting begins.
+All native rules were ported from the retired flat-context ``Rule`` interface to
+``GraphRule``, which consumes ``ContentGraph`` directly.  The legacy
+``Rule``/``AnsibleRunContext`` framework has been removed.
 
 Interface contract
 ------------------
@@ -12,7 +11,7 @@ Interface contract
 
 Rules receive the full graph so they can query ancestors, siblings,
 descendants, property origins, and variable provenance — capabilities
-that were impossible with the flat ``AnsibleRunContext`` sequence.
+that the retired flat run-target sequence could not express.
 """
 
 from __future__ import annotations
