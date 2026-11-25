@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Tests use names as specifications; per-test docstrings add no signal.
+# ruff: noqa: D100,D103
 from typing import Any
 
 import pytest

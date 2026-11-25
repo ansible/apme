@@ -76,17 +76,13 @@ async def create_galaxy_server(  # noqa: DOC101,DOC103,DOC201
 
 
 @mcp.tool()
-async def start_project_scan(
-    project_id: str, options: dict[str, Any] | None = None
-) -> Any:  # noqa: DOC101,DOC103,DOC201
+async def start_project_scan(project_id: str, options: dict[str, Any] | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Start asynchronous check scan for a project."""
     return await _call("POST", project_path(project_id, "/operation"), {"action": "check", "options": options or {}})
 
 
 @mcp.tool()
-async def start_remediation(
-    project_id: str, options: dict[str, Any] | None = None
-) -> Any:  # noqa: DOC101,DOC103,DOC201
+async def start_remediation(project_id: str, options: dict[str, Any] | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Start asynchronous remediation; does not approve proposals."""
     return await _call(
         "POST", project_path(project_id, "/operation"), {"action": "remediate", "options": options or {}}
@@ -100,9 +96,7 @@ async def get_operation(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC201
 
 
 @mcp.tool()
-async def wait_for_operation(
-    project_id: str, timeout_seconds: int = 30
-) -> Any:  # noqa: DOC101,DOC103,DOC201,DOC501,DOC503
+async def wait_for_operation(project_id: str, timeout_seconds: int = 30) -> Any:  # noqa: DOC101,DOC103,DOC201,DOC501,DOC503
     """Wait on Gateway SSE until operation terminal or timeout; never cancels it."""
     if timeout_seconds < 1 or timeout_seconds > 600:
         raise ValueError("timeout_seconds must be between 1 and 600")
@@ -189,9 +183,7 @@ async def begin_remediate(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC201
 
 
 @mcp.tool()
-async def approve_proposals(
-    project_id: str, approved_ids: list[str], approval_gate_id: str | None = None
-) -> Any:  # noqa: DOC101,DOC103,DOC201
+async def approve_proposals(project_id: str, approved_ids: list[str], approval_gate_id: str | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Approve exactly supplied proposal IDs; never auto-approves omitted proposals."""
     payload: dict[str, Any] = {"approved_ids": approved_ids}
     if approval_gate_id is not None:
