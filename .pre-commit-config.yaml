@@ -25,7 +25,7 @@ repos:
     rev: 0.11.1
     hooks:
       - id: pydoclint
-        args: [--exclude=src/apme/v1/, src/, tests/, scripts/]
+        args: [--native-mode-noqa-location=definition, --exclude=src/apme/v1/, src/, tests/, scripts/]
         pass_filenames: false
   - repo: https://github.com/michellepellon/skillmark
     rev: v0.1.0
