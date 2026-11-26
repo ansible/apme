@@ -17,7 +17,7 @@
   "dependencies": {
     "@ansible/ansible-ui-framework": "file:./vendor/ansible-ui-framework",
     "@apme/ui-workflow": "workspace:*",
-    "@backstage/ui": "0.18.0",
+    "@backstage/ui": "0.19.0",
     "@patternfly/patternfly": "6.7.0",
     "@patternfly/react-charts": "8.7.0",
     "@patternfly/react-core": "6.6.2",
