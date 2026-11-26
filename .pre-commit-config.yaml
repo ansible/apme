@@ -18,7 +18,7 @@ repos:
           - types-jsonschema
           - grpc-stubs
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.13.4
+    rev: 0.13.6
     hooks:
       - id: uv-lock
   - repo: https://github.com/jsh9/pydoclint
