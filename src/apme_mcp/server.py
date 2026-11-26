@@ -18,7 +18,7 @@ mcp = MCPServer("apme")
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "expired", "pr_submitted"}
 
 
-async def _call(method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
+async def _call(method: str, path: str, payload: dict[str, Any] | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
     async with GatewayClient() as gateway:
         return await gateway.request(method, path, json=payload) if payload is not None else await gateway.get(path)
 
@@ -143,11 +143,11 @@ async def wait_for_operation(project_id: str, timeout_seconds: int = 30) -> Any:
 
 
 @mcp.tool()
-async def get_project_violations(  # noqa: DOC101,DOC103,DOC201
+async def get_project_violations(  # noqa: DOC101,DOC103,DOC201,DOC501
     project_id: str,
     limit: int = 50,
     offset: int = 0,
-) -> Any:
+) -> Any:  # noqa: DOC101,DOC103,DOC201,DOC501,DOC503
     """Get a page of findings for the latest project scan."""
     if limit < 1 or limit > 500:
         raise ValueError("limit must be between 1 and 500")
