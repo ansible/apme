@@ -45,6 +45,8 @@ async def test_tools_cover_project_and_remediation_routes(monkeypatch: pytest.Mo
         "operation_id": "op-1",
         "status": "completed",
         "proposals": [{"id": "p-1"}],
+        "approval_gate_id": None,
+        "proposals_pending": False,
     }
     await server.begin_remediate("project-1")
     await server.approve_proposals("project-1", ["p-1"], "gate-1")
@@ -62,7 +64,7 @@ async def test_tools_cover_project_and_remediation_routes(monkeypatch: pytest.Mo
         ("POST", "/api/v1/projects/project-1/operation"),
         ("POST", "/api/v1/projects/project-1/operation"),
         ("GET", "/api/v1/projects/project-1/operation"),
-        ("GET", "/api/v1/projects/project-1/violations"),
+        ("GET", "/api/v1/projects/project-1/violations?limit=50&offset=0"),
         ("GET", "/api/v1/projects/project-1/activity"),
         ("GET", "/api/v1/projects/project-1/dependencies"),
         ("GET", "/api/v1/projects/project-1/sbom"),
@@ -81,6 +83,7 @@ async def test_tools_cover_project_and_remediation_routes(monkeypatch: pytest.Mo
         "branch": "main",
         "scm_provider": "github",
     }
+    assert calls[6][2] == {"action": "remediate", "options": {"assess_pause": True}}
     assert calls[4][2] == {
         "name": "community",
         "url": "https://galaxy.example",
@@ -90,6 +93,38 @@ async def test_tools_cover_project_and_remediation_routes(monkeypatch: pytest.Mo
     }
     assert calls[15][2] == {"approved_ids": ["p-1"], "approval_gate_id": "gate-1"}
     assert calls[19][2] == {"create_pr": True, "branch_name": "apme/fix", "title": "Apply fixes"}
+
+
+@pytest.mark.asyncio
+async def test_get_project_violations_supports_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    async def fake_call(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        calls.append((method, path, payload))
+        return {"ok": True}
+
+    monkeypatch.setattr(server, "_call", fake_call)
+
+    assert await server.get_project_violations("project-1", limit=500, offset=500) == {"ok": True}
+    assert calls == [("GET", "/api/v1/projects/project-1/violations?limit=500&offset=500", None)]
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset", "message"),
+    [
+        (0, 0, "limit must be between 1 and 500"),
+        (501, 0, "limit must be between 1 and 500"),
+        (50, -1, "offset must be non-negative"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_project_violations_rejects_invalid_pagination(
+    limit: int,
+    offset: int,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        await server.get_project_violations("project-1", limit=limit, offset=offset)
 
 
 @pytest.mark.asyncio
@@ -142,6 +177,47 @@ async def test_wait_for_operation_returns_terminal_sse_event(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_wait_for_operation_handles_terminal_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        is_error = False
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def aiter_lines(self) -> Any:
+            for line in (
+                "event: snapshot",
+                'data: {"status":"completed","operation_id":"op-1"}',
+                "",
+            ):
+                yield line
+
+    class FakeGateway:
+        client = None
+
+        def __init__(self) -> None:
+            self.client = self
+
+        async def __aenter__(self) -> FakeGateway:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def stream(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(server, "GatewayClient", FakeGateway)
+
+    result = await server.wait_for_operation("project-1", 5)
+    assert result["terminal"] is True
+    assert result["operation"]["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_wait_for_operation_handles_non_json_sse_and_nonterminal_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,4 +257,52 @@ async def test_wait_for_operation_handles_non_json_sse_and_nonterminal_stream(
     assert await server.wait_for_operation("project-1", 5) == {
         "terminal": False,
         "operation": {"status": "running", "path": "/api/v1/projects/project-1/operation"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_proposals_waits_for_proposals_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        is_error = False
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def aiter_lines(self) -> Any:
+            for line in (
+                "event: proposals",
+                'data: {"status":"awaiting_approval","proposals":[{"id":"p-1"}]}',
+                "",
+            ):
+                yield line
+
+    class FakeGateway:
+        client = None
+
+        def __init__(self) -> None:
+            self.client = self
+
+        async def __aenter__(self) -> FakeGateway:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def get(self, path: str) -> dict[str, Any]:
+            return {"status": "assessed", "proposals": []}
+
+        def stream(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(server, "GatewayClient", FakeGateway)
+
+    assert await server.get_proposals("project-1", timeout_seconds=5) == {
+        "operation_id": None,
+        "status": "awaiting_approval",
+        "proposals": [{"id": "p-1"}],
+        "approval_gate_id": None,
+        "proposals_pending": False,
     }

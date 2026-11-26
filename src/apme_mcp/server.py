@@ -8,12 +8,14 @@ import logging
 import os
 from typing import Any
 
+import httpx
 from mcp.server import MCPServer
 
 from apme_mcp.gateway_client import GatewayClient, project_path
 
 logger = logging.getLogger(__name__)
 mcp = MCPServer("apme")
+_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "expired", "pr_submitted"}
 
 
 async def _call(method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
@@ -84,8 +86,10 @@ async def start_project_scan(project_id: str, options: dict[str, Any] | None = N
 @mcp.tool()
 async def start_remediation(project_id: str, options: dict[str, Any] | None = None) -> Any:  # noqa: DOC101,DOC103,DOC201
     """Start asynchronous remediation; does not approve proposals."""
+    remediation_options = dict(options or {})
+    remediation_options["assess_pause"] = True
     return await _call(
-        "POST", project_path(project_id, "/operation"), {"action": "remediate", "options": options or {}}
+        "POST", project_path(project_id, "/operation"), {"action": "remediate", "options": remediation_options}
     )
 
 
@@ -104,7 +108,10 @@ async def wait_for_operation(project_id: str, timeout_seconds: int = 30) -> Any:
     async with GatewayClient() as gateway:
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with gateway.client.stream("GET", path, headers={"Accept": "text/event-stream"}) as response:
+                stream_timeout = httpx.Timeout(30.0, read=None)
+                async with gateway.client.stream(
+                    "GET", path, headers={"Accept": "text/event-stream"}, timeout=stream_timeout
+                ) as response:
                     if response.is_error:
                         raise RuntimeError(f"Gateway operation stream returned HTTP {response.status_code}")
                     event_name = "message"
@@ -121,24 +128,33 @@ async def wait_for_operation(project_id: str, timeout_seconds: int = 30) -> Any:
                                 payload = json.loads(raw)
                             except json.JSONDecodeError:
                                 payload = {"raw": raw}
-                            if event_name in {"result", "status_changed"} and payload.get("status") in {
-                                "completed",
-                                "failed",
-                                "cancelled",
-                                "pr_submitted",
-                            }:
+                            if event_name in {"snapshot", "result", "status_changed", "pr_created"} and (
+                                event_name == "pr_created" or payload.get("status") in _TERMINAL_STATUSES
+                            ):
                                 return {"event": event_name, "terminal": True, "operation": payload}
                             event_name = "message"
         except TimeoutError:
             snapshot = await gateway.get(project_path(project_id, "/operation"))
             return {"terminal": False, "timed_out": True, "operation": snapshot}
+        except httpx.HTTPError:
+            snapshot = await gateway.get(project_path(project_id, "/operation"))
+            return {"terminal": False, "disconnected": True, "operation": snapshot}
     return {"terminal": False, "operation": await _call("GET", project_path(project_id, "/operation"))}
 
 
 @mcp.tool()
-async def get_project_violations(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC201
-    """Get findings for the latest project scan."""
-    return await _call("GET", project_path(project_id, "/violations"))
+async def get_project_violations(  # noqa: DOC101,DOC103,DOC201
+    project_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> Any:
+    """Get a page of findings for the latest project scan."""
+    if limit < 1 or limit > 500:
+        raise ValueError("limit must be between 1 and 500")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    path = f"{project_path(project_id, '/violations')}?limit={limit}&offset={offset}"
+    return await _call("GET", path)
 
 
 @mcp.tool()
@@ -166,14 +182,65 @@ async def get_project_graph(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC2
 
 
 @mcp.tool()
-async def get_proposals(project_id: str) -> Any:  # noqa: DOC101,DOC103,DOC201
-    """Get current remediation proposals."""
-    snapshot = await _call("GET", project_path(project_id, "/operation"))
-    return {
-        "operation_id": snapshot.get("operation_id"),
-        "status": snapshot.get("status"),
-        "proposals": snapshot.get("proposals", []),
-    }
+async def get_proposals(project_id: str, timeout_seconds: int = 30) -> Any:  # noqa: DOC101,DOC103,DOC201,DOC501,DOC503
+    """Wait for current remediation proposals, or report that they remain pending."""
+    if timeout_seconds < 1 or timeout_seconds > 600:
+        raise ValueError("timeout_seconds must be between 1 and 600")
+
+    path = project_path(project_id, "/operation")
+    terminal_statuses = {"completed", "pr_submitted", "failed", "expired", "cancelled"}
+
+    def result(snapshot: dict[str, Any], *, pending: bool = False) -> dict[str, Any]:
+        proposals = snapshot.get("proposals", [])
+        return {
+            "operation_id": snapshot.get("operation_id"),
+            "status": snapshot.get("status"),
+            "proposals": proposals,
+            "approval_gate_id": snapshot.get("approval_gate_id"),
+            "proposals_pending": pending,
+        }
+
+    snapshot = await _call("GET", path)
+    if snapshot.get("status") == "awaiting_approval" or snapshot.get("proposals"):
+        return result(snapshot)
+    if snapshot.get("status") in terminal_statuses:
+        return result(snapshot)
+
+    async with GatewayClient() as gateway:
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                stream_timeout = httpx.Timeout(30.0, read=None)
+                async with gateway.client.stream(
+                    "GET", f"{path}/events", headers={"Accept": "text/event-stream"}, timeout=stream_timeout
+                ) as response:
+                    if response.is_error:
+                        raise RuntimeError(f"Gateway proposal stream returned HTTP {response.status_code}")
+                    event_name = "message"
+                    data_lines: list[str] = []
+                    async for line in response.aiter_lines():
+                        if line.startswith("event:"):
+                            event_name = line.partition(":")[2].strip()
+                        elif line.startswith("data:"):
+                            data_lines.append(line.partition(":")[2].lstrip())
+                        elif not line and data_lines:
+                            try:
+                                event = json.loads("\n".join(data_lines))
+                            except json.JSONDecodeError:
+                                event = None
+                            data_lines = []
+                            if isinstance(event, dict):
+                                if event_name == "proposals":
+                                    merged = {**snapshot, **event, "status": event.get("status", "awaiting_approval")}
+                                    return result(merged)
+                                if event.get("status") in terminal_statuses:
+                                    return result({**snapshot, **event})
+                            event_name = "message"
+        except (TimeoutError, httpx.HTTPError):
+            pass
+
+        snapshot = await gateway.get(path)
+        pending = snapshot.get("status") not in terminal_statuses and not snapshot.get("proposals")
+        return result(snapshot, pending=pending)
 
 
 @mcp.tool()

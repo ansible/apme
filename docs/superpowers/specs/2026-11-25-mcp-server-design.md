@@ -109,10 +109,12 @@ Initial configuration:
 
 ```text
 APME_GATEWAY_URL=http://127.0.0.1:8080
-APME_MCP_TRANSPORT=stdio
 ```
 
-Streamable HTTP transport may be added for shared deployment, but local stdio is the first supported transport. Gateway authentication integration must be injectable; no credential model is invented by the adapter.
+Local stdio is the only supported transport. Streamable HTTP may be added for
+shared deployment, but requires a separate authenticated process boundary.
+Gateway authentication integration must be injectable; no credential model is
+invented by the adapter.
 
 ## Testing
 
