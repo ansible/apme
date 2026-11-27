@@ -9,6 +9,7 @@ BUNDLE = ROOT / "plugins/apme"
 
 
 def test_plugin_bundle_declares_skill_and_mcp_config() -> None:
+    """Verify bundle metadata points to valid MCP and Skill files."""
     metadata = json.loads((BUNDLE / "plugin.json").read_text())
     config = json.loads((BUNDLE / "mcp.json").read_text())
 
@@ -20,6 +21,7 @@ def test_plugin_bundle_declares_skill_and_mcp_config() -> None:
 
 
 def test_plugin_bundle_skill_matches_canonical_skill() -> None:
+    """Verify shipped Skill cannot drift from repository Skill source."""
     bundled_skill = BUNDLE / "skills/apme-scan-review/SKILL.md"
 
     assert bundled_skill.read_text() == CANONICAL_SKILL.read_text()
