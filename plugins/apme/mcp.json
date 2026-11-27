@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "apme": {
+      "command": "apme-mcp",
+      "env": {
+        "APME_GATEWAY_URL": "http://127.0.0.1:8080",
+        "APME_MCP_LOG_LEVEL": "WARNING"
+      }
+    }
+  }
+}

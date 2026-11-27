@@ -32,6 +32,8 @@ scan workspace.
 Implementation:
 
 - Python package: `src/apme_mcp/`
+- Canonical workflow skill: `skills/apme-scan-review/SKILL.md`
+- Distributable MCP bundle: `plugins/apme/`
 - Async I/O: `asyncio` and `httpx`
 - MCP transport: stdio in current version
 - Gateway API: versioned REST `/api/v1`
@@ -91,6 +93,23 @@ Example local agent configuration:
 Use absolute checkout path. Start rootless local APME stack first. Keep
 Gateway and MCP on same user-owned machine for current supported setup.
 
+## Ship Skill with MCP
+
+Use `plugins/apme/` as distributable bundle. It contains:
+
+- `mcp.json`: local `apme-mcp` stdio server configuration.
+- `plugin.json`: bundle metadata and Skill path.
+- `skills/apme-scan-review/SKILL.md`: host-discoverable workflow Skill.
+
+Root `skills/apme-scan-review/SKILL.md` is canonical. Bundle tests enforce
+byte-for-byte equality so Skill behavior cannot drift between repository and
+shipped bundle. MCP serves tools; MCP hosts load Skill. Server does not inject
+or dynamically install Skills because Skill discovery belongs to host.
+
+Register `plugins/apme/mcp.json` with MCP host and register bundle's
+`skills/apme-scan-review/SKILL.md` with host Skill discovery. Install
+`apme-mcp` first, then start rootless local APME stack.
+
 Environment variables:
 
 | Variable | Default | Purpose |
@@ -115,6 +134,14 @@ Write-capable tools require explicit agent/user intent. `submit_remediation`
 creates a pull request only when `create_pr=true`.
 
 ## Scan workflow
+
+### `apme-scan-review` skill
+
+The repository includes a read-only workflow skill for MCP hosts that support
+Codex-compatible skills. It orchestrates project lookup, scan start, bounded
+waiting, paged findings retrieval, and optional evidence retrieval. It never
+approves proposals, applies remediation, creates branches, or submits pull
+requests.
 
 1. `list_projects`
 2. `create_project` if needed
