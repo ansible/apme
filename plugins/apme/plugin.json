@@ -1,0 +1,10 @@
+{
+  "name": "apme",
+  "displayName": "APME",
+  "version": "0.1.0",
+  "description": "APME scan review Skill and local MCP server configuration.",
+  "skills": [
+    "skills/apme-scan-review/SKILL.md"
+  ],
+  "mcpConfig": "mcp.json"
+}
